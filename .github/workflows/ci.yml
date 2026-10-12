@@ -64,7 +64,20 @@ jobs:
           node -e "const s=require('node:net').createServer().listen(0,'127.0.0.1',()=>{console.log('E2E_PORT='+s.address().port);s.close()})"
           >> "$GITHUB_ENV"
       - run: npm run test:e2e
+      # Chromium puts its singleton socket under TMPDIR, and a Unix socket path is limited to about
+      # 107 bytes. $RUNNER_TEMP on the self-hosted runner is too long for that, so Lighthouse gets
+      # a short directory of its own, made here and removed below.
+      - name: Make a short temporary directory for Lighthouse's Chromium
+        run: |
+          dir="/tmp/lh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$dir"
+          echo "LH_TMPDIR=$dir" >> "$GITHUB_ENV"
       - run: npm run lighthouse:ci
+        env:
+          TMPDIR: ${{ env.LH_TMPDIR }}
+      - name: Remove Lighthouse's temporary directory
+        if: always() && env.LH_TMPDIR != ''
+        run: rm -r -- "$LH_TMPDIR"
       - name: Keep the traces and reports
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
