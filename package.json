@@ -1,0 +1,55 @@
+{
+  "name": "cloudflare-site-template",
+  "version": "1.0.0",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "check": "astro check && tsc --noEmit",
+    "test": "vitest run --project unit",
+    "test:dist": "vitest run --project dist",
+    "verify": "npm run check && npm run test && npm run build && npm run test:dist",
+    "preview": "node scripts/dev-stack.mjs",
+    "test:e2e": "playwright test",
+    "lighthouse": "node scripts/lighthouse.mjs",
+    "lighthouse:ci": "node scripts/lighthouse.mjs --ci",
+    "preflight": "vitest run --project preflight --silent=false",
+    "deploy": "astro build && npm run preflight && wrangler deploy",
+    "screenshots": "node tools/screenshots/capture.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jleavers/cloudflare-site-template.git"
+  },
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/jleavers/cloudflare-site-template/issues"
+  },
+  "homepage": "https://github.com/jleavers/cloudflare-site-template#readme",
+  "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "@astrojs/sitemap": "3.7.4",
+    "@tailwindcss/vite": "4.3.3",
+    "astro": "7.3.8",
+    "tailwindcss": "4.3.3"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.10",
+    "@playwright/test": "1.64.0",
+    "@types/node": "24.19.2",
+    "chrome-launcher": "1.2.1",
+    "gifenc": "1.0.3",
+    "jsonc-parser": "3.3.1",
+    "lighthouse": "13.5.0",
+    "node-html-parser": "9.0.4",
+    "sharp": "0.35.5",
+    "typescript": "6.0.3",
+    "vitest": "5.0.4",
+    "wrangler": "4.149.0"
+  }
+}

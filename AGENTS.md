@@ -1,6 +1,89 @@
 # AGENTS.md
 
-This file defines operational rules for AI coding agents working in this repository.
+Rules for AI coding agents working in this repository. Claude Code reads this file through
+`CLAUDE.md`. Other agents read it directly.
+
+## What this repository is
+
+A template for small marketing sites: an **Astro 7** static site styled with **Tailwind CSS 4**,
+served by a **Cloudflare Worker** with static assets, with one dynamic route: the contact form at
+`POST /api/contact`. `docs/superpowers/specs/2026-10-12-cloudflare-site-template-design.md` is
+the design; read its §5 (contracts) and §7 (the form) before changing either.
+
+| Path | What it is |
+|---|---|
+| `src/config/site.ts` | Site-wide facts: name, URL, navigation, contact, legal, privacy |
+| `src/styles/global.css` | Design tokens (`@theme`) |
+| `src/layouts/BaseLayout.astro` | `<head>`: SEO, OpenGraph, fonts, JSON-LD |
+| `src/components/` | Page sections; `ContactForm.astro` carries contract C5 |
+| `src/pages/` | Pages, and the copy they pass to sections |
+| `src/scripts/contact-form.ts` | The form's behaviour (lazy Turnstile, submit, states) |
+| `src/contact/` | The portable form handler (C6) |
+| `src/worker.ts` | The only Cloudflare-specific code |
+| `wrangler.jsonc` | Worker config: name, vars, previews, custom domain |
+| `tests/` | `unit/`, `dist/` (contracts on the build), `e2e/` (Playwright), `preflight/` |
+| `SITE_BRIEF.md`, `design/` | A site's inputs; see `.claude/skills/new-site/SKILL.md` |
+
+## Contracts
+
+Every site built from this template keeps these, whatever its design. Tests enforce them; a
+change that needs one of those tests weakened is the wrong change.
+
+- **C1 — One home per fact.** Design tokens live only in `src/styles/global.css` (`@theme`).
+  Site-wide facts live only in `src/config/site.ts`. Page copy lives in the page files and
+  reaches sections as props.
+- **C2 — Self-hosted assets.** Fonts come through the Astro Fonts API (`astro.config.mjs`
+  `fonts`), never a font host's stylesheet. Raster images live in `src/assets/` and render
+  through `<Image>` or `<Picture>`.
+- **C3 — No client framework.** No React, Vue, Svelte, Preact, Solid, Alpine.js or UI component
+  library (shadcn, MUI, …). No third-party script except Turnstile, and the Cloudflare Web
+  Analytics beacon when `site.analytics.cloudflareToken` is set. Interactions use HTML (`<details>`,
+  anchors), CSS, and small bundled `<script>` modules.
+- **C4 — Every page through `BaseLayout`,** with a title and a description, and exactly one `h1`.
+- **C5 — The contact form's hooks are fixed.** Restyle and re-word `ContactForm.astro` freely,
+  but keep `form[data-contact-form]`, `action="/api/contact"`, `method="post"`, the fields
+  `name`, `email`, `message` and `_gotcha`, `[data-turnstile]`, `[data-submit]`, `[data-status]`,
+  `[data-error-for]`, the `noscript`, and the script import.
+- **C6 — The handler stays portable.** `src/contact/**` uses Web-standard APIs only (`Request`,
+  `Response`, `fetch`, `FormData`, `URL`) and imports nothing from outside `src/contact/`. Do not
+  add KV, D1, Durable Objects or any other Cloudflare binding unless explicitly instructed.
+- **C7 — Example values never reach a custom domain.** `npm run preflight` allows the template's
+  example values on workers.dev (the demo) and refuses them once `wrangler.jsonc` has a custom
+  domain. `npm run deploy` and CI run it.
+
+## Rules
+
+- **No unapproved dependencies.** Ask before adding any package, and never one C3 forbids.
+- **Read tokens and facts, don't restate them.** A colour in a component is a bug; so is the
+  site name typed into a page.
+- **Enabling Cloudflare Web Analytics** means setting `site.analytics.cloudflareToken` *and*
+  adding `https://static.cloudflareinsights.com` to `script-src` and
+  `https://cloudflareinsights.com` to `connect-src` in `public/_headers`.
+- **Never commit a secret.** `TURNSTILE_SECRET_KEY`, `RESEND_API_KEY` and `WEBHOOK_URL` are set
+  with `npx wrangler secret put`; local experiments use a gitignored `.dev.vars`. The Turnstile
+  test keys in the template are public and pass every check, which is why they are allowed.
+- **Never call the live site's `/api/contact`, Resend, Slack, Teams or the Cloudflare API** to
+  test something. `npm run preview` and the e2e tests use `log` delivery and test keys.
+
+## Verification
+
+Before finishing any change, run `npm run verify` (type check, unit tests, build, dist
+contracts). After touching `ContactForm.astro`, `src/scripts/`, `src/worker.ts` or
+`src/contact/`, also run `npm run test:e2e`. After a visual change, run `npm run lighthouse`.
+
+## Stamping out a new site
+
+Use the `new-site` skill: `.claude/skills/new-site/SKILL.md`. Agents other than Claude Code read
+that file and follow it.
+
+## Working on the template itself
+
+In `jleavers/cloudflare-site-template` itself (not a site made from it): keep the example site
+fictional ("Example Co.", example.com) and every test green; update the README runbook in the
+same change as any step it describes; regenerate the README media (`tools/screenshots/README.md`)
+when the example site's look changes.
+
+<!-- Everything below is the original operational rule set, unchanged. -->
 
 ## Environment
 

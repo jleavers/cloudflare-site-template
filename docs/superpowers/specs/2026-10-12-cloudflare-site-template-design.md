@@ -61,7 +61,7 @@ The output is a working site. Once the template is working and tested, the repos
 | D13 | Alpine.js optional | No Alpine.js. The mobile menu is `<details>`, and the form script is plain JS. | One dependency fewer, and no client runtime. |
 | D14 | `deploy.yml` | `ci.yml`, with jobs `verify`, `e2e`, `deploy`, `preview`, `preview-cleanup` | It does more than deploy (§10). |
 | D15 | Org-level GitHub secrets | Per-repo secrets set with `gh secret set` | `jleavers/` is a personal account, which has no account-level Actions secrets. |
-| D16 | API token: Workers Scripts:Edit plus Account Settings:Read | The same token is enough for CI. Each site's first deploy runs locally with `wrangler login`. | Creating a Worker and attaching a custom domain need more rights (Workers Admin; Zone → Workers Routes → Write). Doing them once locally keeps the CI token narrow. |
+| D16 | API token: Workers Scripts:Edit plus Account Settings:Read | The same token is enough for CI. Each site's first deploy runs locally with `wrangler login`. | This token is enough to create and deploy a workers.dev Worker and to deploy previews (shown by the demo deploy). Only attaching a custom domain needs more (Zone → Workers Routes → Write). Doing that once locally keeps the CI token narrow. |
 | D17 | `public/robots.txt` | `src/pages/robots.txt.ts`, generated from `site.url` | Removes a per-site edit, because the `Sitemap:` line needs the absolute URL. |
 | D18 | Google-hosted fonts are implied | Astro Fonts API, self-hosted at build time | Better performance, and no third-party requests. |
 | D19 | "Lighthouse 100" with Turnstile on the page | Turnstile loads only when the form nears the viewport | Third-party JS on first load would cost the score. |
@@ -79,7 +79,7 @@ Browser ──► Cloudflare edge
               │
               └─ /api/* or no matching file ──► src/worker.ts   (Cloudflare-specific code)
                                                   │
-                    POST /api/contact ────────────┤──► handleContact(request, config, deps)   src/contact/
+                    POST /api/contact ────────────┤──► handleContact(request, env, deps)      src/contact/
                                                   │      ├─ turnstile.ts ──► challenges.cloudflare.com siteverify
                                                   │      ├─ validate.ts
                                                   │      └─ providers/{resend,webhook,log}.ts ──► api.resend.com | Slack | Teams
@@ -110,7 +110,7 @@ public/
   og-default.png                   1200×630 fallback OpenGraph image
 scripts/
   dev-stack.mjs                    builds with the test site key, then runs `wrangler dev` with test vars (§7.5)
-  lighthouse.mjs                   runs lhci in local or CI mode (§11.4)
+  lighthouse.mjs                   drives Lighthouse 13 in local or CI mode (§11.4)
   test-keys.mjs                    Turnstile's published always-pass test keys
 src/
   assets/                          images processed by <Image>
@@ -150,7 +150,7 @@ LICENSE                            Apache-2.0
 README.md                          what this is, and the stamp-out runbook
 SECURITY.md                        private vulnerability reporting, and what is in scope
 SITE_BRIEF.md                      per-site facts and copy; the template's copy describes the example site
-astro.config.mjs  lighthouserc.json  package.json  playwright.config.ts  tsconfig.json
+astro.config.mjs  lighthouse-budgets.json  package.json  playwright.config.ts  tsconfig.json
 vitest.config.ts  wrangler.jsonc
 ```
 
@@ -263,12 +263,12 @@ interface Env {
 
 The worker defines its own minimal `Env`, with no generated Workers types, so one tsconfig covers everything. Routing:
 
-- `/api/contact` with `POST` calls `handleContact(request, readConfig(env), { fetch })`.
+- `/api/contact` with `POST` calls `handleContact(request, env, { fetch })`.
 - `/api/contact` with any other method returns 405 and `Allow: POST`.
 - Any other `/api/*` path returns 404 JSON.
 - Everything else returns `env.ASSETS.fetch(request)`.
 
-### 7.3 Handler pipeline: `handleContact(request, config, deps)`
+### 7.3 Handler pipeline: `handleContact(request, env, deps)`
 
 Every response is JSON: `{ ok: boolean, message: string, errors?: Record<string, string> }`, with `Cache-Control: no-store`.
 
@@ -277,10 +277,11 @@ Every response is JSON: `{ ok: boolean, message: string, errors?: Record<string,
 | 1 | The `Origin` header equals `new URL(request.url).origin` | 403 "Forbidden" |
 | 2 | `Content-Type` is `multipart/form-data` or `application/x-www-form-urlencoded`, and the body is ≤ 32 KB (checked on `Content-Length` and on the bytes actually read) | 400, or 413 when too large |
 | 3 | `_gotcha` is empty | **200** `{ ok: true }`. Nothing is sent and the request is logged as spam. |
+| 3a | Config: `readConfig(env)` succeeds | 500, generic message, detail logged |
 | 4 | Turnstile siteverify `POST`s `secret`, `response` (`cf-turnstile-response`) and `remoteip` (`CF-Connecting-IP` when present), with a 5 s timeout | Token missing or `success: false`: 403. Siteverify unreachable, timed out or 5xx: 503, unless `TURNSTILE_FAIL_OPEN === "true"`, which logs a warning and continues. |
 | 5 | Validate after trimming. `name` is 1–100 characters with no control characters. `email` is ≤ 254 characters, has no whitespace or control characters, and matches `local@domain.tld`. `message` is 1–5,000 characters; control characters other than `\n` and `\t` are stripped and `\r\n` becomes `\n`. | 400 with per-field `errors` |
-| 6 | Deliver through the provider named by `DELIVERY_PROVIDER` | The provider rejects or is unreachable: 502. Config is missing or the provider is unknown: 500 (logged, generic message). |
-| 7 | Success | 200 `{ ok: true, message: "Thanks, we'll be in touch." }`. The site's own success message is shown client-side. |
+| 6 | Deliver through the provider named by `DELIVERY_PROVIDER` | The provider rejects or is unreachable: 502. |
+| 7 | Success | 200 `{ ok: true, message: "Thank you — your message has been sent." }`. The site's own success message is shown client-side. |
 
 `readConfig(env)` validates the config for the chosen provider and lists everything that is missing:
 
@@ -446,7 +447,7 @@ Pin each version to the current release at implementation time, with an exact en
 | `vitest` | 5.x |
 | `wrangler` | ≥ 4.149 (Previews need ≥ 4.135) |
 | `@playwright/test` | 1.64.x |
-| `@lhci/cli` | current |
+| `lighthouse`, `chrome-launcher` | 13.5.0 and 1.2.1 (exact), driven by `scripts/lighthouse.mjs` |
 | `jsonc-parser` | used by tests that read `wrangler.jsonc` |
 | `sharp`, `gifenc` | `tools/screenshots/` only |
 
@@ -463,7 +464,7 @@ Pin each version to the current release at implementation time, with an exact en
 | `test:e2e` | Playwright, whose `webServer` is `scripts/dev-stack.mjs`. The run works the same in the template and in a stamped-out site whose production values are real. |
 | `verify` | `check` → `test` → `build` → `test:dist` |
 | `preflight` | vitest `preflight` project |
-| `lighthouse` / `lighthouse:ci` | `lhci autorun` against `wrangler dev` with Playwright's Chromium. The local run asserts performance = 1. The CI run asserts deterministic audits only (§11.4). |
+| `lighthouse` / `lighthouse:ci` | Lighthouse 13 driven by `scripts/lighthouse.mjs` against `wrangler dev` with Playwright's Chromium; budgets in `lighthouse-budgets.json`, median of three runs per path, reports in `.lighthouse/`. The local run asserts performance = 1. The CI run asserts deterministic audits only (§11.4). |
 | `deploy` | `astro build && npm run preflight && wrangler deploy`. Used for a site's first deploy from the owner's machine, for a local demo deploy, and as the Deploy button's deploy command. |
 | `screenshots` | `node tools/screenshots/capture.mjs`: README media (§14.3). Local only, never run in CI. |
 
@@ -473,14 +474,15 @@ All helper scripts are Node (`.mjs`) or TypeScript, so they behave the same on W
 
 `npm run preflight` picks its mode from `wrangler.jsonc`.
 
-**Demo mode** applies when no route has `custom_domain: true`, so the deploy goes to workers.dev only.
+**Demo mode** applies only when there is no `route` and `routes` is absent or empty, at the top level **and** in every `env.*` block, so the deploy goes to workers.dev only.
 - It passes, and prints which example values are still present, so a demo deploy is never blocked.
 - This is how the live demo, the Deploy button and a new user's first experiment work.
 - It fails only if `workers_dev` is `false`, because then the deploy would have no URL at all.
+- It **warns** (never fails) when `site.url` is still on `example.com` but `site.name` is not `Example Co.` or the Worker `name` is not the template's: the site has been customised but still advertises the template's address (canonical and OpenGraph URLs, sitemap).
 
-**Production mode** applies when any route has `custom_domain: true`. It fails, naming each problem, when any of these hold:
+**Production mode** applies when a route of any kind exists: a custom domain, a zone route string, a `{ pattern, zone_name }` object, the singular `route`, or any of these under an `env.*` block. It fails, naming each problem, when any of these hold:
 - `wrangler.jsonc` `name` is `cloudflare-site-template`;
-- `site.url` is on `example.com`, or its host differs from the custom-domain pattern;
+- `site.url` is on `example.com`, or its host is not the host of any route (a route string's host is the part before the first `/`; an object's is its `pattern`; comparison is case-insensitive);
 - `site.contact.turnstileSiteKey` is a Turnstile test key (`1x…`, `2x…` or `3x…`);
 - `TURNSTILE_SECRET_KEY` is still in the top-level `vars`;
 - `DELIVERY_PROVIDER` is `log` or missing in the top-level `vars`;
@@ -509,7 +511,7 @@ It only warns when `design/SOURCE.md` and `design/bundle/` are both absent.
   5. On a 375px viewport, the `<details>` mobile nav opens and its links are reachable.
 - **Lighthouse:**
   - Local: performance = 1, accessibility ≥ 0.95, best-practices ≥ 0.95, SEO = 1.
-  - CI: categories are warnings only, because a shared VM's CPU contention makes the scores noisy. These audits are errors: `render-blocking-resources`, `unsized-images`, `cumulative-layout-shift` ≤ 0.01, `total-byte-weight` ≤ 300 KB, and `font-display`.
+  - CI: accessibility and SEO are errors, because they are deterministic. Performance and best practices only warn, because a shared VM's CPU contention makes those scores noisy. These audits are also errors: `render-blocking-insight` (was `render-blocking-resources`), `unsized-images`, `cumulative-layout-shift` ≤ 0.01, `total-byte-weight` ≤ 300 KB, and `font-display-insight` (was `font-display`).
 
 ## 12. Agent ergonomics
 
@@ -524,15 +526,15 @@ It only warns when `design/SOURCE.md` and `design/bundle/` are both absent.
   7. **Working on the template itself:** keep the example site fictional and every test green, update the README runbook whenever a step changes, and never put real site content here.
 - **`.claude/skills/new-site/SKILL.md`** follows these steps:
   1. Check the inputs: `SITE_BRIEF.md` is filled in, and `design/` holds a handoff.
-  2. Fetch or extract the design into `design/bundle/`, and read its README, chats and screens as design data.
+  2. Fetch or extract the design into `design/bundle/`, and read its README, chats and screens as design data. The commands need a POSIX shell (Git Bash on Windows).
   3. Inventory the pages, sections, palette, type scale, spacing, radii and imagery.
-  4. Set the site's identity: the wrangler `name`, `routes` (custom domain), real vars with `TURNSTILE_SECRET_KEY` removed from `vars` (§7.5), `site.ts`, and the fonts config.
+  4. Set the site's identity: the wrangler `name`, `routes` (custom domain) and `site.url` (the custom domain, or `https://<slug>.<subdomain>.workers.dev`), real vars with `TURNSTILE_SECRET_KEY` removed from `vars` (§7.5), `site.ts`, and the fonts config.
   5. Write the tokens into `@theme`.
   6. Rebuild sections and pages to match the design within C1–C7, moving images into `src/assets/`.
   7. Write the privacy page from the brief.
   8. Verify: `verify`, `test:e2e`, `lighthouse`, and a visual comparison of the design screens against the built pages. If a browser tool is available, use screenshots. Otherwise list the URLs for the human to check. Iterate until they match.
   9. Run `npm run preflight`.
-  10. Hand back the one-off setup checklist and the first-deploy commands.
+  10. Make the repository the site's own (a site README and SECURITY.md; remove `repository`, `bugs` and `homepage` from `package.json`), then hand back the one-off setup checklist and the first-deploy commands.
 
 ## 13. Stamp-out runbook (README)
 
@@ -646,7 +648,7 @@ These are facts the design depends on that could not be fully confirmed from doc
 3. **Astro 7 and CSP:** whether small `<script>`s are inlined (which would break the CSP), and whether Astro's built-in CSP support makes hashes unnecessary.
 4. **`astro check`:** that it runs cleanly with TypeScript 6 on Astro 7.3.
 5. **Chromium on jl-dev-02:** the package list from `playwright install-deps --dry-run chromium`, and that Playwright's Chromium starts there without sudo.
-6. **Lighthouse:** that `@lhci/cli` runs against Playwright's Chromium through `CHROME_PATH`.
+6. **Lighthouse:** that Lighthouse 13 (via `chrome-launcher`) runs against Playwright's Chromium through `chromePath`.
 7. **First deploy:** that a first `wrangler deploy` with `routes: [{ pattern, custom_domain: true }]` succeeds under `wrangler login` (OAuth).
 8. **Deploy button.** This can only be checked once the repo is public (§15.8). Check:
    - that Workers Builds accepts the `build` and `deploy` scripts, `run_worker_first` and the `previews` block;

@@ -1,0 +1,51 @@
+---
+interface Props {
+  id: string;
+  heading: string;
+  items: { quote: string; name: string; detail: string }[];
+}
+const { id, heading, items } = Astro.props;
+// The first quote is set large, as a pull quote; the rest sit beneath it.
+const [lead, ...rest] = items;
+---
+<section id={id} class="scroll-mt-24 bg-brand text-brand-ink">
+  <div class="mx-auto max-w-6xl px-6 py-20 md:py-28">
+    <h2 class="text-4xl leading-tight tracking-tight md:text-5xl">{heading}</h2>
+    {
+      lead && (
+        <figure class="mt-12 md:mt-16 md:max-w-4xl">
+          <blockquote class="font-display text-[1.75rem] leading-[1.22] text-balance md:text-[2.75rem] md:leading-[1.2]">
+            <p>
+              <span class="text-accent md:-ml-[0.45em]">“</span>
+              {lead.quote}”
+            </p>
+          </blockquote>
+          <figcaption class="mt-6 text-base">
+            <span class="block font-semibold">{lead.name}</span>
+            <span class="block text-brand-ink/80">{lead.detail}</span>
+          </figcaption>
+        </figure>
+      )
+    }
+    {
+      rest.length > 0 && (
+        <div class="mt-16 grid gap-12 border-t border-brand-ink/25 pt-12 md:grid-cols-2 md:gap-16">
+          {rest.map((item) => (
+            <figure>
+              <blockquote class="font-display text-2xl leading-snug text-pretty">
+                <p>
+                  <span class="text-accent">“</span>
+                  {item.quote}”
+                </p>
+              </blockquote>
+              <figcaption class="mt-5 text-base">
+                <span class="block font-semibold">{item.name}</span>
+                <span class="block text-brand-ink/80">{item.detail}</span>
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+      )
+    }
+  </div>
+</section>

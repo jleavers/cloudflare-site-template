@@ -1,0 +1,15 @@
+---
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+<BaseLayout title="Page not found" noindex>
+  <Header />
+  <main id="main" class="mx-auto flex min-h-[60vh] max-w-6xl flex-col items-start justify-center px-6 py-24">
+    <p class="text-base font-semibold text-brand">Error 404</p>
+    <h1 class="mt-4 max-w-2xl text-5xl leading-tight tracking-tight text-balance md:text-6xl">We couldn’t find that page</h1>
+    <p class="mt-5 max-w-xl text-lg leading-relaxed text-muted">It may have moved, or the link may be mistyped.</p>
+    <a href="/" class="mt-10 inline-block rounded-full bg-brand px-7 py-3.5 font-semibold text-brand-ink hover:bg-ink">Back to the home page</a>
+  </main>
+  <Footer />
+</BaseLayout>

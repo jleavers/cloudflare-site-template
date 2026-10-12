@@ -1,0 +1,69 @@
+---
+import heroImage from '../assets/hero.jpg';
+import ContactForm from '../components/ContactForm.astro';
+import FAQ from '../components/FAQ.astro';
+import Features from '../components/Features.astro';
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
+import Hero from '../components/Hero.astro';
+import Testimonials from '../components/Testimonials.astro';
+import { site } from '../config/site';
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+// All of this page's copy is fictional: Example Co. does not exist (contract C1 puts copy here).
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    name: site.legal.companyName,
+    url: site.url,
+    logo: new URL('/favicon.svg', site.url).href,
+    email: site.contact.fallbackEmail,
+  },
+  { '@context': 'https://schema.org', '@type': 'WebSite', name: site.name, url: site.url },
+];
+---
+<BaseLayout jsonLd={jsonLd}>
+  <Header />
+  <main id="main">
+    <Hero
+      eyebrow="Garden design studio"
+      heading="Small gardens, designed to be lived in"
+      lead="We plan courtyards, terraces and narrow city plots that feel generous all year round, and we stay with you from first sketch to first harvest."
+      primary={{ label: 'Book a free consultation', href: '#contact' }}
+      secondary={{ label: 'See our services', href: '#services' }}
+      image={heroImage}
+      imageAlt="A colour planting plan of a small walled garden, seen from above: a paved terrace with a table and chairs, raised vegetable beds, stepping stones across a lawn, planted borders and an old pear tree at the far end."
+    />
+    <Features
+      id="services"
+      heading="What we do"
+      intro="Three ways to work with us, depending on how much you want to do yourself."
+      items={[
+        { title: 'Design plans', body: 'A measured plan, a planting list and a phased budget you can build from at your own pace.' },
+        { title: 'Planting', body: 'We source and plant: native, drought-tolerant and chosen for colour in every season.' },
+        { title: 'Seasonal care', body: 'Four visits a year to prune, feed and adjust, so the garden keeps the shape it was designed for.' },
+      ]}
+    />
+    <Testimonials
+      id="stories"
+      heading="From our gardens"
+      items={[
+        { quote: 'They planned around the old pear tree instead of removing it. It is the best thing in the garden.', name: 'Tomás', detail: 'Courtyard garden' },
+        { quote: 'Our four-metre yard now feels like a room we actually use, even in February.', name: 'Priya', detail: 'Terrace garden' },
+        { quote: 'The planting list alone was worth it. We did the rest ourselves over two summers.', name: 'Hannah & Lee', detail: 'Design plan' },
+      ]}
+    />
+    <FAQ
+      id="faq"
+      heading="Questions we’re often asked"
+      items={[
+        { question: 'How small is too small?', answer: 'Nothing is. Our smallest garden is a balcony of under three square metres.' },
+        { question: 'When is the best time to start?', answer: 'Design work happens year round; most planting is best done between October and March.' },
+        { question: 'Do you work outside the city?', answer: 'Yes, within about an hour’s travel. Further afield, we offer design plans remotely.' },
+      ]}
+    />
+    <ContactForm heading="Get in touch" intro="Tell us a little about your space. We reply within two working days." />
+  </main>
+  <Footer />
+</BaseLayout>

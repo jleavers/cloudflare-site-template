@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens: the only place this site's colours, type and radii are defined (contract C1).
+ * A stamped-out site replaces these values with its design's; components use the utilities
+ * Tailwind generates from them (bg-brand, text-ink, font-display, rounded-card, ...).
+ */
+@theme {
+  --color-paper: oklch(0.975 0.011 110); /* limewash: #f7f8ef */
+  --color-surface: oklch(0.995 0.004 110); /* fields and cards: near-white */
+  --color-ink: oklch(0.28 0.032 160); /* holly: #1a2e23 */
+  --color-muted: oklch(0.47 0.028 158); /* lichen: #4e6055 */
+  --color-line: oklch(0.875 0.024 128); /* sage: #d1d9c9 */
+  --color-brand: oklch(0.438 0.064 160.4); /* bay: #2f5d46, the favicon's green */
+  --color-brand-ink: oklch(0.975 0.011 110);
+  --color-accent: oklch(0.823 0.128 91.8); /* sun: #e3c25a */
+  --color-error: oklch(0.45 0.16 27); /* brick: AA on paper and surface */
+  --radius-card: 1.25rem;
+}
+
+/* The Fonts API (astro.config.mjs) defines --font-inter and --font-fraunces with metric-matched fallbacks. */
+@theme inline {
+  --font-sans: var(--font-inter);
+  --font-display: var(--font-fraunces);
+}
+
+@layer base {
+  body {
+    @apply bg-paper font-sans text-ink antialiased;
+  }
+  h1, h2, h3 {
+    @apply font-display;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 3px;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
+}

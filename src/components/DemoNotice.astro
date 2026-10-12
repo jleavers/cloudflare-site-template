@@ -1,0 +1,19 @@
+---
+import { site } from '../config/site';
+
+// Shown only while the site still has the template's example URL: the live demo and fresh
+// copies. A stamped-out site loses it the moment site.url is its own, and the new-site skill
+// deletes this file and its line in BaseLayout.
+const isDemo = new URL(site.url).hostname === 'example.com';
+---
+{
+  isDemo && (
+    <div class="bg-ink px-4 py-2 text-center text-sm text-paper">
+      A live demo of{' '}
+      <a class="font-semibold underline underline-offset-2" href="https://github.com/jleavers/cloudflare-site-template">
+        cloudflare-site-template
+      </a>
+      . Example Co. is fictional, and the contact form sends nothing.
+    </div>
+  )
+}
