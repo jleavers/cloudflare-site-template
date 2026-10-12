@@ -16,7 +16,8 @@
     "lighthouse": "node scripts/lighthouse.mjs",
     "lighthouse:ci": "node scripts/lighthouse.mjs --ci",
     "preflight": "vitest run --project preflight --silent=false",
-    "deploy": "astro build && npm run preflight && wrangler deploy"
+    "deploy": "astro build && npm run preflight && wrangler deploy",
+    "screenshots": "node tools/screenshots/capture.mjs"
   },
   "repository": {
     "type": "git",
@@ -42,6 +43,7 @@
     "@lhci/cli": "0.15.1",
     "@playwright/test": "1.64.0",
     "@types/node": "24.19.2",
+    "gifenc": "1.0.3",
     "jsonc-parser": "3.3.1",
     "node-html-parser": "9.0.4",
     "sharp": "0.35.5",
