@@ -1,0 +1,39 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // The Worker's name, and the first label of its workers.dev URL. A stamped-out site sets its own (SITE_BRIEF.md "Slug").
+  "name": "cloudflare-site-template",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    // /api/* always reaches the Worker, even if a file in dist/ ever matched it.
+    "run_worker_first": ["/api/*"]
+  },
+  "observability": { "enabled": true },
+  // The example site's settings: Turnstile's published always-pass test secret and `log` delivery,
+  // so this repository deploys to workers.dev with no secrets at all (the live demo, the Deploy
+  // button). A real site sets its own provider and addresses here and DELETES
+  // TURNSTILE_SECRET_KEY from this block, setting it as a secret instead: a var and a secret
+  // cannot share a name. `npm run preflight` refuses a custom-domain deploy until it has.
+  "vars": {
+    "DELIVERY_PROVIDER": "log",
+    "TURNSTILE_SECRET_KEY": "1x0000000000000000000000000000000AA",
+    "TURNSTILE_FAIL_OPEN": "false",
+    "CONTACT_TO_EMAIL": "hello@example.com",
+    "CONTACT_FROM_EMAIL": "website@example.com"
+  },
+  // Pull-request previews (`wrangler preview`) do not inherit "vars": they get these, so a
+  // preview's form works end to end and never sends a real message.
+  "previews": {
+    "vars": {
+      "DELIVERY_PROVIDER": "log",
+      "TURNSTILE_SECRET_KEY": "1x0000000000000000000000000000000AA",
+      "TURNSTILE_FAIL_OPEN": "false"
+    }
+  }
+  // A real site adds its domain here; Cloudflare then creates the DNS record and certificate:
+  // "routes": [{ "pattern": "www.example.org", "custom_domain": true }]
+}

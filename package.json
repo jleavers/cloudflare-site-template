@@ -10,7 +10,8 @@
     "check": "astro check && tsc --noEmit",
     "test": "vitest run --project unit",
     "test:dist": "vitest run --project dist",
-    "verify": "npm run check && npm run test && npm run build && npm run test:dist"
+    "verify": "npm run check && npm run test && npm run build && npm run test:dist",
+    "preview": "node scripts/dev-stack.mjs"
   },
   "repository": {
     "type": "git",
@@ -37,6 +38,7 @@
     "jsonc-parser": "3.3.1",
     "node-html-parser": "9.0.4",
     "typescript": "6.0.3",
-    "vitest": "5.0.4"
+    "vitest": "5.0.4",
+    "wrangler": "4.149.0"
   }
 }
