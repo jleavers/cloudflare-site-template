@@ -110,7 +110,7 @@ public/
   og-default.png                   1200×630 fallback OpenGraph image
 scripts/
   dev-stack.mjs                    builds with the test site key, then runs `wrangler dev` with test vars (§7.5)
-  lighthouse.mjs                   runs lhci in local or CI mode (§11.4)
+  lighthouse.mjs                   drives Lighthouse 13 in local or CI mode (§11.4)
   test-keys.mjs                    Turnstile's published always-pass test keys
 src/
   assets/                          images processed by <Image>
@@ -150,7 +150,7 @@ LICENSE                            Apache-2.0
 README.md                          what this is, and the stamp-out runbook
 SECURITY.md                        private vulnerability reporting, and what is in scope
 SITE_BRIEF.md                      per-site facts and copy; the template's copy describes the example site
-astro.config.mjs  lighthouserc.json  package.json  playwright.config.ts  tsconfig.json
+astro.config.mjs  lighthouse-budgets.json  package.json  playwright.config.ts  tsconfig.json
 vitest.config.ts  wrangler.jsonc
 ```
 
@@ -447,7 +447,7 @@ Pin each version to the current release at implementation time, with an exact en
 | `vitest` | 5.x |
 | `wrangler` | ≥ 4.149 (Previews need ≥ 4.135) |
 | `@playwright/test` | 1.64.x |
-| `@lhci/cli` | current |
+| `lighthouse`, `chrome-launcher` | 13.5.0 and 1.2.1 (exact), driven by `scripts/lighthouse.mjs` |
 | `jsonc-parser` | used by tests that read `wrangler.jsonc` |
 | `sharp`, `gifenc` | `tools/screenshots/` only |
 
@@ -464,7 +464,7 @@ Pin each version to the current release at implementation time, with an exact en
 | `test:e2e` | Playwright, whose `webServer` is `scripts/dev-stack.mjs`. The run works the same in the template and in a stamped-out site whose production values are real. |
 | `verify` | `check` → `test` → `build` → `test:dist` |
 | `preflight` | vitest `preflight` project |
-| `lighthouse` / `lighthouse:ci` | `lhci autorun` against `wrangler dev` with Playwright's Chromium. The local run asserts performance = 1. The CI run asserts deterministic audits only (§11.4). |
+| `lighthouse` / `lighthouse:ci` | Lighthouse 13 driven by `scripts/lighthouse.mjs` against `wrangler dev` with Playwright's Chromium; budgets in `lighthouse-budgets.json`, median of three runs per path, reports in `.lighthouse/`. The local run asserts performance = 1. The CI run asserts deterministic audits only (§11.4). |
 | `deploy` | `astro build && npm run preflight && wrangler deploy`. Used for a site's first deploy from the owner's machine, for a local demo deploy, and as the Deploy button's deploy command. |
 | `screenshots` | `node tools/screenshots/capture.mjs`: README media (§14.3). Local only, never run in CI. |
 
@@ -510,7 +510,7 @@ It only warns when `design/SOURCE.md` and `design/bundle/` are both absent.
   5. On a 375px viewport, the `<details>` mobile nav opens and its links are reachable.
 - **Lighthouse:**
   - Local: performance = 1, accessibility ≥ 0.95, best-practices ≥ 0.95, SEO = 1.
-  - CI: categories are warnings only, because a shared VM's CPU contention makes the scores noisy. These audits are errors: `render-blocking-resources`, `unsized-images`, `cumulative-layout-shift` ≤ 0.01, `total-byte-weight` ≤ 300 KB, and `font-display`.
+  - CI: categories are warnings only, because a shared VM's CPU contention makes the scores noisy. These audits are errors: `render-blocking-insight` (was `render-blocking-resources`), `unsized-images`, `cumulative-layout-shift` ≤ 0.01, `total-byte-weight` ≤ 300 KB, and `font-display-insight` (was `font-display`).
 
 ## 12. Agent ergonomics
 
@@ -647,7 +647,7 @@ These are facts the design depends on that could not be fully confirmed from doc
 3. **Astro 7 and CSP:** whether small `<script>`s are inlined (which would break the CSP), and whether Astro's built-in CSP support makes hashes unnecessary.
 4. **`astro check`:** that it runs cleanly with TypeScript 6 on Astro 7.3.
 5. **Chromium on jl-dev-02:** the package list from `playwright install-deps --dry-run chromium`, and that Playwright's Chromium starts there without sudo.
-6. **Lighthouse:** that `@lhci/cli` runs against Playwright's Chromium through `CHROME_PATH`.
+6. **Lighthouse:** that Lighthouse 13 (via `chrome-launcher`) runs against Playwright's Chromium through `chromePath`.
 7. **First deploy:** that a first `wrangler deploy` with `routes: [{ pattern, custom_domain: true }]` succeeds under `wrangler login` (OAuth).
 8. **Deploy button.** This can only be checked once the repo is public (§15.8). Check:
    - that Workers Builds accepts the `build` and `deploy` scripts, `run_worker_first` and the `previews` block;

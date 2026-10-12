@@ -40,11 +40,12 @@
   },
   "devDependencies": {
     "@astrojs/check": "0.9.10",
-    "@lhci/cli": "0.15.1",
     "@playwright/test": "1.64.0",
     "@types/node": "24.19.2",
+    "chrome-launcher": "1.2.1",
     "gifenc": "1.0.3",
     "jsonc-parser": "3.3.1",
+    "lighthouse": "13.5.0",
     "node-html-parser": "9.0.4",
     "sharp": "0.35.5",
     "typescript": "6.0.3",

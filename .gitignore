@@ -35,7 +35,7 @@ node_modules/
 .wrangler/
 playwright-report/
 test-results/
-.lighthouseci/
+.lighthouse/
 tools/screenshots/out/
 
 # Wrangler's local secrets. Never commit a real one; see README "Local development".

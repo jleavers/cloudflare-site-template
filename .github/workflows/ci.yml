@@ -88,7 +88,7 @@ jobs:
           name: e2e-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             test-results/
-            .lighthouseci/reports/
+            .lighthouse/
           retention-days: 7
           if-no-files-found: ignore
 
