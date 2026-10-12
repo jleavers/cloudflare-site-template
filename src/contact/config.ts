@@ -1,0 +1,65 @@
+export type ProviderName = 'resend' | 'slack' | 'teams' | 'log';
+export const PROVIDERS: readonly ProviderName[] = ['resend', 'slack', 'teams', 'log'];
+
+export interface ContactConfig {
+  provider: ProviderName;
+  turnstileSecretKey: string;
+  turnstileFailOpen: boolean;
+  toEmail?: string;
+  fromEmail?: string;
+  resendApiKey?: string;
+  webhookUrl?: string;
+}
+
+/** Plain string settings: Worker vars and secrets, or process.env on any other host. */
+export type ContactEnv = Record<string, string | undefined>;
+
+export class ConfigError extends Error {
+  readonly missing: string[];
+
+  constructor(missing: string[], message: string) {
+    super(message);
+    this.name = 'ConfigError';
+    this.missing = missing;
+  }
+}
+
+const isProvider = (value: string): value is ProviderName => (PROVIDERS as readonly string[]).includes(value);
+
+/** Reads and checks the settings the chosen provider needs, naming everything missing at once. */
+export function readConfig(env: ContactEnv): ContactConfig {
+  const missing: string[] = [];
+  const need = (name: string): string => {
+    const value = env[name]?.trim() ?? '';
+    if (value === '') missing.push(name);
+    return value;
+  };
+
+  const provider = env.DELIVERY_PROVIDER?.trim() ?? '';
+  if (provider !== '' && !isProvider(provider)) {
+    throw new ConfigError([], `DELIVERY_PROVIDER must be one of ${PROVIDERS.join(', ')}, not "${provider}".`);
+  }
+  if (provider === '') missing.push('DELIVERY_PROVIDER');
+
+  const config: ContactConfig = {
+    provider: provider as ProviderName,
+    turnstileSecretKey: need('TURNSTILE_SECRET_KEY'),
+    turnstileFailOpen: env.TURNSTILE_FAIL_OPEN?.trim().toLowerCase() === 'true',
+  };
+  if (provider === 'resend') {
+    config.toEmail = need('CONTACT_TO_EMAIL');
+    config.fromEmail = need('CONTACT_FROM_EMAIL');
+    config.resendApiKey = need('RESEND_API_KEY');
+  }
+  if (provider === 'slack' || provider === 'teams') {
+    config.webhookUrl = need('WEBHOOK_URL');
+  }
+
+  if (missing.length > 0) {
+    throw new ConfigError(missing, `The contact form is missing configuration: ${missing.join(', ')}.`);
+  }
+  if (config.webhookUrl !== undefined && !config.webhookUrl.startsWith('https://')) {
+    throw new ConfigError([], 'WEBHOOK_URL must be an https URL.');
+  }
+  return config;
+}
