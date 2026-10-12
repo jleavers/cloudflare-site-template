@@ -53,6 +53,15 @@ const freePort = () =>
     });
   });
 
+// Set once the stack is spawned, so an interrupt can end it (its process group is detached).
+let stopStack;
+for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+  process.on(signal, () => {
+    stopStack?.();
+    process.exit(code);
+  });
+}
+
 async function startStack() {
   const port = await freePort();
   const child = spawn(process.execPath, ['scripts/dev-stack.mjs'], {
@@ -63,7 +72,10 @@ async function startStack() {
     env: { ...process.env, PORT: String(port), INSPECTOR_PORT: String(port + 1) },
   });
   const origin = `http://127.0.0.1:${port}`;
+  let killed = false;
   const kill = () => {
+    if (killed) return;
+    killed = true;
     try {
       if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/t', '/f']);
       else process.kill(-child.pid, 'SIGTERM');
@@ -71,6 +83,7 @@ async function startStack() {
       // already gone
     }
   };
+  stopStack = kill;
   for (let attempt = 0; attempt < 180; attempt += 1) {
     try {
       if ((await fetch(origin)).ok) return { origin, stop: kill };
@@ -92,6 +105,41 @@ async function shoot(browser, url, { width, height, scale = 1 }) {
   const png = await page.screenshot();
   await page.close();
   return png;
+}
+
+// The design screen is untrusted: it may only fetch from the public internet (https:) or its own file.
+function allowedForDesign(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol === 'file:') return true;
+  if (parsed.protocol !== 'https:') return false;
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return false;
+  if (host === '::1' || host === '::' || /^(fc|fd|fe80)/.test(host) || host.startsWith('::ffff:')) return false;
+  const v4 = host.match(/^(\d+)\.(\d+)\.\d+\.\d+$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    if (a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) return false;
+  }
+  return true;
+}
+
+// JavaScript stays on (Claude Design prototypes need React and Babel to render), so the screen
+// gets a fresh context with no cookies or storage and a request filter instead.
+async function shootDesign(browser, fileUrl, { width, height }) {
+  const context = await browser.newContext({ viewport: { width, height } });
+  try {
+    await context.route('**', (route) => (allowedForDesign(route.request().url()) ? route.continue() : route.abort()));
+    const page = await context.newPage();
+    await page.goto(fileUrl, { waitUntil: 'networkidle' });
+    return await page.screenshot();
+  } finally {
+    await context.close();
+  }
 }
 
 async function render(browser, html, width, height) {
@@ -147,10 +195,12 @@ async function contactGif(browser, origin) {
   return Buffer.from(gif.bytes());
 }
 
-const browser = await chromium.launch();
-const stack = args.url || wanted.has('design') ? null : await startStack();
-const origin = (args.url ?? stack?.origin ?? '').replace(/\/$/, '');
+let browser;
+let stack;
 try {
+  browser = await chromium.launch();
+  stack = args.url || wanted.has('design') ? undefined : await startStack();
+  const origin = (args.url ?? stack?.origin ?? '').replace(/\/$/, '');
   if (wanted.has('hero') || wanted.has('social') || wanted.has('linkedin')) {
     const desktop = await shoot(browser, `${origin}/`, { width: 1440, height: 900 });
     if (wanted.has('hero')) {
@@ -163,12 +213,13 @@ try {
   if (wanted.has('gif')) save('contact-form.gif', await contactGif(browser, origin));
   if (wanted.has('design')) {
     if (!args.design || !args.site) throw new Error('--only design needs --design <screen.html> and --site <url>');
+    if (!['http:', 'https:'].includes(new URL(args.site).protocol)) throw new Error('--site must be an http: or https: URL');
     // The design screen is a file from a handoff bundle: it renders like any page in a browser.
-    const design = await shoot(browser, pathToFileURL(resolve(args.design)).href, { width: 1440, height: 900 });
+    const design = await shootDesign(browser, pathToFileURL(resolve(args.design)).href, { width: 1440, height: 900 });
     const built = await shoot(browser, args.site, { width: 1440, height: 900 });
     save('design-to-site.png', await compressPng(await render(browser, layouts.sideBySide(dataUrl(design), dataUrl(built)), 1600, 600)));
   }
 } finally {
-  await browser.close();
+  await browser?.close();
   stack?.stop();
 }
