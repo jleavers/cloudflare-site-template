@@ -44,6 +44,9 @@ describe('verifyTurnstile', () => {
   test.each([
     ['a 5xx', answering({ success: true }, 503)],
     ['a non-JSON body', vi.fn<typeof fetch>(async () => new Response('<html>oops</html>', { status: 200 }))],
+    ['a JSON null', vi.fn<typeof fetch>(async () => new Response('null', { status: 200 }))],
+    ['a JSON number', vi.fn<typeof fetch>(async () => new Response('42', { status: 200 }))],
+    ['a JSON string', vi.fn<typeof fetch>(async () => new Response('"x"', { status: 200 }))],
     [
       'a network error',
       vi.fn<typeof fetch>(async () => {

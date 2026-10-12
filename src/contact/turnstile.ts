@@ -32,11 +32,14 @@ export async function verifyTurnstile(
   }
   if (response.status >= 500) return { outcome: 'unavailable', reason: `siteverify answered ${response.status}` };
 
-  let data: { success?: unknown; 'error-codes'?: unknown };
+  let data: { success?: unknown; 'error-codes'?: unknown } | null;
   try {
     data = await response.json();
   } catch {
     return { outcome: 'unavailable', reason: 'siteverify answered with something other than JSON' };
+  }
+  if (typeof data !== 'object' || data === null) {
+    return { outcome: 'unavailable', reason: 'siteverify answered with JSON that is not an object' };
   }
   if (data.success === true) return { outcome: 'pass' };
   const codes = Array.isArray(data['error-codes']) ? data['error-codes'].map(String) : [];
