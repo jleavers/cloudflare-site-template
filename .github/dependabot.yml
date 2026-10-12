@@ -1,0 +1,27 @@
+# Monthly, grouped updates, so SHA-pinned actions and exact npm versions don't go stale
+# silently. A seven-day cooldown keeps a freshly published, possibly malicious release out.
+# Sites stamped from this template inherit this file; delete it there if you don't want the PRs.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        patterns: ["*"]
+    ignore:
+      # @astrojs/check does not support TypeScript 7 (design spec §11.1).
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
