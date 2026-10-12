@@ -281,7 +281,7 @@ Every response is JSON: `{ ok: boolean, message: string, errors?: Record<string,
 | 4 | Turnstile siteverify `POST`s `secret`, `response` (`cf-turnstile-response`) and `remoteip` (`CF-Connecting-IP` when present), with a 5 s timeout | Token missing or `success: false`: 403. Siteverify unreachable, timed out or 5xx: 503, unless `TURNSTILE_FAIL_OPEN === "true"`, which logs a warning and continues. |
 | 5 | Validate after trimming. `name` is 1–100 characters with no control characters. `email` is ≤ 254 characters, has no whitespace or control characters, and matches `local@domain.tld`. `message` is 1–5,000 characters; control characters other than `\n` and `\t` are stripped and `\r\n` becomes `\n`. | 400 with per-field `errors` |
 | 6 | Deliver through the provider named by `DELIVERY_PROVIDER` | The provider rejects or is unreachable: 502. |
-| 7 | Success | 200 `{ ok: true, message: "Thanks, we'll be in touch." }`. The site's own success message is shown client-side. |
+| 7 | Success | 200 `{ ok: true, message: "Thank you — your message has been sent." }`. The site's own success message is shown client-side. |
 
 `readConfig(env)` validates the config for the chosen provider and lists everything that is missing:
 
