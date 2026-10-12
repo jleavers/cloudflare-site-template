@@ -40,4 +40,6 @@ describe('agent-facing documents', () => {
     const headings = [...read('SITE_BRIEF.md').matchAll(/^## (\d)\. /gm)].map((match) => match[1]);
     expect(headings).toEqual(['1', '2', '3', '4', '5', '6']);
   });
+
+  test('the README has no unfilled tokens', () => expect(read('README.md')).not.toMatch(/DEMO_URL/));
 });

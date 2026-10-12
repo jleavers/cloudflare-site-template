@@ -10,7 +10,7 @@ that emails you or posts to Slack or Teams, and a preview for every pull request
 
 ![The example site, a fictional garden-design studio called Example Co., shown in a desktop browser window with a cream background, a large serif headline reading "Small gardens, designed to be lived in" and an illustration of green hills under a yellow sun; beside it, the same page on a phone. The content shown is fabricated.](docs/images/hero.png)
 
-**[Open the live demo](DEMO_URL)** · [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/jleavers/cloudflare-site-template)
+**[Open the live demo](https://cloudflare-site-template.84cde4841472e658.workers.dev)** · [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/jleavers/cloudflare-site-template)
 
 ## Contents
 
@@ -56,10 +56,10 @@ not, and the tests enforce them (details in [AGENTS.md](AGENTS.md#contracts)):
 
 ## Live demo
 
-[The live demo](DEMO_URL) runs the example site from this repository's `main`, on a Cloudflare
+[The live demo](https://cloudflare-site-template.84cde4841472e658.workers.dev) runs the example site from this repository's `main`, on a Cloudflare
 account used for nothing else. It uses Turnstile's public test keys and `log` delivery, so the
 contact form works end to end and sends nothing. The strip at the top of every page says so. The
-fictional Example Co. disappears from a site as soon as its own URL is set.
+strip disappears by itself once a site sets its own URL in `src/config/site.ts`; the example content is replaced by the `new-site` skill.
 
 ## Quick start
 
