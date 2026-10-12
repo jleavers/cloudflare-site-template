@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { checkPreflight, EXAMPLE_SITE_NAME, TEMPLATE_WORKER_NAME, type PreflightInput } from '../preflight/rules';
+import { checkPreflight, EXAMPLE_SITE_NAME, STALE_URL_WARNING, TEMPLATE_WORKER_NAME, type PreflightInput, type WranglerConfig } from '../preflight/rules';
 
 const template: PreflightInput = {
   wrangler: {
@@ -33,8 +33,22 @@ describe('demo mode (no custom domain)', () => {
     expect(checkPreflight({ ...template, wrangler: { ...template.wrangler, workers_dev: false } }).errors).toHaveLength(1);
   });
 
-  test('ignores plain route strings (zone routes are not custom domains)', () => {
-    expect(checkPreflight({ ...template, wrangler: { ...template.wrangler, routes: ['example.org/*'] } }).mode).toBe('demo');
+  test('warns, without failing, when site.url is example.com but the site is no longer the template', () => {
+    const renamed = { ...template, site: { ...template.site, name: 'Acme' } };
+    const result = checkPreflight(renamed);
+    expect(result.errors).toEqual([]);
+    expect(result.warnings).toEqual([STALE_URL_WARNING]);
+    const renamedWorker = checkPreflight({ ...template, wrangler: { ...template.wrangler, name: 'acme-site' } });
+    expect(renamedWorker.warnings).toEqual([STALE_URL_WARNING]);
+  });
+
+  test('does not warn about site.url on the untouched template', () => {
+    expect(checkPreflight(template).warnings).toEqual([]);
+  });
+
+  test('does not warn once site.url is the site\'s own workers.dev address', () => {
+    const own = { ...template, site: { ...template.site, name: 'Acme', url: 'https://acme.sub.workers.dev' } };
+    expect(checkPreflight(own).warnings).toEqual([]);
   });
 });
 
@@ -60,6 +74,56 @@ describe('production mode (a custom domain)', () => {
   test('rejects example.com addresses for Resend', () => {
     const vars = { ...real.wrangler.vars, CONTACT_TO_EMAIL: 'hello@example.com' };
     expect(checkPreflight({ ...real, wrangler: { ...real.wrangler, vars } }).errors.join('\n')).toMatch(/CONTACT_TO_EMAIL/);
+  });
+
+  describe.each<[string, WranglerConfig]>([
+    ['a zone route string', { routes: ['www.acme.test/*'] }],
+    ['a { pattern, zone_name } route', { routes: [{ pattern: 'www.acme.test/*', zone_name: 'acme.test' }] }],
+    ['the singular route key', { route: 'www.acme.test/*' }],
+    ['a route only under env.production', { env: { production: { routes: [{ pattern: 'www.acme.test', custom_domain: true }] } } }],
+    ['a singular route only under env.production', { env: { production: { route: { pattern: 'www.acme.test/*', zone_name: 'acme.test' } } } }],
+  ])('any route is production mode: %s', (_name, routing) => {
+    test('is production mode and names every template value', () => {
+      const result = checkPreflight({ ...template, wrangler: { ...template.wrangler, ...routing } });
+      expect(result.mode).toBe('production');
+      expect(result.errors.join('\n')).toContain('DELIVERY_PROVIDER');
+    });
+
+    test('passes for a finished site', () => {
+      const result = checkPreflight({ ...real, wrangler: { ...real.wrangler, routes: undefined, ...routing } });
+      expect(result).toEqual({ mode: 'production', errors: [], warnings: [], notes: [] });
+    });
+  });
+
+  test('an empty routes array is still demo mode', () => {
+    expect(checkPreflight({ ...template, wrangler: { ...template.wrangler, routes: [] } }).mode).toBe('demo');
+  });
+
+  test('matches an uppercase route pattern to a lowercase site.url, and uppercase email domains', () => {
+    const wrangler = {
+      ...real.wrangler,
+      routes: [{ pattern: 'WWW.Acme.Test', custom_domain: true }],
+      vars: { ...real.wrangler.vars, CONTACT_TO_EMAIL: 'hi@ACME.test', CONTACT_FROM_EMAIL: 'web@Example.COM' },
+    };
+    const result = checkPreflight({ ...real, wrangler });
+    expect(result.errors.join('\n')).not.toMatch(/custom domains/);
+    expect(result.errors.join('\n')).toMatch(/CONTACT_FROM_EMAIL/);
+  });
+
+  test('rejects a subdomain of example.com for the site URL and addresses', () => {
+    const wrangler = {
+      ...real.wrangler,
+      routes: [{ pattern: 'www.example.com', custom_domain: true }],
+      vars: { ...real.wrangler.vars, CONTACT_TO_EMAIL: 'hi@mail.example.com' },
+    };
+    const result = checkPreflight({ ...real, wrangler, site: { ...real.site, url: 'https://www.example.com' } });
+    expect(result.errors.join('\n')).toMatch(/example\.com \(https:\/\/www\.example\.com\)/);
+    expect(result.errors.join('\n')).toMatch(/CONTACT_TO_EMAIL/);
+  });
+
+  test('takes the host from a zone route string', () => {
+    const wrangler = { ...real.wrangler, routes: ['www.acme.test/*'] };
+    expect(checkPreflight({ ...real, wrangler }).errors).toEqual([]);
   });
 
   test('only warns when the design is missing', () => {

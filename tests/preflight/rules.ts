@@ -4,12 +4,19 @@ export const TEMPLATE_WORKER_NAME = 'cloudflare-site-template';
 export const EXAMPLE_SITE_NAME = 'Example Co.';
 const TURNSTILE_TEST_KEY = /^[123]x0{20}[A-Z]{2}$/;
 
-type Route = string | { pattern: string; custom_domain?: boolean; zone_name?: string };
+export interface RouteObject {
+  pattern: string;
+  custom_domain?: boolean;
+  zone_name?: string;
+}
+type Route = string | RouteObject;
 export interface WranglerConfig {
   name?: string;
   workers_dev?: boolean;
+  route?: Route;
   routes?: Route[];
   vars?: Record<string, string>;
+  env?: Record<string, WranglerConfig>;
 }
 export interface PreflightInput {
   wrangler: WranglerConfig;
@@ -24,19 +31,27 @@ export interface PreflightResult {
   notes: string[];
 }
 
+export const STALE_URL_WARNING =
+  'site.url is still example.com, but this is no longer the template: set site.url to this site\'s address (custom domain or workers.dev)';
+
 const isExampleHost = (host: string) => host === 'example.com' || host.endsWith('.example.com');
-const domainOf = (email: string | undefined) => email?.split('@')[1] ?? '';
+const domainOf = (email: string | undefined) => (email?.split('@')[1] ?? '').toLowerCase();
+
+/** The host of every route, at the top level and in every env.* block. A route string's host is the part before the first "/". */
+function routeHosts(config: WranglerConfig): string[] {
+  const routes = [...(config.route === undefined ? [] : [config.route]), ...(config.routes ?? [])];
+  const own = routes.map((route) => (typeof route === 'string' ? route : route.pattern).split('/')[0].toLowerCase());
+  return [...own, ...Object.values(config.env ?? {}).flatMap(routeHosts)];
+}
 
 /**
  * Contract C7. Example values may go to workers.dev (the demo, the Deploy button, a first
  * experiment) but never to a custom domain.
  */
 export function checkPreflight({ wrangler, site, designPresent }: PreflightInput): PreflightResult {
-  const customDomains = (wrangler.routes ?? [])
-    .filter((route): route is Exclude<Route, string> => typeof route === 'object' && route.custom_domain === true)
-    .map((route) => route.pattern);
+  const routeHostList = routeHosts(wrangler);
   const vars = wrangler.vars ?? {};
-  const siteHost = new URL(site.url).hostname;
+  const siteHost = new URL(site.url).hostname.toLowerCase();
   const provider = vars.DELIVERY_PROVIDER;
 
   const templateValues = [
@@ -53,15 +68,18 @@ export function checkPreflight({ wrangler, site, designPresent }: PreflightInput
   ] as const;
   const present: string[] = templateValues.filter(([found]) => found).map(([, message]) => message);
 
-  if (customDomains.length === 0) {
+  // Demo mode only when nothing routes anywhere: any route of any kind, in any env, means production.
+  if (routeHostList.length === 0) {
     const errors =
-      wrangler.workers_dev === false ? ['workers_dev is false and no custom domain is set, so the deploy would have no URL'] : [];
-    return { mode: 'demo', errors, warnings: [], notes: present };
+      wrangler.workers_dev === false ? ['workers_dev is false and no route is set, so the deploy would have no URL'] : [];
+    const isTemplate = wrangler.name === TEMPLATE_WORKER_NAME && site.name === EXAMPLE_SITE_NAME;
+    const warnings = isExampleHost(siteHost) && !isTemplate ? [STALE_URL_WARNING] : [];
+    return { mode: 'demo', errors, warnings, notes: present };
   }
 
   const errors = [...present];
-  if (!customDomains.includes(siteHost)) {
-    errors.push(`site.url's host (${siteHost}) is not one of the custom domains (${customDomains.join(', ')})`);
+  if (!routeHostList.includes(siteHost)) {
+    errors.push(`site.url's host (${siteHost}) is not one of the custom domains (${routeHostList.join(', ')})`);
   }
   const warnings = designPresent ? [] : ['design/ has neither SOURCE.md nor bundle/: was this site built from a design?'];
   return { mode: 'production', errors, warnings, notes: [] };

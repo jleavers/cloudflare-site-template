@@ -474,14 +474,15 @@ All helper scripts are Node (`.mjs`) or TypeScript, so they behave the same on W
 
 `npm run preflight` picks its mode from `wrangler.jsonc`.
 
-**Demo mode** applies when no route has `custom_domain: true`, so the deploy goes to workers.dev only.
+**Demo mode** applies only when there is no `route` and `routes` is absent or empty, at the top level **and** in every `env.*` block, so the deploy goes to workers.dev only.
 - It passes, and prints which example values are still present, so a demo deploy is never blocked.
 - This is how the live demo, the Deploy button and a new user's first experiment work.
 - It fails only if `workers_dev` is `false`, because then the deploy would have no URL at all.
+- It **warns** (never fails) when `site.url` is still on `example.com` but `site.name` is not `Example Co.` or the Worker `name` is not the template's: the site has been customised but still advertises the template's address (canonical and OpenGraph URLs, sitemap).
 
-**Production mode** applies when any route has `custom_domain: true`. It fails, naming each problem, when any of these hold:
+**Production mode** applies when a route of any kind exists: a custom domain, a zone route string, a `{ pattern, zone_name }` object, the singular `route`, or any of these under an `env.*` block. It fails, naming each problem, when any of these hold:
 - `wrangler.jsonc` `name` is `cloudflare-site-template`;
-- `site.url` is on `example.com`, or its host differs from the custom-domain pattern;
+- `site.url` is on `example.com`, or its host is not the host of any route (a route string's host is the part before the first `/`; an object's is its `pattern`; comparison is case-insensitive);
 - `site.contact.turnstileSiteKey` is a Turnstile test key (`1x…`, `2x…` or `3x…`);
 - `TURNSTILE_SECRET_KEY` is still in the top-level `vars`;
 - `DELIVERY_PROVIDER` is `log` or missing in the top-level `vars`;
