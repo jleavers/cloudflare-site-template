@@ -14,7 +14,9 @@
     "preview": "node scripts/dev-stack.mjs",
     "test:e2e": "playwright test",
     "lighthouse": "node scripts/lighthouse.mjs",
-    "lighthouse:ci": "node scripts/lighthouse.mjs --ci"
+    "lighthouse:ci": "node scripts/lighthouse.mjs --ci",
+    "preflight": "vitest run --project preflight",
+    "deploy": "astro build && npm run preflight && wrangler deploy"
   },
   "repository": {
     "type": "git",

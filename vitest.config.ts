@@ -5,6 +5,7 @@ export default defineConfig({
     projects: [
       { test: { name: 'unit', include: ['tests/unit/**/*.test.ts'], environment: 'node' } },
       { test: { name: 'dist', include: ['tests/dist/**/*.test.ts'], environment: 'node' } },
+      { test: { name: 'preflight', include: ['tests/preflight/**/*.test.ts'], environment: 'node' } },
     ],
   },
 });
