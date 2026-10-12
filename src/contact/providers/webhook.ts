@@ -5,6 +5,11 @@ export function slackEscape(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/** Teams renders a markdown subset; "] (" stops a visitor's [text](url) becoming a clickable masked link. */
+export function teamsEscape(text: string): string {
+  return text.replace(/\]\s*\(/g, '] (');
+}
+
 export const sendSlack: Provider = async (submission, config, { siteHost, fetch }) => {
   const message = slackEscape(submission.message).replace(/```/g, "'''");
   const text = [
@@ -27,11 +32,11 @@ export const sendTeams: Provider = async (submission, config, { siteHost, fetch 
       {
         type: 'FactSet',
         facts: [
-          { title: 'Name', value: submission.name },
-          { title: 'Email', value: submission.email },
+          { title: 'Name', value: teamsEscape(submission.name) },
+          { title: 'Email', value: teamsEscape(submission.email) },
         ],
       },
-      { type: 'TextBlock', text: submission.message, wrap: true },
+      { type: 'TextBlock', text: teamsEscape(submission.message), wrap: true },
     ],
   };
   await postJson(

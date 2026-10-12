@@ -6,7 +6,7 @@ import { providers } from '../../../src/contact/providers/index';
 import { redactEmail } from '../../../src/contact/providers/log';
 import { RESEND_URL } from '../../../src/contact/providers/resend';
 import { DeliveryError, type DeliveryContext } from '../../../src/contact/providers/types';
-import { slackEscape } from '../../../src/contact/providers/webhook';
+import { slackEscape, teamsEscape } from '../../../src/contact/providers/webhook';
 
 const submission = { name: 'Ada <Lovelace>', email: 'ada@example.com', message: 'Hello & welcome\n<!channel> ```code```' };
 const host = 'www.example.org';
@@ -101,6 +101,18 @@ describe('teams', () => {
     expect(card.type).toBe('AdaptiveCard');
     expect(JSON.stringify(card)).toContain('Ada <Lovelace>');
     expect(JSON.stringify(card)).toContain('ada@example.com');
+  });
+
+  test('breaks masked links in visitor text', async () => {
+    const { ctx, fetchFn } = context(new Response(null, { status: 202 }));
+    await providers.teams({ ...submission, message: 'Pay [Invoice](https://evil.example)' }, hookConfig('teams'), ctx);
+    const json = JSON.stringify(JSON.parse(fetchFn.mock.calls[0][1]?.body as string));
+    expect(json).not.toContain('](https://evil.example)');
+    expect(json).toContain('[Invoice] (https://evil.example)');
+  });
+
+  test('teamsEscape breaks markdown link syntax', () => {
+    expect(teamsEscape('see [this](https://evil.example) and [x]  (y)')).toBe('see [this] (https://evil.example) and [x] (y)');
   });
 
   test('a non-2xx answer is a DeliveryError', async () => {
