@@ -1,0 +1,68 @@
+---
+import { Font } from 'astro:assets';
+import DemoNotice from '../components/DemoNotice.astro';
+import { site } from '../config/site';
+import '../styles/global.css';
+
+interface Props {
+  /** The page's own title; the site name is appended. Omit on the home page. */
+  title?: string;
+  description?: string;
+  /** Site-relative or absolute URL of a 1200×630 image. */
+  ogImage?: string;
+  noindex?: boolean;
+  jsonLd?: Record<string, unknown> | Record<string, unknown>[];
+}
+
+const { title, description = site.description, ogImage = '/og-default.png', noindex = false, jsonLd } = Astro.props;
+const pageTitle = title ? `${title} · ${site.name}` : site.title;
+const canonical = new URL(Astro.url.pathname, site.url).href;
+const ogImageUrl = new URL(ogImage, site.url).href;
+const structured = jsonLd === undefined ? [] : Array.isArray(jsonLd) ? jsonLd : [jsonLd];
+// JSON-LD is inert data, but "</script>" inside a string would still end the element early.
+const ld = (item: Record<string, unknown>) => JSON.stringify(item).replace(/</g, '\\u003c');
+const beaconToken = site.analytics.cloudflareToken;
+---
+<!doctype html>
+<html lang={site.locale}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{pageTitle}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    {noindex && <meta name="robots" content="noindex" />}
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="sitemap" href="/sitemap-index.xml" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={site.name} />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImageUrl} />
+    <meta property="og:locale" content={site.locale.replace('-', '_')} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <Font cssVariable="--font-inter" preload />
+    <Font cssVariable="--font-fraunces" preload />
+    {structured.map((item) => <script is:inline type="application/ld+json" set:html={ld(item)} />)}
+    {
+      beaconToken && (
+        <script
+          is:inline
+          defer
+          src="https://static.cloudflareinsights.com/beacon.min.js"
+          data-cf-beacon={JSON.stringify({ token: beaconToken })}
+        />
+      )
+    }
+  </head>
+  <body>
+    <a
+      href="#main"
+      class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:rounded-md focus:bg-paper focus:px-4 focus:py-2"
+      >Skip to content</a
+    >
+    <DemoNotice />
+    <slot />
+  </body>
+</html>

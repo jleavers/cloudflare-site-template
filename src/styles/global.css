@@ -1,1 +1,41 @@
 @import "tailwindcss";
+
+/*
+ * Design tokens: the only place this site's colours, type and radii are defined (contract C1).
+ * A stamped-out site replaces these values with its design's; components use the utilities
+ * Tailwind generates from them (bg-brand, text-ink, font-display, rounded-card, ...).
+ */
+@theme {
+  --color-paper: oklch(0.98 0.012 100);
+  --color-ink: oklch(0.25 0.03 155);
+  --color-muted: oklch(0.45 0.03 155);
+  --color-line: oklch(0.88 0.02 130);
+  --color-brand: oklch(0.45 0.09 155);
+  --color-brand-ink: oklch(0.98 0.012 100);
+  --color-accent: oklch(0.82 0.12 88);
+  --radius-card: 1.25rem;
+}
+
+/* The Fonts API (astro.config.mjs) defines --font-inter and --font-fraunces with metric-matched fallbacks. */
+@theme inline {
+  --font-sans: var(--font-inter);
+  --font-display: var(--font-fraunces);
+}
+
+@layer base {
+  body {
+    @apply bg-paper font-sans text-ink antialiased;
+  }
+  h1, h2, h3 {
+    @apply font-display;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 3px;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
+}
