@@ -30,6 +30,7 @@ The output is a working site. Once the template is working and tested, the repos
 - **Licence:** Apache-2.0, matching the owner's other public repos (`codervis`, `issuebot`).
 - **CI runners:** the `jleavers/ci-runners` conventions. Browser tests run in CI on the self-hosted Linux VM, after Chromium's system libraries are added to it.
 - **A live demo is part of v1** (§14). The template's example site, with fabricated content, deploys from this repo to workers.dev. A new user can get the same site live on their own account straight away, using a "Deploy to Cloudflare" button, "Use this template" plus two secrets, or `npm run deploy`.
+- **The demo runs on a separate, free Cloudflare account** used for nothing else. The token this public repo holds can then reach only the demo, never the owner's real sites.
 - **README media is part of v1** (§14). Screenshots, a GIF of the form flow, a social preview and a LinkedIn header are captured from the example site, in the style of `issuebot` and `codervis`.
 
 **Success criteria.**
@@ -380,6 +381,12 @@ PR builds set `PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA`, the always-p
 
 **Permissions:** `contents: read` by default. Only the `preview` job adds `pull-requests: write`.
 
+**Supply chain:**
+- Every action is pinned to a full commit SHA, with the version in a trailing comment (`uses: actions/checkout@<sha> # v5.0.0`). A moved or compromised tag then cannot change what runs.
+- Jobs that receive the Cloudflare token use only GitHub's own `actions/*` and Cloudflare's `cloudflare/wrangler-action`.
+- No workflow uses `pull_request_target`.
+- These rules protect every stamped-out site as well, because each one holds a token that can edit every Worker on its account.
+
 | Job | When | Steps |
 |---|---|---|
 | `verify` | Every event except `closed` | `npm ci` → `npm run verify` (check, unit tests, build, dist contracts) |
@@ -532,10 +539,13 @@ The "under 5 minutes" target covers steps 1, 5 and 6 for an account where step 4
 
 ### 14.1 The live demo
 
-- **What it is:** the template's example site, deployed from this repo's `main` by the `deploy` job to `https://cloudflare-site-template.<owner-subdomain>.workers.dev`.
+- **What it is:** the template's example site, deployed from this repo's `main` by the `deploy` job to `https://cloudflare-site-template.<demo-subdomain>.workers.dev`.
   - It has fabricated content ("Example Co."), `log` delivery and Turnstile's test keys.
   - Preflight passes in demo mode (§11.3).
-  - Until the repo is public and the `deploy` job has runners, the owner deploys it with `npm run deploy`.
+- **Where it runs:** a **dedicated free Cloudflare account** that holds nothing but the demo.
+  - This repo's `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` belong to that account.
+  - The token is scoped to Workers Scripts:Edit and Account Settings:Read on it.
+  - Until the repo is public and the `deploy` job runs, the owner deploys the demo locally with that account's credentials. For example, a terminal with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` exported for the demo account, then `npm run deploy`. A `wrangler login` session belongs to whichever account is logged in, so a mix-up would put the demo on the main account.
 - **It is honest about being a demo:**
   - A `DemoNotice` strip renders whenever `site.url` is on `example.com`. It says the site is a demo of cloudflare-site-template, that the content is fictional and that the form sends nothing, and links to the repo.
   - Any site that sets its own URL loses the strip automatically, and the `new-site` skill deletes the component.
@@ -543,7 +553,7 @@ The "under 5 minutes" target covers steps 1, 5 and 6 for an account where step 4
 - **Risk is bounded:**
   - With test keys, the demo form has no real bot protection. But `log` sends nothing, so the worst case is using up the Worker's free daily request quota. Static pages are unaffected either way.
   - Fork PRs never receive secrets, and no workflow uses `pull_request_target`.
-  - The Cloudflare token can edit every Worker on the owner's account, so write access to this repo stays with the owner.
+  - If the token leaked anyway, through a compromised action or a careless workflow edit, it could reach only the demo account. Actions are SHA-pinned (§10) to make such a leak less likely.
 
 ### 14.2 Try it yourself (README "Quick start")
 
@@ -594,7 +604,7 @@ The capture tools are Node scripts using Playwright (already a dev dependency), 
 1. Add `LICENSE` with the Apache-2.0 text and `Copyright 2026 James Leavers`, as in `codervis`.
 2. Write the README per §14.3. Include the escape hatches (S3 or Caddy for `dist/`; wrapping `handleContact` in FastAPI or Lambda), and a note that the template code is Apache-2.0 while each site's content belongs to its owner.
 3. Check for personal data: no real emails or keys in the example. `site.ts` and `SITE_BRIEF.md` use example.com.
-4. Before flipping visibility, remove the jl-dev-02 runners and the `CI_LINUX_RUNNER` variable from this repo, and update the ci-runners Deployments table.
+4. Before flipping visibility, remove the jl-dev-02 runners and the `CI_LINUX_RUNNER` variable from this repo, and update the ci-runners Deployments table. Confirm that this repo's Cloudflare secrets belong to the demo account (§14.1), not the main one.
 5. Set "Template repository" (`gh api -X PATCH repos/jleavers/cloudflare-site-template -F is_template=true`), and make the repo public.
 6. Confirm, after the first public push, that CI is green on GitHub-hosted runners and that the `deploy` job redeployed the live demo.
 7. Upload `social-preview.png` under Settings → General → Social preview.
