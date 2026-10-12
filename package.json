@@ -12,7 +12,9 @@
     "test:dist": "vitest run --project dist",
     "verify": "npm run check && npm run test && npm run build && npm run test:dist",
     "preview": "node scripts/dev-stack.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "lighthouse": "node scripts/lighthouse.mjs",
+    "lighthouse:ci": "node scripts/lighthouse.mjs --ci"
   },
   "repository": {
     "type": "git",
@@ -35,6 +37,7 @@
   },
   "devDependencies": {
     "@astrojs/check": "0.9.10",
+    "@lhci/cli": "0.15.1",
     "@playwright/test": "1.64.0",
     "@types/node": "24.19.2",
     "jsonc-parser": "3.3.1",
