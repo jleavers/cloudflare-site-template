@@ -30,6 +30,8 @@ The output is a working site. Once the template is working and tested, the repos
 - **Licence:** Apache-2.0, matching the owner's other public repos (`codervis`, `issuebot`).
 - **CI runners:** the `jleavers/ci-runners` conventions. Browser tests run in CI on the self-hosted Linux VM, after Chromium's system libraries are added to it.
 - **A live demo is part of v1** (§14). The template's example site, with fabricated content, deploys from this repo to workers.dev. A new user can get the same site live on their own account straight away, using a "Deploy to Cloudflare" button, "Use this template" plus two secrets, or `npm run deploy`.
+- **A security sweep runs before the repository goes public** (§18). It is the Claude Code workflow from `jleavers/codervis`, ported with lanes for this repository, as was done for codervis and issuebot before they went public.
+- **Dependabot** keeps the SHA-pinned actions and the exact npm versions current (§10).
 - **The demo runs on a separate, free Cloudflare account** used for nothing else. The token this public repo holds can then reach only the demo, never the owner's real sites.
 - **README media is part of v1** (§14). Screenshots, a GIF of the form flow, a social preview and a LinkedIn header are captured from the example site, in the style of `issuebot` and `codervis`.
 
@@ -91,7 +93,12 @@ Browser ──► Cloudflare edge
 ## 4. Repository layout
 
 ```
+.claude/README.md                  what ships under .claude/, and why there is no settings.json
+.claude/agents/sweep-*.md          one tool profile per security-sweep stage (§18)
 .claude/skills/new-site/SKILL.md   stamp-out procedure: design + brief → site → verify
+.claude/skills/security-sweep/SKILL.md  how the owner runs and audits the sweep (§18)
+.claude/workflows/security-sweep.js     the sweep: recon, lanes, refuters, triage, report (§18)
+.github/dependabot.yml             monthly grouped npm and Actions updates (§10)
 .github/workflows/ci.yml           verify · e2e · deploy · preview · preview-cleanup
 design/README.md                   where a site's Claude Design handoff goes (committed, never built)
 docs/PRD.md                        original requirements
@@ -103,23 +110,30 @@ public/
   og-default.png                   1200×630 fallback OpenGraph image
 scripts/
   dev-stack.mjs                    builds with the test site key, then runs `wrangler dev` with test vars (§7.5)
+  lighthouse.mjs                   runs lhci in local or CI mode (§11.4)
+  test-keys.mjs                    Turnstile's published always-pass test keys
 src/
   assets/                          images processed by <Image>
   components/                      Header Hero Features Testimonials FAQ ContactForm Footer DemoNotice (.astro)
   config/site.ts                   site-wide facts (§6.1)
   contact/
-    handler.ts                     handleContact(): the pipeline in §7.3
+    handler.ts                     handleContact(request, env, deps): the pipeline in §7.3
     config.ts                      ContactConfig type, and readConfig() from a plain env object
     validate.ts                    pure field validation
     turnstile.ts                   siteverify call
+    logger.ts                      one-JSON-line-per-event logger
+    http.ts                        json() response helper
+    providers/types.ts             Provider, DeliveryContext, DeliveryError, postJson()
+    providers/format.ts            the plain-text message layout
     providers/resend.ts
     providers/webhook.ts           slack | teams
-    providers/log.ts               previews and local dev: logs, sends nothing
-    http.ts                        json() response helper
+    providers/log.ts               previews and local dev: logs shapes, sends nothing
+    providers/index.ts             provider name → implementation
   layouts/BaseLayout.astro         <head>: SEO, OpenGraph, canonical, JSON-LD, fonts, optional analytics
   pages/
     index.astro  privacy.astro  404.astro
     robots.txt.ts
+  scripts/contact-form.ts          the form's behaviour: lazy Turnstile, submit, states (C5)
   styles/global.css                Tailwind import, and @theme: the only home for design tokens
   worker.ts                        Env type, /api routing, ASSETS fallback
 tests/
@@ -127,13 +141,14 @@ tests/
   dist/                            vitest: contract tests on the built dist/
   preflight/                       vitest: "is this still the template?" checks
   e2e/                             Playwright: browser tests against `wrangler dev`
-tools/screenshots/                 README media capture: capture.mjs, social-preview.{html,mjs},
-                                   linkedin-header.{html,mjs}, README.md (§14.3)
+  sweep/                           vitest: the security-sweep engine, relay fence, shipped files (§18)
+tools/screenshots/                 README media capture: capture.mjs, layouts.mjs, README.md (§14.3)
 .nvmrc                             24
 AGENTS.md                          rules for AI agents (§12)
 CLAUDE.md                          @AGENTS.md
 LICENSE                            Apache-2.0
 README.md                          what this is, and the stamp-out runbook
+SECURITY.md                        private vulnerability reporting, and what is in scope
 SITE_BRIEF.md                      per-site facts and copy; the template's copy describes the example site
 astro.config.mjs  lighthouserc.json  package.json  playwright.config.ts  tsconfig.json
 vitest.config.ts  wrangler.jsonc
@@ -178,7 +193,11 @@ export interface SiteConfig {
     address?: string;
     privacyEmail: string;
   };
-  analytics?: { cloudflareToken?: string };  // Cloudflare Web Analytics beacon token
+  privacy: {                     // drives the privacy page
+    processors: { name: string; purpose: string; url: string }[];
+    retention: string;
+  };
+  analytics: { cloudflareToken?: string };  // Cloudflare Web Analytics beacon token
 }
 export const site: SiteConfig = { /* the example site's values */ };
 ```
@@ -280,7 +299,7 @@ Each provider exports `send(submission, config, fetch): Promise<void>` and throw
 - **resend:** `POST https://api.resend.com/emails` with `Authorization: Bearer <key>` and body `{ from, to: [to], reply_to: submission.email, subject: "New enquiry from <name> via <host>", text }`. Plain text only, so there's no HTML-injection surface.
 - **slack:** `POST WEBHOOK_URL` with `{ text }`, using plain text with the visitor's input inside code fences so Slack's mrkdwn can't format it.
 - **teams:** `POST WEBHOOK_URL` with the payload the current Teams incoming-webhook mechanism expects. That is a Workflows webhook taking an Adaptive Card message, and it is verified during implementation (§16).
-- **log:** `console.log` of the submission with the email redacted to `j***@domain`. It returns successfully.
+- **log:** logs the submission's shape and nothing of its content: the email redacted to `j***@domain`, plus the name's and message's lengths. It returns successfully, so a visitor's words never sit in a log.
 
 ### 7.5 Config sources
 
@@ -400,6 +419,8 @@ PR builds set `PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA`, the always-p
   - `CLOUDFLARE_ACCOUNT_ID`.
 - **Optional repo variable:** `CI_LINUX_RUNNER`.
 - **Fork PRs** never see secrets, so they run `verify` and `e2e` only. That is exactly what the public template needs.
+- **Dependabot** (`.github/dependabot.yml`) opens monthly, grouped updates for npm and GitHub Actions, with a 7-day cooldown and TypeScript held below 7. Stamped-out sites inherit it.
+- **Workflow linting:** `actionlint` and `zizmor` run as pre-commit hooks.
 - **Self-hosted runners** may serve this repository only while it is private. They are removed before it goes public, per the ci-runners Trust rule.
 
 **One-off VM change, made by the owner.** jl-dev-02 needs Chromium's system libraries for `e2e`. Jobs have no sudo, so they cannot install them.
@@ -605,6 +626,7 @@ The capture tools are Node scripts using Playwright (already a dev dependency), 
 2. Write the README per §14.3. Include the escape hatches (S3 or Caddy for `dist/`; wrapping `handleContact` in FastAPI or Lambda), and a note that the template code is Apache-2.0 while each site's content belongs to its owner.
 3. Check for personal data: no real emails or keys in the example. `site.ts` and `SITE_BRIEF.md` use example.com.
 4. Before flipping visibility, remove the jl-dev-02 runners and the `CI_LINUX_RUNNER` variable from this repo, and update the ci-runners Deployments table. Confirm that this repo's Cloudflare secrets belong to the demo account (§14.1), not the main one.
+4a. Run the security sweep (§18) with `baseline` and then `public`, and fix every critical and high cluster before the flip.
 5. Set "Template repository" (`gh api -X PATCH repos/jleavers/cloudflare-site-template -F is_template=true`), and make the repo public.
 6. Confirm, after the first public push, that CI is green on GitHub-hosted runners and that the `deploy` job redeployed the live demo.
 7. Upload `social-preview.png` under Settings → General → Social preview.
@@ -641,3 +663,45 @@ These are facts the design depends on that could not be fully confirmed from doc
 - Workers Builds as the CI for stamped-out sites. The Deploy button uses it for a visitor's copy, and the README mentions it in one paragraph as an alternative for anyone short of Actions minutes, but `ci.yml` remains the supported pipeline.
 - A Windows CI job.
 - A custom domain for the live demo. Preflight's production mode would rightly reject the example values there.
+
+## 18. Security sweep before release
+
+The owner's public repositories (`codervis`, `issuebot`) were each swept before going public with a Claude Code workflow. This repository ports `jleavers/codervis`'s version, pinned at `1871374e`, because it has four safeguards issuebot's lacks:
+- a data-not-instructions fence around everything relayed between stages;
+- per-stage tool profiles;
+- a tracker listing filtered to maintainer-authored items;
+- private-advisory filing.
+
+**What carries over unchanged:** the generic engine (schemas, the fence, `launch`, the scan, verify, escalate, triage, critic and report prompts, the pipeline) and three of the five agent profiles.
+
+**What is rewritten:**
+- the hands-off rules (Wrangler logins, `.dev.vars`, the live sites, and the Cloudflare, Resend, Slack and Teams APIs);
+- the "where you are" preamble;
+- recon;
+- three GitHub-side read bounds;
+- the lanes.
+
+**Lanes, in two sets:**
+
+| Set | Lane | Attacker or question | Web |
+|---|---|---|---|
+| `baseline` | `contact-handler` | an anonymous POST to `/api/contact` | yes |
+| | `served-surface` | what a deployed site serves, and what a browser may do with it | yes |
+| | `ci-workflow` | a pull request, a fork, or a compromised action | yes |
+| | `npm-supply-chain` | the dependencies, and history GitHub serves by SHA | yes |
+| | `design-ingest` | the author of a Claude Design bundle | no |
+| `public` | `disclosure` | everything that flipping to public publishes | yes |
+| | `outsiders` | any GitHub account, once the repository is public | yes |
+| | `shipped-text` | what the agent text tells a stranger's agent; which controls fail open (by mutation) | no |
+
+**Rules for running it:**
+- It runs in a fresh session, so that the agent profiles are registered, with a read-only `gh` credential.
+- Each run ends with the post-run audit of the transcripts.
+- **While the repository is private, findings are held in the run directory, not filed.** Repository security advisories need a public repository, and an issue filed now would become public at the flip, before its fix.
+- Critical and high clusters block the release.
+- After the flip, approved clusters are filed as draft security advisories.
+- The skill never removes a directory tree. The owner deletes the scratch directory.
+
+**Tests:**
+- `tests/sweep/` pins that the workflow compiles, its lane sets and web flags, and that nothing of codervis remains.
+- It pins the stage tool profiles, the relay fence (ported from codervis's relay test to ESM vitest), and the exact set of files shipped under `.claude/`.
