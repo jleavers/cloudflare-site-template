@@ -79,7 +79,7 @@ Browser ──► Cloudflare edge
               │
               └─ /api/* or no matching file ──► src/worker.ts   (Cloudflare-specific code)
                                                   │
-                    POST /api/contact ────────────┤──► handleContact(request, config, deps)   src/contact/
+                    POST /api/contact ────────────┤──► handleContact(request, env, deps)      src/contact/
                                                   │      ├─ turnstile.ts ──► challenges.cloudflare.com siteverify
                                                   │      ├─ validate.ts
                                                   │      └─ providers/{resend,webhook,log}.ts ──► api.resend.com | Slack | Teams
@@ -263,12 +263,12 @@ interface Env {
 
 The worker defines its own minimal `Env`, with no generated Workers types, so one tsconfig covers everything. Routing:
 
-- `/api/contact` with `POST` calls `handleContact(request, readConfig(env), { fetch })`.
+- `/api/contact` with `POST` calls `handleContact(request, env, { fetch })`.
 - `/api/contact` with any other method returns 405 and `Allow: POST`.
 - Any other `/api/*` path returns 404 JSON.
 - Everything else returns `env.ASSETS.fetch(request)`.
 
-### 7.3 Handler pipeline: `handleContact(request, config, deps)`
+### 7.3 Handler pipeline: `handleContact(request, env, deps)`
 
 Every response is JSON: `{ ok: boolean, message: string, errors?: Record<string, string> }`, with `Cache-Control: no-store`.
 
@@ -277,9 +277,10 @@ Every response is JSON: `{ ok: boolean, message: string, errors?: Record<string,
 | 1 | The `Origin` header equals `new URL(request.url).origin` | 403 "Forbidden" |
 | 2 | `Content-Type` is `multipart/form-data` or `application/x-www-form-urlencoded`, and the body is ≤ 32 KB (checked on `Content-Length` and on the bytes actually read) | 400, or 413 when too large |
 | 3 | `_gotcha` is empty | **200** `{ ok: true }`. Nothing is sent and the request is logged as spam. |
+| 3a | Config: `readConfig(env)` succeeds | 500, generic message, detail logged |
 | 4 | Turnstile siteverify `POST`s `secret`, `response` (`cf-turnstile-response`) and `remoteip` (`CF-Connecting-IP` when present), with a 5 s timeout | Token missing or `success: false`: 403. Siteverify unreachable, timed out or 5xx: 503, unless `TURNSTILE_FAIL_OPEN === "true"`, which logs a warning and continues. |
 | 5 | Validate after trimming. `name` is 1–100 characters with no control characters. `email` is ≤ 254 characters, has no whitespace or control characters, and matches `local@domain.tld`. `message` is 1–5,000 characters; control characters other than `\n` and `\t` are stripped and `\r\n` becomes `\n`. | 400 with per-field `errors` |
-| 6 | Deliver through the provider named by `DELIVERY_PROVIDER` | The provider rejects or is unreachable: 502. Config is missing or the provider is unknown: 500 (logged, generic message). |
+| 6 | Deliver through the provider named by `DELIVERY_PROVIDER` | The provider rejects or is unreachable: 502. |
 | 7 | Success | 200 `{ ok: true, message: "Thanks, we'll be in touch." }`. The site's own success message is shown client-side. |
 
 `readConfig(env)` validates the config for the chosen provider and lists everything that is missing:
