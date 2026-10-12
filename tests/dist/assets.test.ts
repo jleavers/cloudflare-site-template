@@ -14,6 +14,11 @@ describe.each(pages().map((page) => [page.route, page] as const))('page %s', (_r
     }
   });
 
+  // C3: no framework islands.
+  test('has no <astro-island>', () => {
+    expect(page.root.querySelectorAll('astro-island')).toHaveLength(0);
+  });
+
   test('has no inline event-handler attributes', () => {
     for (const element of page.root.querySelectorAll('*')) {
       for (const name of Object.keys(element.attributes)) {

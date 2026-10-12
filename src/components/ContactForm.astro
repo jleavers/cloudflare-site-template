@@ -10,8 +10,8 @@ const { heading = 'Get in touch', intro } = Astro.props;
 // PR previews, local runs and browser tests build with Turnstile's test key (scripts/dev-stack.mjs, ci.yml).
 const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY || site.contact.turnstileSiteKey;
 const fallback = site.contact.fallbackEmail;
-const field = 'mt-2 w-full rounded-xl border border-line bg-white px-4 py-3 text-ink aria-[invalid=true]:border-red-700';
-const error = 'mt-2 text-sm text-red-800';
+const field = 'mt-2 w-full rounded-xl border border-line bg-surface px-4 py-3 text-ink aria-[invalid=true]:border-error';
+const error = 'mt-2 text-sm text-error';
 ---
 <section id="contact" class="scroll-mt-24 border-t border-line">
   <div class="mx-auto grid max-w-6xl gap-x-12 gap-y-12 px-6 py-20 md:grid-cols-12 md:py-28">
@@ -58,11 +58,11 @@ const error = 'mt-2 text-sm text-red-800';
           <button type="submit" data-submit disabled class="rounded-full bg-brand px-7 py-3.5 font-semibold text-brand-ink hover:bg-ink disabled:cursor-not-allowed disabled:opacity-50">
             Send message
           </button>
-          <p data-status role="status" aria-live="polite" class="text-sm in-data-[state=error]:text-red-800 in-data-[state=sent]:text-brand"></p>
+          <p data-status role="status" aria-live="polite" class="text-sm in-data-[state=error]:text-error in-data-[state=sent]:text-brand"></p>
         </div>
 
         <noscript>
-          <p class="rounded-xl border border-line bg-white p-4">
+          <p class="rounded-xl border border-line bg-surface p-4">
             This form needs JavaScript.
             {fallback ? <>Please email us at <a class="underline" href={`mailto:${fallback}`}>{fallback}</a> instead.</> : 'Please turn it on to send us a message.'}
           </p>
