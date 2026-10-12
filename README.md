@@ -15,7 +15,8 @@ that emails you or posts to Slack or Teams, and a preview for every pull request
 ## Contents
 
 - [How it works](#how-it-works): the pieces, and what the template guarantees
-- [Quick start](#quick-start): the example site live on your own account in two minutes
+- [Live demo](#live-demo): what it runs, and why its form sends nothing
+- [Quick start](#quick-start): the example site live on your own account in a few minutes
 - [Stamp out a site](#stamp-out-a-site): design and brief in, live site out
 - [One-off setup](#one-off-setup): Turnstile, email, Cloudflare token
 - [Configuration reference](#configuration-reference)
@@ -53,10 +54,17 @@ not, and the tests enforce them (details in [AGENTS.md](AGENTS.md#contracts)):
 | C6 | The form handler uses Web-standard APIs only |
 | C7 | Example values never reach a custom domain |
 
+## Live demo
+
+[The live demo](DEMO_URL) runs the example site from this repository's `main`, on a Cloudflare
+account used for nothing else. It uses Turnstile's public test keys and `log` delivery, so the
+contact form works end to end and sends nothing. The strip at the top of every page says so. The
+fictional Example Co. disappears from a site as soon as its own URL is set.
+
 ## Quick start
 
 Three ways to put the example site live on **your own** Cloudflare account, each needing no
-secrets. The form works and sends nothing until you configure delivery.
+Worker secrets (nothing for Turnstile or email delivery). The form works and sends nothing until you configure delivery.
 
 1. **One click:** the **Deploy to Cloudflare** button above. Cloudflare copies this repository
    into your GitHub account, builds it and deploys it.
@@ -161,7 +169,7 @@ on Cloudflare's own minutes.
   that speaks those APIs it is a one-liner, for example on Deno:
   `Deno.serve((request) => handleContact(request, Deno.env.toObject(), { fetch }))`. On AWS
   Lambda, put it behind a Request/Response adapter, or translate it: it is a pipeline of seven
-  plain steps (spec §7.3).
+  plain steps ([spec §7.3](docs/superpowers/specs/2026-10-12-cloudflare-site-template-design.md)).
 
 ## Licence
 
