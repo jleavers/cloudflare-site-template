@@ -31,7 +31,7 @@ describe('agent-facing documents', () => {
     },
   );
 
-  test.each(['tar -tvzf', 'zipinfo', 'symlink', 'hard link', '--no-same-owner', 'CLAUDE.md', '.untrusted', 'file://', "--proto '=https'", 'max-filesize'])(
+  test.each(['tar -tvzf', 'zipinfo', 'symlink', 'hard link', '--no-same-owner', 'CLAUDE.md', '.untrusted', 'file://', "--proto '=https'", 'max-filesize', "--proto-redir '=https'", '-depth'])(
     'the new-site skill keeps the bundle safeguard %s',
     (safeguard) => expect(read('.claude/skills/new-site/SKILL.md')).toContain(safeguard),
   );
