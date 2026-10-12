@@ -4,6 +4,8 @@ import { describe, expect, test } from 'vitest';
 
 const read = (path: string) => readFileSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)), 'utf8');
 const scripts = Object.keys(JSON.parse(read('package.json')).scripts as Record<string, string>);
+// Tolerant of CRLF, which Git for Windows can check out when .gitattributes is overridden.
+const SKILL_FRONTMATTER = /^---\r?\nname: new-site\r?\ndescription: .+\r?\n---\r?\n/;
 const DOCS = ['AGENTS.md', '.claude/skills/new-site/SKILL.md', 'SITE_BRIEF.md', 'design/README.md', 'README.md'];
 
 describe('agent-facing documents', () => {
@@ -21,7 +23,11 @@ describe('agent-facing documents', () => {
   });
 
   test('the new-site skill has frontmatter naming it', () => {
-    expect(read('.claude/skills/new-site/SKILL.md')).toMatch(/^---\nname: new-site\ndescription: .+\n---\n/);
+    expect(read('.claude/skills/new-site/SKILL.md')).toMatch(SKILL_FRONTMATTER);
+  });
+
+  test('the frontmatter check tolerates CRLF checkouts', () => {
+    expect(read('.claude/skills/new-site/SKILL.md').replaceAll('\n', '\r\n')).toMatch(SKILL_FRONTMATTER);
   });
 
   test.each(DOCS.filter((doc) => existsSync(fileURLToPath(new URL(`../../${doc}`, import.meta.url)))))(
