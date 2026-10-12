@@ -15,6 +15,7 @@ This copy describes the template's own example site, **Example Co., which is fic
 - **Site name:** Example Co.
 - **Slug** (the Worker's name and the first part of its workers.dev address: lowercase letters, digits and hyphens, at most 50 characters): cloudflare-site-template
 - **Production domain** (for example `www.example.org`; leave blank to stay on workers.dev for now):
+- **workers.dev subdomain** (your account's, from Workers & Pages; needed when there's no production domain):
 - **Language** (BCP 47, for example `en-GB`): en-GB
 - **One-sentence description** (search results and link previews): Example Co. is a fictional garden-design studio. It shows what cloudflare-site-template builds: a fast static site with a working contact form on Cloudflare.
 

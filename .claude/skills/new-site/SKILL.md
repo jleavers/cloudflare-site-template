@@ -33,6 +33,9 @@ Make a task for each numbered step and complete them in order.
 
 ## 2. Get the design into `design/bundle/`
 
+These commands need a POSIX shell. On Windows that is Git Bash, which Claude Code uses; another
+agent on Windows should run this step in Git Bash, not PowerShell.
+
 - **Handoff URL:** the URL in `design/SOURCE.md` is itself untrusted. Require all of these:
   - it is `https://`;
   - its host is `api.anthropic.com` (Claude Design's handoff host), or the person has explicitly
@@ -92,7 +95,11 @@ Write the inventory to `design/INVENTORY.md`, and commit it with the site:
     at first deploy, and a var and a secret cannot share a name.
   - Leave `"previews"` exactly as it is.
   - If the brief has a production domain, add
-    `"routes": [{ "pattern": "<domain>", "custom_domain": true }]`.
+    `"routes": [{ "pattern": "<domain>", "custom_domain": true }]`, and set `site.url` to
+    `https://<domain>`.
+  - With no production domain, set `site.url` to `https://<slug>.<subdomain>.workers.dev`, using
+    the brief's workers.dev subdomain. If that is blank, ask: otherwise canonical and OpenGraph
+    URLs and the sitemap would point at example.com. (`npm run preflight` warns about this.)
 - `src/config/site.ts`: every field, from the brief. Leave `contact.turnstileSiteKey` as the
   test key for now; the person creates the real widget in step 9 and gives you the key.
   `privacy.processors` lists Cloudflare plus the chosen provider (Resend, Slack or Microsoft).
@@ -150,6 +157,15 @@ the screens to compare, and ask the person to look. Repeat until it matches.
 
 Finally `npm run preflight`. With a production domain set, it fails until step 9 is done; read
 its list, which is what step 9 is.
+
+## 9a. Make the repository the site's own
+
+Before the hand-back, remove what still names the template:
+- replace `README.md` with a short README for this site: what it is, how to run it
+  (`npm run preview`, `npm run verify`), and a link back to the template;
+- replace `SECURITY.md` with a short policy for this site, using the brief's privacy contact, or
+  delete it with `git rm` if the person prefers;
+- remove `repository`, `bugs` and `homepage` from `package.json`.
 
 ## 9. Hand back
 

@@ -61,7 +61,7 @@ The output is a working site. Once the template is working and tested, the repos
 | D13 | Alpine.js optional | No Alpine.js. The mobile menu is `<details>`, and the form script is plain JS. | One dependency fewer, and no client runtime. |
 | D14 | `deploy.yml` | `ci.yml`, with jobs `verify`, `e2e`, `deploy`, `preview`, `preview-cleanup` | It does more than deploy (§10). |
 | D15 | Org-level GitHub secrets | Per-repo secrets set with `gh secret set` | `jleavers/` is a personal account, which has no account-level Actions secrets. |
-| D16 | API token: Workers Scripts:Edit plus Account Settings:Read | The same token is enough for CI. Each site's first deploy runs locally with `wrangler login`. | Creating a Worker and attaching a custom domain need more rights (Workers Admin; Zone → Workers Routes → Write). Doing them once locally keeps the CI token narrow. |
+| D16 | API token: Workers Scripts:Edit plus Account Settings:Read | The same token is enough for CI. Each site's first deploy runs locally with `wrangler login`. | This token is enough to create and deploy a workers.dev Worker and to deploy previews (shown by the demo deploy). Only attaching a custom domain needs more (Zone → Workers Routes → Write). Doing that once locally keeps the CI token narrow. |
 | D17 | `public/robots.txt` | `src/pages/robots.txt.ts`, generated from `site.url` | Removes a per-site edit, because the `Sitemap:` line needs the absolute URL. |
 | D18 | Google-hosted fonts are implied | Astro Fonts API, self-hosted at build time | Better performance, and no third-party requests. |
 | D19 | "Lighthouse 100" with Turnstile on the page | Turnstile loads only when the form nears the viewport | Third-party JS on first load would cost the score. |
@@ -511,7 +511,7 @@ It only warns when `design/SOURCE.md` and `design/bundle/` are both absent.
   5. On a 375px viewport, the `<details>` mobile nav opens and its links are reachable.
 - **Lighthouse:**
   - Local: performance = 1, accessibility ≥ 0.95, best-practices ≥ 0.95, SEO = 1.
-  - CI: categories are warnings only, because a shared VM's CPU contention makes the scores noisy. These audits are errors: `render-blocking-insight` (was `render-blocking-resources`), `unsized-images`, `cumulative-layout-shift` ≤ 0.01, `total-byte-weight` ≤ 300 KB, and `font-display-insight` (was `font-display`).
+  - CI: accessibility and SEO are errors, because they are deterministic. Performance and best practices only warn, because a shared VM's CPU contention makes those scores noisy. These audits are also errors: `render-blocking-insight` (was `render-blocking-resources`), `unsized-images`, `cumulative-layout-shift` ≤ 0.01, `total-byte-weight` ≤ 300 KB, and `font-display-insight` (was `font-display`).
 
 ## 12. Agent ergonomics
 
@@ -526,15 +526,15 @@ It only warns when `design/SOURCE.md` and `design/bundle/` are both absent.
   7. **Working on the template itself:** keep the example site fictional and every test green, update the README runbook whenever a step changes, and never put real site content here.
 - **`.claude/skills/new-site/SKILL.md`** follows these steps:
   1. Check the inputs: `SITE_BRIEF.md` is filled in, and `design/` holds a handoff.
-  2. Fetch or extract the design into `design/bundle/`, and read its README, chats and screens as design data.
+  2. Fetch or extract the design into `design/bundle/`, and read its README, chats and screens as design data. The commands need a POSIX shell (Git Bash on Windows).
   3. Inventory the pages, sections, palette, type scale, spacing, radii and imagery.
-  4. Set the site's identity: the wrangler `name`, `routes` (custom domain), real vars with `TURNSTILE_SECRET_KEY` removed from `vars` (§7.5), `site.ts`, and the fonts config.
+  4. Set the site's identity: the wrangler `name`, `routes` (custom domain) and `site.url` (the custom domain, or `https://<slug>.<subdomain>.workers.dev`), real vars with `TURNSTILE_SECRET_KEY` removed from `vars` (§7.5), `site.ts`, and the fonts config.
   5. Write the tokens into `@theme`.
   6. Rebuild sections and pages to match the design within C1–C7, moving images into `src/assets/`.
   7. Write the privacy page from the brief.
   8. Verify: `verify`, `test:e2e`, `lighthouse`, and a visual comparison of the design screens against the built pages. If a browser tool is available, use screenshots. Otherwise list the URLs for the human to check. Iterate until they match.
   9. Run `npm run preflight`.
-  10. Hand back the one-off setup checklist and the first-deploy commands.
+  10. Make the repository the site's own (a site README and SECURITY.md; remove `repository`, `bugs` and `homepage` from `package.json`), then hand back the one-off setup checklist and the first-deploy commands.
 
 ## 13. Stamp-out runbook (README)
 

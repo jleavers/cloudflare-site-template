@@ -47,5 +47,15 @@ describe('agent-facing documents', () => {
     expect(headings).toEqual(['1', '2', '3', '4', '5', '6']);
   });
 
+  test('a site without a domain has a source for site.url', () => {
+    expect(read('SITE_BRIEF.md')).toMatch(/^- \*\*workers\.dev subdomain\*\*/m);
+    expect(read('.claude/skills/new-site/SKILL.md')).toContain('https://<slug>.<subdomain>.workers.dev');
+  });
+
+  test('the new-site skill removes the template identity and notes the POSIX shell', () => {
+    const skill = read('.claude/skills/new-site/SKILL.md');
+    for (const fragment of ['## 9a.', '`repository`, `bugs` and `homepage`', 'SECURITY.md', 'Git Bash']) expect(skill).toContain(fragment);
+  });
+
   test('the README has no unfilled tokens', () => expect(read('README.md')).not.toMatch(/DEMO_URL/));
 });

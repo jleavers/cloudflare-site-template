@@ -112,11 +112,11 @@ preview. A free widget takes up to ten hostnames. Put the **site key** in
 ### Cloudflare API token
 
 For CI: My Profile → API Tokens → Create Custom Token with **Account → Workers Scripts → Edit**
-and **Account → Account Settings → Read**, limited to one account. That is enough to deploy and
-preview an existing Worker. Creating the Worker and attaching a custom domain need more
-(Workers Admin; Zone → Workers Routes → Write), which is why the first deploy runs from your
-machine with `wrangler login`. A token with Workers Scripts → Edit can change **every** Worker
-on its account, so keep the repositories that hold one to yourself.
+and **Account → Account Settings → Read**, limited to one account. That is enough to create and
+deploy a workers.dev Worker and to deploy previews. Only **attaching a custom domain** needs more
+(Zone → Workers Routes → Write), which is why that first deploy runs from your machine with
+`wrangler login`. A token with Workers Scripts → Edit can change **every** Worker on its account,
+so keep the repositories that hold one to yourself.
 
 ## Configuration reference
 
