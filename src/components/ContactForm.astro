@@ -1,0 +1,78 @@
+---
+import { LIMITS } from '../contact/validate';
+import { site } from '../config/site';
+
+interface Props {
+  heading?: string;
+  intro?: string;
+}
+const { heading = 'Get in touch', intro } = Astro.props;
+// PR previews, local runs and browser tests build with Turnstile's test key (scripts/dev-stack.mjs, ci.yml).
+const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY || site.contact.turnstileSiteKey;
+const fallback = site.contact.fallbackEmail;
+const field = 'mt-2 w-full rounded-xl border border-line bg-white px-4 py-3 text-ink aria-[invalid=true]:border-red-700';
+const error = 'mt-2 text-sm text-red-800';
+---
+<section id="contact" class="scroll-mt-24 border-t border-line">
+  <div class="mx-auto grid max-w-6xl gap-x-12 gap-y-12 px-6 py-20 md:grid-cols-12 md:py-28">
+    <div class="md:col-span-5">
+      <h2 class="text-4xl leading-tight tracking-tight md:text-5xl">{heading}</h2>
+      {intro && <p class="mt-4 text-lg text-muted">{intro}</p>}
+    </div>
+
+    <div class="md:col-span-7">
+      <!-- Contract C5: restyle freely; keep every data-* hook, name, action and method. -->
+      <form
+        data-contact-form
+        data-state="idle"
+        data-success-message={site.contact.successMessage}
+        data-fallback-email={fallback ?? ''}
+        action="/api/contact"
+        method="post"
+        class="grid gap-6"
+      >
+        <div>
+          <label for="contact-name" class="font-semibold">Name</label>
+          <input id="contact-name" name="name" type="text" autocomplete="name" required maxlength={LIMITS.name} aria-describedby="contact-name-error" class={field} />
+          <p id="contact-name-error" data-error-for="name" class={error} hidden></p>
+        </div>
+        <div>
+          <label for="contact-email" class="font-semibold">Email</label>
+          <input id="contact-email" name="email" type="email" autocomplete="email" required maxlength={LIMITS.email} aria-describedby="contact-email-error" class={field} />
+          <p id="contact-email-error" data-error-for="email" class={error} hidden></p>
+        </div>
+        <div>
+          <label for="contact-message" class="font-semibold">Message</label>
+          <textarea id="contact-message" name="message" rows="6" required maxlength={LIMITS.message} aria-describedby="contact-message-error" class={field}></textarea>
+          <p id="contact-message-error" data-error-for="message" class={error} hidden></p>
+        </div>
+
+        <div class="absolute -left-[10000px]" aria-hidden="true">
+          <label for="contact-gotcha">Leave this field empty</label>
+          <input id="contact-gotcha" name="_gotcha" type="text" tabindex="-1" autocomplete="off" />
+        </div>
+
+        <div data-turnstile data-sitekey={siteKey} class="min-h-[65px]"></div>
+
+        <div class="flex flex-wrap items-center gap-4">
+          <button type="submit" data-submit disabled class="rounded-full bg-brand px-7 py-3.5 font-semibold text-brand-ink hover:bg-ink disabled:cursor-not-allowed disabled:opacity-50">
+            Send message
+          </button>
+          <p data-status role="status" aria-live="polite" class="text-sm in-data-[state=error]:text-red-800 in-data-[state=sent]:text-brand"></p>
+        </div>
+
+        <noscript>
+          <p class="rounded-xl border border-line bg-white p-4">
+            This form needs JavaScript.
+            {fallback ? <>Please email us at <a class="underline" href={`mailto:${fallback}`}>{fallback}</a> instead.</> : 'Please turn it on to send us a message.'}
+          </p>
+        </noscript>
+      </form>
+    </div>
+  </div>
+</section>
+
+<script>
+  import { initContactForms } from '../scripts/contact-form';
+  initContactForms();
+</script>

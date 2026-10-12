@@ -1,5 +1,6 @@
 ---
 import heroImage from '../assets/hero.jpg';
+import ContactForm from '../components/ContactForm.astro';
 import FAQ from '../components/FAQ.astro';
 import Features from '../components/Features.astro';
 import Footer from '../components/Footer.astro';
@@ -62,12 +63,7 @@ const jsonLd = [
         { question: 'Do you work outside the city?', answer: 'Yes, within about an hour’s travel. Further afield, we offer design plans remotely.' },
       ]}
     />
-    {/* Task 9 replaces this placeholder with <ContactForm />, which renders section#contact. */}
-    <section id="contact" class="scroll-mt-24 border-t border-line">
-      <div class="mx-auto max-w-6xl px-6 py-20 md:py-28">
-        <h2 class="text-4xl leading-tight tracking-tight md:text-5xl">Get in touch</h2>
-      </div>
-    </section>
+    <ContactForm heading="Get in touch" intro="Tell us a little about your space. We reply within two working days." />
   </main>
   <Footer />
 </BaseLayout>
