@@ -1,0 +1,48 @@
+---
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
+import { site } from '../config/site';
+import BaseLayout from '../layouts/BaseLayout.astro';
+// The reading column hangs from the same left edge as the header and the home page's sections.
+---
+<BaseLayout title="Privacy" description={`How ${site.legal.companyName} handles what you send through this website.`}>
+  <Header />
+  <main
+    id="main"
+    class="mx-auto max-w-6xl px-6 pt-16 pb-24 text-lg leading-relaxed md:pt-24 md:pb-32 [&_a]:font-medium [&_a]:text-brand [&_a]:underline [&_a]:underline-offset-4 [&_a:hover]:text-ink [&_h2]:mt-14 [&_h2]:text-3xl [&_h2]:leading-tight [&_li]:mt-2 [&_p]:mt-4 [&_p]:max-w-2xl [&_p]:text-pretty [&_ul]:max-w-2xl"
+  >
+    <h1 class="text-5xl leading-tight tracking-tight md:text-6xl">Privacy</h1>
+    <p class="text-xl text-muted">This page explains what {site.legal.companyName} does with information you give us through this website.</p>
+
+    <h2>What we collect, and why</h2>
+    <p>
+      When you use the contact form we receive the name, email address and message you enter. We use them only to reply to
+      you, which is our legitimate interest in answering enquiries. This site sets no cookies of its own and has no advertising
+      or tracking.
+    </p>
+
+    <h2>Who else handles it</h2>
+    <ul class="mt-4 list-disc pl-6 marker:text-brand">
+      {site.privacy.processors.map((processor) => <li><a href={processor.url}>{processor.name}</a> {processor.purpose}.</li>)}
+    </ul>
+
+    <h2>How long we keep it</h2>
+    <p>{site.privacy.retention}</p>
+
+    {
+      site.analytics.cloudflareToken && (
+        <>
+          <h2>Analytics</h2>
+          <p>We count visits with Cloudflare Web Analytics, which uses no cookies and does not identify you.</p>
+        </>
+      )
+    }
+
+    <h2>Your rights</h2>
+    <p>
+      You can ask what we hold about you, and ask us to correct or delete it, by emailing{' '}
+      <a href={`mailto:${site.legal.privacyEmail}`}>{site.legal.privacyEmail}</a>.
+    </p>
+  </main>
+  <Footer />
+</BaseLayout>

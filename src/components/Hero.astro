@@ -1,0 +1,49 @@
+---
+import type { ImageMetadata } from 'astro';
+import { Image } from 'astro:assets';
+
+interface Props {
+  eyebrow?: string;
+  heading: string;
+  lead: string;
+  primary: { label: string; href: string };
+  secondary?: { label: string; href: string };
+  image: ImageMetadata;
+  imageAlt: string;
+}
+const { eyebrow, heading, lead, primary, secondary, image, imageAlt } = Astro.props;
+// On wide screens the image runs off the right edge of the page; overflow-x-clip stops it scrolling.
+---
+<section class="overflow-x-clip">
+  <div class="mx-auto grid max-w-6xl items-center gap-x-12 gap-y-12 px-6 pt-12 pb-20 md:pt-16 md:pb-24 lg:grid-cols-12 lg:pt-20 lg:pb-32">
+    <div class="lg:col-span-6">
+      {eyebrow && <p class="text-base font-semibold text-brand">{eyebrow}</p>}
+      <h1 class="mt-4 text-[2.75rem] leading-[1.04] tracking-tight text-balance sm:text-6xl lg:text-[4rem] xl:text-[4.5rem]">{heading}</h1>
+      <p class="mt-7 max-w-[32rem] text-lg leading-relaxed text-pretty text-muted md:text-xl md:leading-relaxed">{lead}</p>
+      <div class="mt-10 flex flex-wrap items-center gap-x-8 gap-y-5">
+        <a href={primary.href} class="rounded-full bg-brand px-7 py-3.5 font-semibold text-brand-ink hover:bg-ink">{primary.label}</a>
+        {
+          secondary && (
+            <a
+              href={secondary.href}
+              class="font-semibold text-ink underline decoration-accent decoration-2 underline-offset-[7px] hover:decoration-brand"
+            >
+              {secondary.label}
+            </a>
+          )
+        }
+      </div>
+    </div>
+    <div class="lg:col-span-6 lg:-mr-[calc(max(0px,(100vw-72rem)/2)+1.5rem)]">
+      <Image
+        src={image}
+        alt={imageAlt}
+        widths={[480, 800, 1200, 1600]}
+        sizes="(min-width: 1024px) 55vw, 100vw"
+        loading="eager"
+        fetchpriority="high"
+        class="aspect-[4/3] w-full rounded-card object-cover lg:rounded-r-none"
+      />
+    </div>
+  </div>
+</section>

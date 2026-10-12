@@ -6,13 +6,13 @@
  * Tailwind generates from them (bg-brand, text-ink, font-display, rounded-card, ...).
  */
 @theme {
-  --color-paper: oklch(0.98 0.012 100);
-  --color-ink: oklch(0.25 0.03 155);
-  --color-muted: oklch(0.45 0.03 155);
-  --color-line: oklch(0.88 0.02 130);
-  --color-brand: oklch(0.45 0.09 155);
-  --color-brand-ink: oklch(0.98 0.012 100);
-  --color-accent: oklch(0.82 0.12 88);
+  --color-paper: oklch(0.975 0.011 110); /* limewash: #f7f8ef */
+  --color-ink: oklch(0.28 0.032 160); /* holly: #1a2e23 */
+  --color-muted: oklch(0.47 0.028 158); /* lichen: #4e6055 */
+  --color-line: oklch(0.875 0.024 128); /* sage: #d1d9c9 */
+  --color-brand: oklch(0.438 0.064 160.4); /* bay: #2f5d46, the favicon's green */
+  --color-brand-ink: oklch(0.975 0.011 110);
+  --color-accent: oklch(0.823 0.128 91.8); /* sun: #e3c25a */
   --radius-card: 1.25rem;
 }
 
