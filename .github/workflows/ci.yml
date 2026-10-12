@@ -41,7 +41,8 @@ jobs:
     if: github.event.action != 'closed'
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     steps:
-      # Chromium profiles go in the runner's temp directory, not the shared VM's /tmp.
+      # Playwright and its Chromium profiles use the runner's temp directory, not the shared VM's /tmp.
+      # The one exception is Lighthouse's Chromium, below: $RUNNER_TEMP is too long for its socket.
       - name: Point temporary files at the runner's temp directory
         run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -66,18 +67,20 @@ jobs:
       - run: npm run test:e2e
       # Chromium puts its singleton socket under TMPDIR, and a Unix socket path is limited to about
       # 107 bytes. $RUNNER_TEMP on the self-hosted runner is too long for that, so Lighthouse gets
-      # a short directory of its own, made here and removed below.
+      # a short, unpredictable mktemp directory (mode 0700) under /tmp, made here and removed below.
       - name: Make a short temporary directory for Lighthouse's Chromium
         run: |
-          dir="/tmp/lh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          mkdir -p "$dir"
+          dir=$(mktemp -d /tmp/lh-XXXXXX)
           echo "LH_TMPDIR=$dir" >> "$GITHUB_ENV"
       - run: npm run lighthouse:ci
         env:
           TMPDIR: ${{ env.LH_TMPDIR }}
       - name: Remove Lighthouse's temporary directory
         if: always() && env.LH_TMPDIR != ''
-        run: rm -r -- "$LH_TMPDIR"
+        run: |
+          case "$LH_TMPDIR" in
+            /tmp/lh-??????) rm -r -- "$LH_TMPDIR" ;;
+          esac
       - name: Keep the traces and reports
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
