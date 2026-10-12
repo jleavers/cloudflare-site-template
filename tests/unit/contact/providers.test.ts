@@ -5,7 +5,7 @@ import { formatText } from '../../../src/contact/providers/format';
 import { providers } from '../../../src/contact/providers/index';
 import { redactEmail } from '../../../src/contact/providers/log';
 import { RESEND_URL } from '../../../src/contact/providers/resend';
-import { DeliveryError, type DeliveryContext } from '../../../src/contact/providers/types';
+import { DeliveryError, postJson, type DeliveryContext } from '../../../src/contact/providers/types';
 import { slackEscape, teamsEscape } from '../../../src/contact/providers/webhook';
 
 const submission = { name: 'Ada <Lovelace>', email: 'ada@example.com', message: 'Hello & welcome\n<!channel> ```code```' };
@@ -134,5 +134,24 @@ describe('log', () => {
 
   test('redactEmail keeps the first character and the domain', () => {
     expect(redactEmail('ada@example.com')).toBe('a***@example.com');
+  });
+});
+
+describe('postJson timeout', () => {
+  test('a fetch that never answers becomes a DeliveryError once the timeout passes', async () => {
+    const hanging = vi.fn<typeof fetch>(
+      (_input, init) =>
+        new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))),
+    );
+    const failure = await postJson(hanging, 'https://api.test/', {}, 'Resend', {}, 10).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(DeliveryError);
+    expect((failure as DeliveryError).message).toMatch(/Resend could not be reached/);
+    expect(hanging.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  test('defaults to a signal that has not yet aborted', async () => {
+    const ok = vi.fn<typeof fetch>(async () => new Response('{}'));
+    await postJson(ok, 'https://api.test/', {}, 'Resend');
+    expect(ok.mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
   });
 });

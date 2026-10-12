@@ -21,13 +21,14 @@ export class DeliveryError extends Error {
 
 export type Provider = (submission: Submission, config: ContactConfig, context: DeliveryContext) => Promise<void>;
 
-/** POSTs JSON and turns a network error or a non-2xx answer into a DeliveryError. */
+/** POSTs JSON and turns a network error, a timeout or a non-2xx answer into a DeliveryError. */
 export async function postJson(
   fetchFn: typeof fetch,
   url: string,
   body: unknown,
   label: string,
   headers: Record<string, string> = {},
+  timeoutMs = 10_000,
 ): Promise<void> {
   let response: Response;
   try {
@@ -35,6 +36,7 @@ export async function postJson(
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...headers },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     throw new DeliveryError(`${label} could not be reached: ${error instanceof Error ? error.message : String(error)}`);

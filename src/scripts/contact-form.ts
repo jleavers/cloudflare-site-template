@@ -124,6 +124,7 @@ function setUp(form: HTMLFormElement): void {
         method: 'POST',
         body: new FormData(form),
         headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(15_000),
       });
       const body: ApiResponse = await response.json().catch(() => ({}));
       consumeToken();
