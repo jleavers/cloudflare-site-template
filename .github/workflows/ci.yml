@@ -8,8 +8,11 @@ on:
   workflow_dispatch:
 
 # A newer push to a pull request makes an in-flight run obsolete. Runs on main always finish.
+# Pull-request runs are grouped by PR number, never by ref: when a PR is merged, its `closed`
+# run reports github.ref as the base branch (refs/heads/main), so a ref-based group put it
+# beside the merge's push run, and it cancelled that run's Deploy job.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
