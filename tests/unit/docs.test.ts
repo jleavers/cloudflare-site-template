@@ -4,7 +4,7 @@ import { describe, expect, test } from 'vitest';
 
 const read = (path: string) => readFileSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)), 'utf8');
 const scripts = Object.keys(JSON.parse(read('package.json')).scripts as Record<string, string>);
-const DOCS = ['AGENTS.md', '.claude/skills/new-site/SKILL.md', 'SITE_BRIEF.md', 'design/README.md'];
+const DOCS = ['AGENTS.md', '.claude/skills/new-site/SKILL.md', 'SITE_BRIEF.md', 'design/README.md', 'README.md'];
 
 describe('agent-facing documents', () => {
   test('CLAUDE.md imports AGENTS.md', () => expect(read('CLAUDE.md')).toMatch(/^@AGENTS\.md$/m));
