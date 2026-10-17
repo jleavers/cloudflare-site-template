@@ -130,6 +130,17 @@ Match the design section by section. Components in `src/components/` are yours t
 rename, delete or add.
 - Copy goes in the page files as props, not inside components (C1). Where the brief has copy,
   use it; otherwise use the design's.
+- **Placeholders.** A design shows facts it doesn't know as `[Bracketed placeholders]`.
+  Fill a placeholder whenever the brief answers it: a brief that says "one working day" in its success
+  message must not ship `[one working day]`.
+- **Business details** (the brief's section 4: phone, public address, opening hours) go in
+  `src/config/site.ts`. When the design shows such a fact and the type has no field for it, add
+  a field (C1: facts live in `site.ts`).
+- **Testimonials:** use only testimonials the brief supplies, which are real and used with
+  permission. If the brief supplies none, remove the testimonials section rather than ship the
+  design's invented quotes: fabricated reviews mislead visitors, and UK law
+  (the Digital Markets, Competition and Consumers Act 2024) bans them. On a site that will only ever be a fictional
+  demo, the brief's Notes may say to keep them.
 - Raster images go in `src/assets/` and render through `<Image>` with `width`, `height`, `alt`
   and `sizes` (C2); the hero image gets `loading="eager"` and `fetchpriority="high"`.
 - Every page uses `BaseLayout`, with a page `title` and `description` (C4). Exactly one `h1` per
@@ -176,8 +187,9 @@ Before the hand-back, remove what still names the template:
 
 ## 9. Hand back
 
-Commit (see AGENTS.md "Git Workflow"), then give the person this checklist, filled in with the
-site's values:
+Commit (see AGENTS.md "Git Workflow"). List every `[bracketed]` placeholder still in the site,
+with `file:line`, and say that production preflight will refuse them while demo mode only notes
+them. Then give the person this checklist, filled in with the site's values:
 
 1. **Turnstile widget:** Cloudflare dashboard → Turnstile → Add widget, managed mode, hostnames
    `<production domain>` and `<their-subdomain>.workers.dev`. Send me the site key (I'll put it in

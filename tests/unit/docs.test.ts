@@ -56,6 +56,13 @@ describe('agent-facing documents', () => {
     expect(brief).toContain(`**Message shown after sending** (optional \`{email}\` is replaced with the visitor's address): ${message}`);
   });
 
+  test('the new-site skill handles placeholders, testimonials and business details', () => {
+    const skill = read('.claude/skills/new-site/SKILL.md');
+    for (const fragment of ['placeholder', 'Fill a placeholder whenever the brief answers it', 'only testimonials the brief supplies', 'Digital Markets, Competition and Consumers Act 2024', 'file:line', 'Business details']) {
+      expect(skill).toContain(fragment);
+    }
+  });
+
   test('a site without a domain has a source for site.url', () => {
     expect(read('SITE_BRIEF.md')).toMatch(/^- \*\*workers\.dev subdomain\*\*/m);
     expect(read('.claude/skills/new-site/SKILL.md')).toContain('https://<slug>.<subdomain>.workers.dev');
