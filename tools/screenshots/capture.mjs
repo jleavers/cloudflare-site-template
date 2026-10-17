@@ -9,12 +9,13 @@
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { chromium } from '@playwright/test';
 import gifenc from 'gifenc';
 import sharp from 'sharp';
+import { allowedForDesign } from './fence.mjs';
 import * as layouts from './layouts.mjs';
 
 const { GIFEncoder, quantize, applyPalette } = gifenc;
@@ -107,33 +108,13 @@ async function shoot(browser, url, { width, height, scale = 1 }) {
   return png;
 }
 
-// The design screen is untrusted: it may only fetch from the public internet (https:) or its own file.
-function allowedForDesign(url) {
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return false;
-  }
-  if (parsed.protocol === 'file:') return true;
-  if (parsed.protocol !== 'https:') return false;
-  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return false;
-  if (host === '::1' || host === '::' || /^(fc|fd|fe80)/.test(host) || host.startsWith('::ffff:')) return false;
-  const v4 = host.match(/^(\d+)\.(\d+)\.\d+\.\d+$/);
-  if (v4) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])];
-    if (a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) return false;
-  }
-  return true;
-}
-
 // JavaScript stays on (Claude Design prototypes need React and Babel to render), so the screen
 // gets a fresh context with no cookies or storage and a request filter instead.
 async function shootDesign(browser, fileUrl, { width, height }) {
+  const designDir = dirname(fileURLToPath(fileUrl));
   const context = await browser.newContext({ viewport: { width, height } });
   try {
-    await context.route('**', (route) => (allowedForDesign(route.request().url()) ? route.continue() : route.abort()));
+    await context.route('**', (route) => (allowedForDesign(route.request().url(), designDir) ? route.continue() : route.abort()));
     const page = await context.newPage();
     await page.goto(fileUrl, { waitUntil: 'networkidle' });
     return await page.screenshot();
