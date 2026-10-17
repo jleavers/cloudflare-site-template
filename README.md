@@ -79,6 +79,10 @@ You need: a Claude Design handoff (or an archive or artifact link), the facts in
 [`SITE_BRIEF.md`](SITE_BRIEF.md), and [Claude Code](https://claude.ai/code).
 
 1. `gh repo create <site> --template jleavers/cloudflare-site-template --private --clone`
+   The new repository's first CI run starts straight away. On a private repository it needs
+   Actions minutes or a self-hosted runner (see [Short of GitHub Actions minutes?](#development)),
+   otherwise expect a red first run, which is harmless. Dependabot is on for the new repository
+   too.
 2. Brief Claude Design with [`design/BRIEFING.md`](design/BRIEFING.md), put its design in
    `design/` ([how](design/README.md)) and fill in `SITE_BRIEF.md`.
 3. In Claude Code, run `/new-site`. It rebuilds the pages to match the design, then runs every

@@ -100,5 +100,10 @@ describe('agent-facing documents', () => {
     expect(read(doc)).toMatch(/display name/i);
   });
 
+  test('the README warns that a new repository\'s first CI run starts at once', () => {
+    expect(read('README.md')).toMatch(/first CI run starts straight away/);
+    expect(read('README.md')).toMatch(/Dependabot/);
+  });
+
   test('the README has no unfilled tokens', () => expect(read('README.md')).not.toMatch(/DEMO_URL/));
 });
