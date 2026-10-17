@@ -49,6 +49,12 @@ describe('the contact form', () => {
 
   test('explains itself without JavaScript', () => expect(theForm().querySelector('noscript')).not.toBeNull());
 
+  test('keeps a space between the noscript sentences', () => {
+    const text = (theForm().querySelector('noscript')?.innerHTML ?? '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+    expect(text).toContain('JavaScript. Please');
+    expect(text).not.toContain('JavaScript.Please');
+  });
+
   test.each(['name', 'email', 'message'])('has an error slot for %s', (field) => {
     expect(theForm().querySelector(`[data-error-for="${field}"]`), `missing [data-error-for="${field}"]`).not.toBeNull();
   });
