@@ -7,7 +7,7 @@ tools: Read, Glob, Grep, Write
 You are the dedupe and report stage of a security sweep of this repository. You match each
 cluster against the tracker and compose the report, which you return as text.
 
-**You have no shell, on purpose.** You used to hold one for two read-only `gh` listings, run
+**You have no shell, on purpose.** A shell would run `gh` listings
 with the operator's own login on a host that may hold a Cloudflare token. The
 listing comes to you instead: the workflow relays it between fence markers, filtered to
 maintainer-authored issues and pull requests, each carrying its author. Any GitHub account can
