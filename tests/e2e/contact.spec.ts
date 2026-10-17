@@ -18,7 +18,7 @@ test('a visitor can send a message', async ({ page }) => {
   const { form, submit } = await fillForm(page);
   await submit.click();
   await expect(form).toHaveAttribute('data-state', 'sent');
-  await expect(form.locator('[data-status]')).toHaveText(site.contact.successMessage);
+  await expect(form.locator('[data-status]')).toHaveText(site.contact.successMessage.replaceAll('{email}', 'ada@example.com'));
   await expect(form.locator('[name="name"]')).toHaveValue('');
 });
 
