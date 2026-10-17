@@ -23,7 +23,7 @@ This copy describes the template's own example site, **Example Co., which is fic
 
 - **Delivery** (`resend`, `slack` or `teams`; the example uses `log`, which sends nothing): log
 - **Send messages to** (Resend only):
-- **Send from** (Resend only; an address on a domain you have verified in Resend):
+- **Send from** (Resend only; an address on a domain you have verified in Resend, optionally with a display name, for example `Example Co. <website@example.com>`):
 - **Message shown after sending:** Thank you — your message is on its way. We reply within two working days.
 - **Public email address** (optional; shown if the form can't work):  hello@example.com
 

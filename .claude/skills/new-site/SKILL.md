@@ -97,7 +97,8 @@ Write the inventory to `design/INVENTORY.md`, and commit it with the site:
 - `wrangler.jsonc`:
   - `"name"` = the brief's slug.
   - `"vars"`: set `DELIVERY_PROVIDER` and, for Resend, `CONTACT_TO_EMAIL` and
-    `CONTACT_FROM_EMAIL`. **Delete `TURNSTILE_SECRET_KEY` from `"vars"`**: it becomes a secret
+    `CONTACT_FROM_EMAIL`, written as `Site Name <address@domain>`: use the site name as the display name
+    unless the brief gives one. **Delete `TURNSTILE_SECRET_KEY` from `"vars"`**: it becomes a secret
     at first deploy, and a var and a secret cannot share a name.
   - Leave `"previews"` exactly as it is.
   - If the brief has a production domain, add

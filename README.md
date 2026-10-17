@@ -106,7 +106,8 @@ preview. A free widget takes up to ten hostnames. Put the **site key** in
 ### Delivery
 
 - **Resend:** verify your sending domain (it adds DNS records), create an API key, and set
-  `CONTACT_FROM_EMAIL` to an address on that domain.
+  `CONTACT_FROM_EMAIL` to an address on that domain. It may carry a display name, as
+  `Example Co. <website@example.com>`; preflight reads the domain from inside the `<…>`.
 - **Slack:** create an incoming webhook for a channel.
 - **Teams:** create a Workflows webhook ("When a Teams webhook request is received") for a
   channel.

@@ -80,5 +80,9 @@ describe('agent-facing documents', () => {
     for (const fragment of ['8976', 'CLOUDFLARE_API_TOKEN', 'Read-Host -MaskInput']) expect(text, `${doc}: ${fragment}`).toContain(fragment);
   });
 
+  test.each(['SITE_BRIEF.md', 'README.md', '.claude/skills/new-site/SKILL.md'])('%s says CONTACT_FROM_EMAIL may carry a display name', (doc) => {
+    expect(read(doc)).toMatch(/display name/i);
+  });
+
   test('the README has no unfilled tokens', () => expect(read('README.md')).not.toMatch(/DEMO_URL/));
 });
