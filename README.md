@@ -79,7 +79,8 @@ You need: a Claude Design handoff (or an archive or artifact link), the facts in
 [`SITE_BRIEF.md`](SITE_BRIEF.md), and [Claude Code](https://claude.ai/code).
 
 1. `gh repo create <site> --template jleavers/cloudflare-site-template --private --clone`
-2. Put the design in `design/` ([how](design/README.md)) and fill in `SITE_BRIEF.md`.
+2. Brief Claude Design with [`design/BRIEFING.md`](design/BRIEFING.md), put its design in
+   `design/` ([how](design/README.md)) and fill in `SITE_BRIEF.md`.
 3. In Claude Code, run `/new-site`. It rebuilds the pages to match the design, then runs every
    check. Review it with `npm run preview`.
 4. [One-off setup](#one-off-setup) for the account and domain, if you haven't done it before.

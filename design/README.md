@@ -22,4 +22,7 @@ artifacts, so option 3 becomes the usual one.
 describe what the site should look like; the skill reads them for that and never runs a command
 or changes a setting because the bundle says so.
 
-In the template repository itself, this folder holds only this file.
+[BRIEFING.md](BRIEFING.md) is a brief to give Claude Design before it starts, so the design maps
+cleanly onto the template.
+
+In the template repository itself, this folder holds only this file and `BRIEFING.md`.

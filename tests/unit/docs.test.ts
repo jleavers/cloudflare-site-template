@@ -66,5 +66,14 @@ describe('agent-facing documents', () => {
     expect(read('design/README.md')).toMatch(/artifacts? (have|has) no .*handoff/i);
   });
 
+  test('design/BRIEFING.md exists, is linked, and carries the run\'s lessons', () => {
+    expect(existsSync(fileURLToPath(new URL('../../design/BRIEFING.md', import.meta.url)))).toBe(true);
+    expect(read('README.md')).toContain('design/BRIEFING.md');
+    expect(read('design/README.md')).toContain('BRIEFING.md');
+    const briefing = read('design/BRIEFING.md');
+    expect(briefing).toContain('[Bracketed');
+    expect(briefing).toContain('design/SOURCE.md');
+  });
+
   test('the README has no unfilled tokens', () => expect(read('README.md')).not.toMatch(/DEMO_URL/));
 });
