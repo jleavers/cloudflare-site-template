@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 
@@ -40,5 +41,16 @@ describe('C1: colours are tokens', () => {
 
   test.each([...astroFiles('src/components'), ...astroFiles('src/pages')])('%s uses no default-palette colour', (file) => {
     expect(readFileSync(root(file), 'utf8')).not.toMatch(DEFAULT_PALETTE);
+  });
+});
+
+// Tailwind 4 scans from the project root unless told otherwise, so class-like strings in design/,
+// docs/ and plans would add CSS to every page.
+describe('Tailwind source detection', () => {
+  test('is limited to src/', () => {
+    const css = readFileSync(root('src/styles/global.css'), 'utf8');
+    const match = css.match(/@import\s+["']tailwindcss["']\s+source\(\s*["']([^"']+)["']\s*\)/);
+    expect(match, '@import "tailwindcss" has no source("…")').not.toBeNull();
+    expect(resolve(root('src/styles'), match![1])).toBe(resolve(root('src')));
   });
 });
