@@ -26,7 +26,10 @@
     "CONTACT_FROM_EMAIL": "website@example.com"
   },
   // Pull-request previews (`wrangler preview`) do not inherit "vars": they get these, so a
-  // preview's form works end to end and never sends a real message.
+  // preview's form works end to end and never sends a real message. On a site that uses Resend,
+  // `wrangler preview` therefore warns "These bindings are configured for your production Worker
+  // but not for Previews: CONTACT_TO_EMAIL, CONTACT_FROM_EMAIL". That is intended: a preview
+  // without the addresses cannot send, even if DELIVERY_PROVIDER were mis-set. Expected; leave it.
   "previews": {
     "vars": {
       "DELIVERY_PROVIDER": "log",

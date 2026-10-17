@@ -105,5 +105,10 @@ describe('agent-facing documents', () => {
     expect(read('README.md')).toMatch(/Dependabot/);
   });
 
+  test('wrangler.jsonc explains the preview warning about missing addresses', () => {
+    expect(read('wrangler.jsonc')).toContain('not for Previews');
+    expect(read('README.md')).toMatch(/`wrangler preview` warns that\s+`CONTACT_TO_EMAIL`.*not for\s+Previews/s);
+  });
+
   test('the README has no unfilled tokens', () => expect(read('README.md')).not.toMatch(/DEMO_URL/));
 });

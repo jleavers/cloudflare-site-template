@@ -189,7 +189,9 @@ a `.dev.vars` file (gitignored) and run `npx wrangler dev` yourself.
 
 **Pull-request previews** use Cloudflare
 [Previews](https://developers.cloudflare.com/workers/previews/): each gets its own URL,
-Turnstile's test keys and `log` delivery, and is deleted when the pull request closes.
+Turnstile's test keys and `log` delivery, and is deleted when the pull request closes. On a Resend site, `wrangler preview` warns that
+`CONTACT_TO_EMAIL` and `CONTACT_FROM_EMAIL` are configured for production but not for Previews:
+that is intended, because a preview without the addresses cannot send. Leave it.
 
 **Short of GitHub Actions minutes?** CI can run on a self-hosted runner (set `CI_LINUX_RUNNER`,
 private repositories only), or you can connect the repository to Cloudflare's
