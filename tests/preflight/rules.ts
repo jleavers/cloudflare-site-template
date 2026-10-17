@@ -55,7 +55,8 @@ export function findPlaceholders(html: string): string[] {
 }
 
 const isExampleHost = (host: string) => host === 'example.com' || host.endsWith('.example.com');
-const domainOf = (email: string | undefined) => (email?.split('@')[1] ?? '').toLowerCase();
+/** The address inside <…> when there is one ("Name <a@b.test>"), otherwise the whole value. */
+const domainOf = (email: string | undefined) => ((email?.match(/<([^<>]*)>/)?.[1] ?? email)?.split('@')[1] ?? '').trim().toLowerCase();
 
 /** The host of every route, at the top level and in every env.* block. A route string's host is the part before the first "/". */
 function routeHosts(config: WranglerConfig): string[] {

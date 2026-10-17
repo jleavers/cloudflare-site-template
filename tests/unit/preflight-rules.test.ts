@@ -184,3 +184,16 @@ describe('placeholders (C7)', () => {
     expect(checkPreflight(real).errors).toEqual([]);
   });
 });
+
+describe('a display name in CONTACT_FROM_EMAIL', () => {
+  const withFrom = (from: string): PreflightInput => ({ ...real, wrangler: { ...real.wrangler, vars: { ...real.wrangler.vars, CONTACT_FROM_EMAIL: from } } });
+
+  test('does not hide an example.com address', () => {
+    const result = checkPreflight(withFrom('Example Co. <hello@example.com>'));
+    expect(result.errors).toContain('CONTACT_TO_EMAIL and CONTACT_FROM_EMAIL must be real addresses for Resend');
+  });
+
+  test('passes with a real address', () => {
+    expect(checkPreflight(withFrom('Acme <web@acme.test>')).errors).toEqual([]);
+  });
+});
