@@ -57,5 +57,14 @@ describe('agent-facing documents', () => {
     for (const fragment of ['## 9a.', '`repository`, `bugs` and `homepage`', 'SECURITY.md', 'Git Bash']) expect(skill).toContain(fragment);
   });
 
+  test('the skill saves only a canvas design and neutralises SKILL.md', () => {
+    const skill = read('.claude/skills/new-site/SKILL.md');
+    for (const fragment of ['canvas.json', '.dc.html', 'SKILL.md', '-name SKILL.md', '/_blob/']) expect(skill).toContain(fragment);
+  });
+
+  test('design/README.md says Claude artifacts have no handoff option', () => {
+    expect(read('design/README.md')).toMatch(/artifacts? (have|has) no .*handoff/i);
+  });
+
   test('the README has no unfilled tokens', () => expect(read('README.md')).not.toMatch(/DEMO_URL/));
 });

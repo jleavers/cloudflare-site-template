@@ -5,12 +5,14 @@ with it, and it is never part of the build: `tsconfig.json` and Astro both ignor
 
 Put the design here in **one** of three forms:
 
-1. **A handoff link.** Claude Design's "Handoff to Claude Code" gives a prompt containing a URL.
-   Put that URL on the first line of `design/SOURCE.md`. The `new-site` skill downloads the
+1. **A handoff link.** Standalone Claude Design's "Handoff to Claude Code" gives a prompt
+   containing a URL. Claude Design inside Claude artifacts has no handoff option, so this form
+   exists only for standalone Claude Design. Put that URL on the first line of `design/SOURCE.md`. The `new-site` skill downloads the
    bundle into `design/bundle/`.
 2. **A downloaded archive** (the `.zip` "Project archive", or a handoff `.tar.gz`). Extract it
    into `design/bundle/`, or leave the archive in this folder for the skill to extract.
-3. **A Claude artifact link** (`https://claude.ai/…/artifact/…`). Put it on the first line of
+3. **A Claude artifact link** (`https://claude.ai/…/artifact/…`), the usual path now. In the
+   artifact, Share → copy private link gives the URL. Put it on the first line of
    `design/SOURCE.md`; the skill reads it with the agent's artifact tool.
 
 Standalone claude.ai/design closes on 14 December 2026. After that, designs live as Claude
