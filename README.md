@@ -39,6 +39,8 @@ that emails you or posts to Slack or Teams, and a preview for every pull request
 - **A Claude Code skill** (`/new-site`) rebuilds the pages from a Claude Design handoff, and then
   holds the result to the template's contracts.
 
+![On the left, a Claude Design screen for a fictional bakery; on the right, the live page the new-site skill built from it, matching its layout, colours and type. The content shown is fabricated.](docs/images/design-to-site.png)
+
 ![Filling in and sending the example site's contact form: the name, email and message fields are typed in, the Turnstile check passes, and the form shows its thank-you message. The content shown is fabricated.](docs/images/contact-form.gif)
 
 **What every site keeps, whatever its design.** The components are yours to rewrite; these are

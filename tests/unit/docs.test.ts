@@ -110,5 +110,10 @@ describe('agent-facing documents', () => {
     expect(read('README.md')).toMatch(/`wrangler preview` warns that\s+`CONTACT_TO_EMAIL`.*not for\s+Previews/s);
   });
 
+  test('the README shows the design-to-site image, and it exists', () => {
+    expect(read('README.md')).toContain('](docs/images/design-to-site.png)');
+    expect(existsSync(fileURLToPath(new URL('../../docs/images/design-to-site.png', import.meta.url)))).toBe(true);
+  });
+
   test('the README has no unfilled tokens', () => expect(read('README.md')).not.toMatch(/DEMO_URL/));
 });

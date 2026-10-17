@@ -23,7 +23,7 @@ Regenerate after a change to the example site's look. The script starts the loca
 
 `design-to-site.png` needs a design screen and the site built from it:
 
-    node tools/screenshots/capture.mjs --only design --design <bundle>/project/home.html --site https://<site>
+    node tools/screenshots/capture.mjs --only design --design <bundle>/project/<artboard>.dc.html --site https://<site>
 
 The script prints each file's size and exits non-zero if one is over its limit. The dials are
 `--width` (the GIF's width, 800) and `--colours` (its palette, 64).
