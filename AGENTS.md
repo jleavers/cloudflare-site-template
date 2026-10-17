@@ -84,6 +84,9 @@ fictional ("Example Co.", example.com) and every test green; update the README r
 same change as any step it describes; regenerate the README media (`tools/screenshots/README.md`)
 when the example site's look changes.
 
+Before a release, and before making the repository public, the owner runs the security sweep
+(`.claude/skills/security-sweep/SKILL.md`), with `lanes: baseline` and then `lanes: public`.
+
 <!-- Everything below is the original operational rule set, unchanged. -->
 
 ## Environment
