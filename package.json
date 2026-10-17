@@ -8,7 +8,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "check": "astro check && tsc --noEmit",
-    "test": "vitest run --project unit",
+    "test": "vitest run --project unit --project sweep",
     "test:dist": "vitest run --project dist",
     "verify": "npm run check && npm run test && npm run build && npm run test:dist",
     "preview": "node scripts/dev-stack.mjs",
