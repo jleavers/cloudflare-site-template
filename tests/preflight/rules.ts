@@ -22,6 +22,8 @@ export interface PreflightInput {
   wrangler: WranglerConfig;
   site: Pick<SiteConfig, 'name' | 'url' | 'contact'>;
   designPresent: boolean;
+  /** Placeholders found in the built pages (see findPlaceholders), with the page each is on. */
+  placeholders: { page: string; text: string }[];
 }
 export interface PreflightResult {
   mode: 'demo' | 'production';
@@ -34,6 +36,24 @@ export interface PreflightResult {
 export const STALE_URL_WARNING =
   'site.url is still example.com, but this is no longer the template: set site.url to this site\'s address (custom domain or workers.dev)';
 
+const ENTITIES: Record<string, string> = { '&nbsp;': ' ', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&amp;': '&' };
+const TAG = /<\/?[a-zA-Z][^\s>/]*(?:"[^"]*"|'[^']*'|[^>"'])*>/g;
+const PLACEHOLDER = /\[[^[\]<>"\n]{1,60}\]/g;
+
+/**
+ * The `[Bracketed placeholders]` a design leaves for facts it did not know, found in a built
+ * page's visible text: not in scripts, styles, comments or attributes.
+ */
+export function findPlaceholders(html: string): string[] {
+  const text = html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, '\n')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, '\n')
+    .replace(/<!--[\s\S]*?-->/g, '\n')
+    .replace(TAG, '\n')
+    .replace(/&(?:nbsp|lt|gt|quot|#39|amp);/g, (entity) => ENTITIES[entity]);
+  return (text.match(PLACEHOLDER) ?? []).filter((candidate) => /\p{L}/u.test(candidate));
+}
+
 const isExampleHost = (host: string) => host === 'example.com' || host.endsWith('.example.com');
 const domainOf = (email: string | undefined) => (email?.split('@')[1] ?? '').toLowerCase();
 
@@ -45,10 +65,10 @@ function routeHosts(config: WranglerConfig): string[] {
 }
 
 /**
- * Contract C7. Example values may go to workers.dev (the demo, the Deploy button, a first
- * experiment) but never to a custom domain.
+ * Contract C7. Example values, and a design's [bracketed] placeholders, may go to workers.dev
+ * (the demo, the Deploy button, a first experiment) but never to a custom domain.
  */
-export function checkPreflight({ wrangler, site, designPresent }: PreflightInput): PreflightResult {
+export function checkPreflight({ wrangler, site, designPresent, placeholders }: PreflightInput): PreflightResult {
   const routeHostList = routeHosts(wrangler);
   const vars = wrangler.vars ?? {};
   const siteHost = new URL(site.url).hostname.toLowerCase();
@@ -66,7 +86,10 @@ export function checkPreflight({ wrangler, site, designPresent }: PreflightInput
     ],
     [site.name === EXAMPLE_SITE_NAME, `site.name is still "${EXAMPLE_SITE_NAME}"`],
   ] as const;
-  const present: string[] = templateValues.filter(([found]) => found).map(([, message]) => message);
+  const present: string[] = [
+    ...templateValues.filter(([found]) => found).map(([, message]) => message),
+    ...placeholders.map(({ page, text }) => `${page} has the placeholder ${text}`),
+  ];
 
   // Demo mode only when nothing routes anywhere: any route of any kind, in any env, means production.
   if (routeHostList.length === 0) {

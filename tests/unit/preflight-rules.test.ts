@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { checkPreflight, EXAMPLE_SITE_NAME, STALE_URL_WARNING, TEMPLATE_WORKER_NAME, type PreflightInput, type WranglerConfig } from '../preflight/rules';
+import { checkPreflight, findPlaceholders, EXAMPLE_SITE_NAME, STALE_URL_WARNING, TEMPLATE_WORKER_NAME, type PreflightInput, type WranglerConfig } from '../preflight/rules';
 
 const template: PreflightInput = {
   wrangler: {
@@ -9,6 +9,7 @@ const template: PreflightInput = {
   },
   site: { name: EXAMPLE_SITE_NAME, url: 'https://example.com', contact: { turnstileSiteKey: '1x00000000000000000000AA', successMessage: 'Thanks.' } },
   designPresent: false,
+  placeholders: [],
 };
 
 const real: PreflightInput = {
@@ -19,6 +20,7 @@ const real: PreflightInput = {
   },
   site: { name: 'Acme', url: 'https://www.acme.test', contact: { turnstileSiteKey: '0x4AAAAAAAreal', successMessage: 'Thanks.' } },
   designPresent: true,
+  placeholders: [],
 };
 
 describe('demo mode (no custom domain)', () => {
@@ -130,5 +132,55 @@ describe('production mode (a custom domain)', () => {
     const result = checkPreflight({ ...real, designPresent: false });
     expect(result.errors).toEqual([]);
     expect(result.warnings).toHaveLength(1);
+  });
+});
+
+describe('findPlaceholders', () => {
+  const found = (text: string) => findPlaceholders(`<p>${text}</p>`);
+
+  test.each([
+    ['[Phone number]', ['[Phone number]']],
+    ['[hello@your-domain]', ['[hello@your-domain]']],
+    ['[Number] Harbour Lane', ['[Number]']],
+    ['[Town] [POSTCODE]', ['[Town]', '[POSTCODE]']],
+    ['[Closed]', ['[Closed]']],
+    ['Within [one working day], with the total', ['[one working day]']],
+    ['[Customer name], local', ['[Customer name]']],
+    ['about [5 minutes’] walk', ['[5 minutes’]']],
+    ['by [lunchtime].', ['[lunchtime]']],
+    ['Tom &amp; [Jerry&#39;s]', ['[Jerry\'s]']],
+  ])('finds %s', (text, expected) => expect(found(text)).toEqual(expected));
+
+  test('finds a placeholder across element boundaries without joining them', () => {
+    expect(findPlaceholders('<p>[Town]</p><p>[POSTCODE]</p>')).toEqual(['[Town]', '[POSTCODE]']);
+  });
+
+  test.each([
+    ['a bare number', '<p>[1]</p>'],
+    ['an attribute', '<a aria-label="[Phone number]" href="#">x</a>'],
+    ['a script', '<script type="application/ld+json">{"a":["[Town]"]}</script>'],
+    ['a style', '<style>[data-state="sent"]{}</style>'],
+    ['a comment', '<!-- [note] -->'],
+    ['text over 60 characters', `<p>[${'a'.repeat(61)}]</p>`],
+  ])('finds nothing in %s', (_name, html) => expect(findPlaceholders(html)).toEqual([]));
+});
+
+describe('placeholders (C7)', () => {
+  const placeholders = [{ page: 'contact/index.html', text: '[Phone number]' }];
+
+  test('are an error in production mode, naming the page and the text', () => {
+    const result = checkPreflight({ ...real, placeholders });
+    expect(result.mode).toBe('production');
+    expect(result.errors.some((error) => error.includes('contact/index.html') && error.includes('[Phone number]'))).toBe(true);
+  });
+
+  test('are a note, not an error, in demo mode', () => {
+    const result = checkPreflight({ ...template, placeholders });
+    expect(result.errors).toEqual([]);
+    expect(result.notes.some((note) => note.includes('contact/index.html') && note.includes('[Phone number]'))).toBe(true);
+  });
+
+  test('add nothing when there are none', () => {
+    expect(checkPreflight(real).errors).toEqual([]);
   });
 });

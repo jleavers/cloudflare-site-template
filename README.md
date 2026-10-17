@@ -52,7 +52,7 @@ not, and the tests enforce them (details in [AGENTS.md](AGENTS.md#contracts)):
 | C4 | Title, description, canonical and OpenGraph on every page |
 | C5 | The contact form's hooks |
 | C6 | The form handler uses Web-standard APIs only |
-| C7 | Example values never reach a custom domain |
+| C7 | Example values and design placeholders never reach a custom domain |
 
 ## Live demo
 
@@ -142,7 +142,7 @@ so keep the repositories that hold one to yourself.
 | `npm run verify` | type check, unit tests, build, contract tests on the build |
 | `npm run test:e2e` | the browser tests (Playwright, Chromium) |
 | `npm run lighthouse` | the Lighthouse budgets; performance must score 100 |
-| `npm run preflight` | is this checkout still the template? (decides whether a deploy may go ahead) |
+| `npm run preflight` | is this checkout still the template, or does a built page still have a `[bracketed]` design placeholder? (decides whether a deploy may go ahead; build first) |
 | `npm run deploy` | build, preflight, deploy |
 
 `npm run build` downloads the site's fonts from Google Fonts at build time, through the Astro

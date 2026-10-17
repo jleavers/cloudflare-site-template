@@ -166,7 +166,7 @@ Every stamped-out site must satisfy these, whatever its design. AGENTS.md states
 | C4 | Every page renders through `BaseLayout`. | dist: every HTML page has `<title>`, meta description, canonical, `og:title`, `og:description`, an absolute `og:image` URL and `lang` |
 | C5 | `ContactForm` markup may be restyled, but its contract is fixed: `form[data-contact-form]`, `action="/api/contact"`, `method="post"`, fields `name`, `email`, `message`, `_gotcha` (hidden), a `[data-turnstile]` container, a `[data-status]` live region, and the bundled submit script. | dist checks the structure; e2e checks the behaviour |
 | C6 | The worker stays portable: `src/contact/**` uses only Web-standard APIs, and no KV, D1, Durable Objects or other proprietary bindings are added unless explicitly instructed. | unit tests on Node; a test asserts no `cloudflare:` imports in `src/contact` |
-| C7 | The template's example values may be deployed to workers.dev, which is how the demo works, but never to a custom domain. | `npm run preflight` (§11.3), run by `npm run deploy` and by the `deploy` job |
+| C7 | The template's example values, and a design's `[bracketed]` placeholders, may be deployed to workers.dev, which is how the demo works, but never to a custom domain. | `npm run preflight` (§11.3), run by `npm run deploy` and by the `deploy` job |
 
 ## 6. Site configuration and inputs
 
@@ -475,7 +475,7 @@ All helper scripts are Node (`.mjs`) or TypeScript, so they behave the same on W
 `npm run preflight` picks its mode from `wrangler.jsonc`.
 
 **Demo mode** applies only when there is no `route` and `routes` is absent or empty, at the top level **and** in every `env.*` block, so the deploy goes to workers.dev only.
-- It passes, and prints which example values are still present, so a demo deploy is never blocked.
+- It passes, and prints which example values and `[bracketed]` placeholders are still present, so a demo deploy is never blocked.
 - This is how the live demo, the Deploy button and a new user's first experiment work.
 - It fails only if `workers_dev` is `false`, because then the deploy would have no URL at all.
 - It **warns** (never fails) when `site.url` is still on `example.com` but `site.name` is not `Example Co.` or the Worker `name` is not the template's: the site has been customised but still advertises the template's address (canonical and OpenGraph URLs, sitemap).
@@ -487,7 +487,10 @@ All helper scripts are Node (`.mjs`) or TypeScript, so they behave the same on W
 - `TURNSTILE_SECRET_KEY` is still in the top-level `vars`;
 - `DELIVERY_PROVIDER` is `log` or missing in the top-level `vars`;
 - `CONTACT_TO_EMAIL` or `CONTACT_FROM_EMAIL` is on `example.com` while the provider is `resend`;
-- `site.name` is still `Example Co.`
+- `site.name` is still `Example Co.`;
+- a built page (`dist/**/*.html`) has a `[bracketed]` placeholder in its visible text, which a design leaves for a fact it did not know (for example `[Phone number]`); the error names the page and the placeholder. Script, style, comment and attribute text is ignored. If `dist/` is missing, the error says to run `npm run build` first.
+
+A `CONTACT_FROM_EMAIL` may carry a display name (`Example Co. <hello@example.com>`); the check reads the address inside `<…>`.
 
 It only warns when `design/SOURCE.md` and `design/bundle/` are both absent.
 

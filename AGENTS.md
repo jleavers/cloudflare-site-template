@@ -48,8 +48,9 @@ change that needs one of those tests weakened is the wrong change.
   `Response`, `fetch`, `FormData`, `URL`) and imports nothing from outside `src/contact/`. Do not
   add KV, D1, Durable Objects or any other Cloudflare binding unless explicitly instructed.
 - **C7 — Example values never reach a custom domain.** `npm run preflight` allows the template's
-  example values on workers.dev (the demo) and refuses them once `wrangler.jsonc` has a custom
-  domain. `npm run deploy` and CI run it.
+  example values, and a design's `[bracketed]` placeholders left in the built pages, on workers.dev
+  (the demo) and refuses them once `wrangler.jsonc` has a custom domain. `npm run deploy` and CI
+  run it, after building.
 
 ## Rules
 
