@@ -42,9 +42,18 @@ describe('agent-facing documents', () => {
     (safeguard) => expect(read('.claude/skills/new-site/SKILL.md')).toContain(safeguard),
   );
 
-  test('SITE_BRIEF.md has its six sections, in order', () => {
+  test('SITE_BRIEF.md has its seven sections, in order', () => {
     const headings = [...read('SITE_BRIEF.md').matchAll(/^## (\d)\. /gm)].map((match) => match[1]);
-    expect(headings).toEqual(['1', '2', '3', '4', '5', '6']);
+    expect(headings).toEqual(['1', '2', '3', '4', '5', '6', '7']);
+  });
+
+  test('SITE_BRIEF.md asks for business details and shows the success message the site ships', () => {
+    const brief = read('SITE_BRIEF.md');
+    expect(brief).toMatch(/^## 4\. Business details \(optional\)/m);
+    for (const line of ['Phone', 'Public address', 'Opening hours']) expect(brief).toContain(`**${line}`);
+    expect(brief).toContain('{email}');
+    const message = /successMessage: '(.+)',/.exec(read('src/config/site.ts'))![1];
+    expect(brief).toContain(`**Message shown after sending** (optional \`{email}\` is replaced with the visitor's address): ${message}`);
   });
 
   test('a site without a domain has a source for site.url', () => {

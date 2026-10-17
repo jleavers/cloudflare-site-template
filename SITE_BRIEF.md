@@ -24,7 +24,7 @@ This copy describes the template's own example site, **Example Co., which is fic
 - **Delivery** (`resend`, `slack` or `teams`; the example uses `log`, which sends nothing): log
 - **Send messages to** (Resend only):
 - **Send from** (Resend only; an address on a domain you have verified in Resend, optionally with a display name, for example `Example Co. <website@example.com>`):
-- **Message shown after sending:** Thank you — your message is on its way. We reply within two working days.
+- **Message shown after sending** (optional `{email}` is replaced with the visitor's address): Thank you — your message is on its way. We’ll reply to {email} within two working days.
 - **Public email address** (optional; shown if the form can't work):  hello@example.com
 
 ## 3. Legal and privacy
@@ -36,13 +36,21 @@ This copy describes the template's own example site, **Example Co., which is fic
 - **How long you keep messages, and where:** This demonstration site keeps nothing: a message is discarded as soon as it arrives, and nobody reads it.
 - **Who else handles visitors' data** (Cloudflare always does; add your email or chat provider): Cloudflare, Inc.
 
-## 4. Navigation and socials
+## 4. Business details (optional)
+
+Facts a design for a shop or café often shows. Leave a line blank if the design doesn't show it.
+
+- **Phone:**
+- **Public address** (where customers come, as distinct from the registered address):
+- **Opening hours:**
+
+## 5. Navigation and socials
 
 - **Header links** (label → target): Services → /#services; Stories → /#stories; Questions → /#faq; Contact → /#contact
 - **Footer links:** Privacy → /privacy/
 - **Social profiles** (label → URL): Source on GitHub → https://github.com/jleavers/cloudflare-site-template
 
-## 5. Page copy (optional)
+## 6. Page copy (optional)
 
 Leave any part blank to use the design's copy.
 
@@ -52,7 +60,7 @@ Leave any part blank to use the design's copy.
 ### Questions and answers
 ### Contact section
 
-## 6. Notes
+## 7. Notes
 
 Audience, tone of voice, words to avoid, anything the design doesn't show. For example: "Warm
 and plain-spoken; no jargon. Most visitors arrive on a phone."
