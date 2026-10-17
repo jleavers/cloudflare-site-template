@@ -84,10 +84,11 @@ You need: a Claude Design handoff (or an archive or artifact link), the facts in
 3. In Claude Code, run `/new-site`. It rebuilds the pages to match the design, then runs every
    check. Review it with `npm run preview`.
 4. [One-off setup](#one-off-setup) for the account and domain, if you haven't done it before.
-5. First deploy, from your machine: `npx wrangler login`, then
-   `npx wrangler secret put TURNSTILE_SECRET_KEY` and `RESEND_API_KEY` (or `WEBHOOK_URL`), then
-   `npm run deploy`. This creates the Worker and attaches your domain, DNS and certificate
-   included.
+5. First deploy, from your machine: sign in to Cloudflare ([no browser?](#deploying-from-a-machine-without-a-browser)),
+   then `npx wrangler secret put TURNSTILE_SECRET_KEY` and `RESEND_API_KEY` (or `WEBHOOK_URL`),
+   then `npm run deploy`. Before the first deploy, `secret put` asks whether to create the Worker:
+   answer yes, and `npm run deploy` fills it. The deploy attaches your domain, DNS and
+   certificate included.
 6. `gh secret set CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, and push. From now on CI
    deploys `main` and previews each pull request.
 
@@ -116,8 +117,37 @@ For CI: My Profile → API Tokens → Create Custom Token with **Account → Wor
 and **Account → Account Settings → Read**, limited to one account. That is enough to create and
 deploy a workers.dev Worker and to deploy previews. Only **attaching a custom domain** needs more
 (Zone → Workers Routes → Write), which is why that first deploy runs from your machine with
-`wrangler login`. A token with Workers Scripts → Edit can change **every** Worker on its account,
+`wrangler login` (or a token that has it). A token with Workers Scripts → Edit can change **every** Worker on its account,
 so keep the repositories that hold one to yourself.
+
+### Deploying from a machine without a browser
+
+`npx wrangler login` prints an OAuth link, but the browser then redirects to
+`http://localhost:8976/oauth/callback`, which lands on the browser's machine, not on an SSH
+dev box or VM. Two ways round it:
+
+- **Use an API token instead of `wrangler login`.** The [CI token](#cloudflare-api-token) works
+  from your terminal for a workers.dev site. Attaching a custom domain also needs
+  **Zone → Workers Routes → Write**. `read -s` and `-MaskInput` keep the token off the screen
+  and out of shell history.
+
+  bash:
+
+  ```bash
+  read -rsp 'Cloudflare API token: ' CLOUDFLARE_API_TOKEN && echo && export CLOUDFLARE_API_TOKEN
+  export CLOUDFLARE_ACCOUNT_ID=<account id>
+  ```
+
+  PowerShell:
+
+  ```powershell
+  $env:CLOUDFLARE_API_TOKEN = Read-Host -MaskInput 'Cloudflare API token'
+  $env:CLOUDFLARE_ACCOUNT_ID = '<account id>'
+  ```
+
+- **Forward wrangler's callback port** from the machine with the browser:
+  `ssh -L 8976:localhost:8976 <host>`, then run `npx wrangler login` in that session and open its
+  link locally.
 
 ## Configuration reference
 

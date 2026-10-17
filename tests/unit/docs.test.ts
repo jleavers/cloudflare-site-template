@@ -75,5 +75,10 @@ describe('agent-facing documents', () => {
     expect(briefing).toContain('design/SOURCE.md');
   });
 
+  test.each(['README.md', '.claude/skills/new-site/SKILL.md'])('%s covers a first deploy without a browser', (doc) => {
+    const text = read(doc);
+    for (const fragment of ['8976', 'CLOUDFLARE_API_TOKEN', 'Read-Host -MaskInput']) expect(text, `${doc}: ${fragment}`).toContain(fragment);
+  });
+
   test('the README has no unfilled tokens', () => expect(read('README.md')).not.toMatch(/DEMO_URL/));
 });

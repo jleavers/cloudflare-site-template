@@ -183,9 +183,23 @@ site's values:
    `site.ts`) and keep the secret for step 3.
 2. **Delivery:** Resend → verify the sending domain (DNS records) and create an API key; or
    create the Slack or Teams incoming webhook.
-3. **First deploy, from your machine:**
-   `npx wrangler login` → `npx wrangler secret put TURNSTILE_SECRET_KEY` →
+3. **First deploy, from your machine:** sign in, then
+   `npx wrangler secret put TURNSTILE_SECRET_KEY` →
    `npx wrangler secret put RESEND_API_KEY` (or `WEBHOOK_URL`) → `npm run deploy`.
+   - Before the first deploy, `secret put` asks whether to create the Worker: answer yes; it
+     creates an empty Worker and `npm run deploy` fills it.
+   - Signing in: `npx wrangler login` where there is a browser. On a workers.dev site (no custom
+     domain) you can skip it and use the CI token from your terminal (Workers Scripts → Edit,
+     Account Settings → Read): bash,
+     `read -rsp 'Cloudflare API token: ' CLOUDFLARE_API_TOKEN && echo && export CLOUDFLARE_API_TOKEN`
+     and `export CLOUDFLARE_ACCOUNT_ID=<account id>`; PowerShell,
+     `$env:CLOUDFLARE_API_TOKEN = Read-Host -MaskInput 'Cloudflare API token'` and
+     `$env:CLOUDFLARE_ACCOUNT_ID = '<account id>'`.
+   - On a machine without a browser (SSH, a dev VM), `wrangler login` redirects to
+     `http://localhost:8976/oauth/callback` on the browser's machine. Use the token (a custom
+     domain also needs Zone → Workers Routes → Write), or forward the port from the machine with
+     the browser: `ssh -L 8976:localhost:8976 <host>`, run `npx wrangler login` in that session
+     and open its link locally.
 4. **CI:** `gh secret set CLOUDFLARE_API_TOKEN` and `gh secret set CLOUDFLARE_ACCOUNT_ID`, then
    push. Every push to `main` deploys; every pull request gets a preview.
 5. **Check the live form:** send yourself a message from the production site.
