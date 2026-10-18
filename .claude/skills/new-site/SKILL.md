@@ -214,18 +214,21 @@ them. Then give the person this checklist, filled in with the site's values:
      the browser: `ssh -L 8976:localhost:8976 <host>`, run `npx wrangler login` in that session
      and open its link locally.
 4. **CI:** store the CI token (Workers Scripts → Edit, Account Settings → Read) and the account
-   ID, then push. Every push to `main` deploys.
+   ID, then push. Every push to `main` deploys, on GitHub-hosted runners: with no hosted minutes
+   left, deploy with `npm run deploy` from your machine.
    - On a public repository, or a private one on a paid plan: Settings → Environments → create
      `production`, limited to the `main` branch, then
      `gh secret set CLOUDFLARE_API_TOKEN --env production` and
-     `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`.
-   - On a private repository on GitHub Free, which has no environment secrets:
+     `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`. Protect `main` with a ruleset that
+     requires a pull request (Settings → Rules → Rulesets), since every push to it deploys.
+   - On a private repository on GitHub Free, which has no environment secrets or rulesets:
      `gh secret set CLOUDFLARE_API_TOKEN` and `gh secret set CLOUDFLARE_ACCOUNT_ID`. Anyone who
-     can push a workflow change to the repository can then read the token.
+     can push to `main` or push a workflow change can then read the token, including a coding
+     agent whose token has Contents write.
    - Pull-request previews are off until the repository variable `CI_PREVIEWS` is `true`. Turn
      them on only as the template's README describes
      (https://github.com/jleavers/cloudflare-site-template#cloudflare-api-token): they need a
      `preview` environment with required reviewers.
    - If a coding agent pushes branches for you, give it an HTTPS token without workflow
-     permission, never your SSH key (same README section).
+     permission, never your SSH key, and keep the ruleset on `main` (same README section).
 5. **Check the live form:** send yourself a message from the production site.

@@ -123,6 +123,11 @@ describe('agent-facing documents', () => {
     expect(text).not.toMatch(/(every|each) pull request gets a preview|previews each pull request|a preview for every pull request/i);
   });
 
+  test.each(['README.md', '.claude/skills/new-site/SKILL.md'])('%s protects main with a ruleset, and deploys by hand without hosted minutes', (doc) => {
+    const text = read(doc);
+    for (const fragment of ['ruleset', 'push to `main`', 'GitHub-hosted', 'npm run deploy']) expect(text, `${doc}: ${fragment}`).toContain(fragment);
+  });
+
   test('the README gives coding agents a token without workflow permission, never an SSH key', () => {
     for (const fragment of ['workflow permission', 'SSH key']) expect(read('README.md')).toContain(fragment);
   });

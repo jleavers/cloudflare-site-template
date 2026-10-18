@@ -1,6 +1,6 @@
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 // The CI jobs that hold the Cloudflare token run this from a sparse checkout of the trusted ref,
 // with no node_modules, so it imports nothing but node: modules. It refuses a wrangler.jsonc that
@@ -98,7 +98,18 @@ function main(dir) {
   console.log(`trusted-config: wrangler.jsonc has no custom build; wrangler ${version}`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+/** Whether node was asked to run this file, by any path: Node resolves symlinks in import.meta.url. */
+function invokedDirectly() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+// The token jobs also stop when the version output is empty, in case this ever fails to run main().
+if (invokedDirectly()) {
   try {
     main(process.argv[2]);
   } catch (error) {

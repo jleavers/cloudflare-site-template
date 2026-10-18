@@ -18,17 +18,21 @@ concurrency:
 permissions:
   contents: read
 
-# Every job runs on the repository's self-hosted runner when CI_LINUX_RUNNER names one, else on
-# GitHub's. A public repository must not use self-hosted runners (jleavers/ci-runners "Trust").
-# Every action is pinned to a commit SHA. Nothing here runs on pull_request_target.
+# The jobs without the token run on the repository's self-hosted runner when CI_LINUX_RUNNER
+# names one, else on GitHub's. A public repository must not use self-hosted runners
+# (jleavers/ci-runners "Trust"). Every action is pinned to a commit SHA. Nothing here runs on
+# pull_request_target.
 #
 # The Cloudflare token can change every Worker on its account, so a job that can read it runs no
 # code that the checked-out tree or the lockfile chose: no install, build or test, and no wrangler
 # from the lockfile. It takes wrangler.jsonc, the wrangler version and .nvmrc from the trusted ref
-# (the pushed main commit, or a pull request's base, never its head) with a sparse checkout, and
-# deploys what a tokenless job built, as data. It uses only actions/* and
-# cloudflare/wrangler-action, and runs through an environment, which holds the token behind a
-# branch rule or a reviewer where the plan allows (README, "Cloudflare API token").
+# (the pushed main commit, or the default branch by name for a pull request, never the PR's head)
+# with a sparse checkout, and deploys what a tokenless job built, as data. It uses only actions/*
+# and cloudflare/wrangler-action, always runs on a GitHub-hosted runner, and runs through an
+# environment, which holds the token behind a branch rule or a reviewer where the plan allows
+# (README, "Cloudflare API token"). main's wrangler.jsonc is part of that trust root: its
+# assets.directory, rules and tsconfig steer what wrangler reads and uploads, so review a change
+# to it as you would a change to this file.
 
 jobs:
   verify:
@@ -59,6 +63,8 @@ jobs:
           path: |
             dist/
             bundle/
+          # dist/.well-known/ and the like; the deploy job copies only dist/ and bundle/worker.js.
+          include-hidden-files: true
           retention-days: 1
           if-no-files-found: error
 
@@ -118,15 +124,22 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # The jobs that hold the token copy only dist/ and the bundle's worker.js out of the artifact,
-  # into a fresh directory beside the trusted wrangler.jsonc: nothing else an artifact might carry
-  # (a .env, a .npmrc, a node_modules) reaches the directory wrangler runs in. --config names that
-  # wrangler.jsonc, because without it wrangler looks for a config beside the entry first.
+  # The jobs that hold the token:
+  # - run on GitHub-hosted runners, whatever CI_LINUX_RUNNER says. A persistent self-hosted runner
+  #   keeps its tool cache and home directory between jobs, and the jobs above run branch and
+  #   lockfile code there as the same user: that code could replace node or npx, or write an
+  #   ~/.npmrc, for these jobs to run.
+  # - copy only dist/ and the bundle's worker.js out of the artifact, into a fresh directory
+  #   beside the trusted wrangler.jsonc: nothing else an artifact might carry (a .env, a .npmrc,
+  #   a node_modules) reaches the directory wrangler runs in. The tokenless job could upload a
+  #   crafted zip; download-artifact extracts every entry inside its path and makes no symlinks.
+  # - name that wrangler.jsonc with --config, because without it wrangler looks for a config
+  #   beside the entry first.
   deploy:
     name: Deploy
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [verify, e2e]
-    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     environment: production
     env:
       HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
@@ -158,11 +171,19 @@ jobs:
         id: trusted
         if: env.HAS_CLOUDFLARE == 'true'
         run: node trusted/scripts/trusted-config.mjs trusted
+      # Fail closed: without a version, wrangler-action would install whatever wrangler 4 is latest.
+      - name: Stop unless a wrangler version was read
+        if: env.HAS_CLOUDFLARE == 'true'
+        env:
+          WRANGLER_VERSION: ${{ steps.trusted.outputs.wrangler-version }}
+        run: test -n "$WRANGLER_VERSION" || { echo "::error::trusted-config.mjs gave no wrangler version"; exit 1; }
       - if: env.HAS_CLOUDFLARE == 'true'
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: site
           path: ${{ runner.temp }}/artifact
+      # Only worker.js ships. A Worker whose bundle has more modules (a .wasm, text or data import)
+      # fails to deploy until this copy, and the test that pins it, take them too.
       - name: Put the site, the Worker and the trusted config in a fresh directory
         if: env.HAS_CLOUDFLARE == 'true'
         run: |
@@ -173,8 +194,11 @@ jobs:
       - if: env.HAS_CLOUDFLARE == 'true'
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
         env:
-          # wrangler-action installs the pinned wrangler with npm: run none of its install scripts.
+          # wrangler-action installs the pinned wrangler with npm, and with no lockfile: run none of
+          # its install scripts, and take no version younger than Dependabot's cooldown
+          # (.github/dependabot.yml default-days; tests/unit/ci-workflow.test.ts keeps them equal).
           npm_config_ignore_scripts: 'true'
+          npm_config_min_release_age: '7'
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -186,7 +210,8 @@ jobs:
   # visibility: a job that names an environment which doesn't exist gets one created with no
   # protection rules. Set it only once the preview environment has required reviewers and holds
   # the token (README, "Cloudflare API token"). Previews run only for pull requests into the
-  # default branch, so the base commit they trust is a commit on that branch.
+  # default branch, and the token jobs take their trusted files from that branch by name, never
+  # from the pull request's base commit, which goes stale if the base changes.
   preview-build:
     name: Build the preview
     if: >-
@@ -218,6 +243,7 @@ jobs:
           path: |
             dist/
             bundle/
+          include-hidden-files: true
           retention-days: 1
           if-no-files-found: error
 
@@ -229,7 +255,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.base.ref == github.event.repository.default_branch
     needs: [preview-build]
-    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     environment: preview
     permissions:
       contents: read
@@ -240,11 +266,11 @@ jobs:
       - name: Explain a skipped preview
         if: env.HAS_CLOUDFLARE != 'true'
         run: echo "::notice title=Preview skipped::Set the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets in the preview environment, behind required reviewers, to get a preview per pull request. Repository secrets reach this job too, unreviewed."
-      - name: Check out the trusted config from the pull request's base
+      - name: Check out the trusted config from the default branch
         if: env.HAS_CLOUDFLARE == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: refs/heads/${{ github.event.repository.default_branch }}
           path: trusted
           sparse-checkout: |
             /.nvmrc
@@ -262,11 +288,17 @@ jobs:
         id: trusted
         if: env.HAS_CLOUDFLARE == 'true'
         run: node trusted/scripts/trusted-config.mjs trusted
+      - name: Stop unless a wrangler version was read
+        if: env.HAS_CLOUDFLARE == 'true'
+        env:
+          WRANGLER_VERSION: ${{ steps.trusted.outputs.wrangler-version }}
+        run: test -n "$WRANGLER_VERSION" || { echo "::error::trusted-config.mjs gave no wrangler version"; exit 1; }
       - if: env.HAS_CLOUDFLARE == 'true'
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: preview-site
           path: ${{ runner.temp }}/artifact
+      # As in deploy, only worker.js ships.
       - name: Put the site, the Worker and the trusted config in a fresh directory
         if: env.HAS_CLOUDFLARE == 'true'
         run: |
@@ -280,6 +312,7 @@ jobs:
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
         env:
           npm_config_ignore_scripts: 'true'
+          npm_config_min_release_age: '7'
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -316,16 +349,16 @@ jobs:
       github.event_name == 'pull_request' && github.event.action == 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.base.ref == github.event.repository.default_branch
-    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     environment: preview
     env:
       HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
     steps:
-      - name: Check out the trusted config from the pull request's base
+      - name: Check out the trusted config from the default branch
         if: env.HAS_CLOUDFLARE == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: refs/heads/${{ github.event.repository.default_branch }}
           path: trusted
           sparse-checkout: |
             /.nvmrc
@@ -343,6 +376,11 @@ jobs:
         id: trusted
         if: env.HAS_CLOUDFLARE == 'true'
         run: node trusted/scripts/trusted-config.mjs trusted
+      - name: Stop unless a wrangler version was read
+        if: env.HAS_CLOUDFLARE == 'true'
+        env:
+          WRANGLER_VERSION: ${{ steps.trusted.outputs.wrangler-version }}
+        run: test -n "$WRANGLER_VERSION" || { echo "::error::trusted-config.mjs gave no wrangler version"; exit 1; }
       - name: Put the trusted config in a fresh directory
         if: env.HAS_CLOUDFLARE == 'true'
         run: |
@@ -352,6 +390,7 @@ jobs:
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
         env:
           npm_config_ignore_scripts: 'true'
+          npm_config_min_release_age: '7'
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

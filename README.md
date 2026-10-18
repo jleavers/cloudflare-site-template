@@ -70,9 +70,10 @@ Worker secrets (nothing for Turnstile or email delivery). The form works and sen
 
 1. **One click:** the **Deploy to Cloudflare** button above. Cloudflare copies this repository
    into your GitHub account, builds it and deploys it.
-2. **Use this template** on GitHub, then add two repository secrets and push:
-   `gh secret set CLOUDFLARE_API_TOKEN` and `gh secret set CLOUDFLARE_ACCOUNT_ID`
-   ([which token, and where it belongs](#cloudflare-api-token)).
+2. **Use this template** on GitHub, then store the CI token and account ID and push:
+   `gh secret set CLOUDFLARE_API_TOKEN --env production` and the same for `CLOUDFLARE_ACCOUNT_ID`,
+   in a `production` environment limited to `main`, or as repository secrets on a private Free
+   repository ([which token, and where, by plan](#cloudflare-api-token)).
 3. **From your machine:** `npm ci`, `npx wrangler login`, `npm run deploy`.
 
 ## Stamp out a site
@@ -129,9 +130,16 @@ deploy a workers.dev Worker and to deploy previews. Only **attaching a custom do
 `wrangler login` (or a token that has it). A token with Workers Scripts → Edit can change **every** Worker on its account,
 so keep the repositories that hold one to yourself.
 
-CI hands the token only to jobs that run no code from the branch or the lockfile: they take
-`wrangler.jsonc` and the wrangler version from `main` (or from a pull request's base) and deploy
-what a job without the token built. Where you store the token decides who else can reach it:
+CI hands the token only to jobs that run no code from the branch or the lockfile. They take
+`wrangler.jsonc` and the wrangler version from `main` (for a pull request, from the default
+branch by name), deploy what a job without the token built, and always run on GitHub-hosted
+runners. That makes `main`'s `wrangler.jsonc` part of what you trust: its `assets.directory`,
+`rules` and `tsconfig` steer what wrangler reads and uploads, so review a change to it as you
+would a change to `.github/workflows/`. Only the bundle's `worker.js` ships: a Worker whose
+bundle has more modules (a `.wasm`, text or data import) fails to deploy until the copy step in
+`ci.yml`, and the test that pins it, take them too.
+
+Where you store the token, and who can push to `main`, decide who else can reach it:
 
 - **Public repository (any plan), or private on GitHub Enterprise:** in Settings → Environments,
   create an environment `production` whose deployment branches are limited to `main`, and give it
@@ -139,13 +147,20 @@ what a job without the token built. Where you store the token decides who else c
   `gh secret set CLOUDFLARE_API_TOKEN --env production` and
   `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`. For previews, put the same two secrets
   in an environment `preview` with required reviewers. Then delete the repository-level copies
-  (`gh secret delete CLOUDFLARE_API_TOKEN`, and the same for `CLOUDFLARE_ACCOUNT_ID`).
-- **Private on Pro or Team:** the `production` environment as above. Leave previews off: these
-  plans have no required reviewers for a private repository.
-- **Private on Free:** there are no environment secrets, so the token stays a repository secret
-  (`gh secret set CLOUDFLARE_API_TOKEN`). The deploy still runs: its job names `production`, and
-  the repository secret resolves there (checked on a private repository). **Anyone who can push a
-  workflow change to the repository can read the token.**
+  (`gh secret delete CLOUDFLARE_API_TOKEN`, and the same for `CLOUDFLARE_ACCOUNT_ID`). Protect
+  `main` with a ruleset that requires a pull request (Settings → Rules → Rulesets): every push to
+  `main` deploys, running that commit's `scripts/trusted-config.mjs` before wrangler.
+- **Private on Pro or Team:** the `production` environment and the ruleset as above. Leave
+  previews off: these plans have no required reviewers for a private repository.
+- **Private on Free:** there are no environment secrets and no rulesets, so the token stays a
+  repository secret (`gh secret set CLOUDFLARE_API_TOKEN`) and `main` stays open to anyone who
+  can push. The deploy still runs: its job names `production`, and the repository secret resolves
+  there (checked on a private repository). **Anyone who can push to `main` or push a workflow
+  change can read the token**, and that includes a coding agent whose token has Contents write.
+
+The jobs that hold the token need GitHub-hosted minutes. A private repository that has used up
+its minutes can't deploy from CI that month: deploy with `npm run deploy` from your machine
+instead.
 
 **Previews** are off unless you set the repository variable `CI_PREVIEWS` to `true`
 (`gh variable set CI_PREVIEWS --body true`). Do that only once the `preview` environment has
@@ -159,7 +174,9 @@ test keys).
 lets it), give it an **HTTPS token without workflow permission**: a fine-grained token with
 Contents and Pull requests read and write and no Workflows permission, or a classic token without
 the `workflow` scope. Don't give it your SSH key. GitHub refuses a workflow change only from a
-token that lacks that permission; an SSH key, yours or a deploy key, can push anything.
+token that lacks that permission; an SSH key, yours or a deploy key, can push anything. Contents
+write can still push to `main` unless a ruleset requires a pull request there, so set one up
+where the plan allows (above).
 
 ### Deploying from a machine without a browser
 
@@ -203,7 +220,7 @@ dev box or VM. Two ways round it:
 | Worker secrets | `TURNSTILE_SECRET_KEY` | always |
 | | `RESEND_API_KEY` or `WEBHOOK_URL` | for the provider |
 | GitHub secrets | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | for CI deploys and previews: in the `production` and `preview` environments, or repository secrets on a private Free repository ([where](#cloudflare-api-token)) |
-| GitHub variables | `CI_LINUX_RUNNER` | optional: a self-hosted runner label (private repositories only) |
+| GitHub variables | `CI_LINUX_RUNNER` | optional: a self-hosted runner label for the jobs without the token (private repositories only) |
 | | `CI_PREVIEWS` | optional: `true` turns on pull-request previews, once the `preview` environment has required reviewers ([why](#cloudflare-api-token)) |
 
 ## Development
@@ -230,10 +247,12 @@ Turnstile's test keys and `log` delivery, and is deleted when the pull request c
 `CONTACT_TO_EMAIL` and `CONTACT_FROM_EMAIL` are configured for production but not for Previews:
 that is intended, because a preview without the addresses cannot send. Leave it.
 
-**Short of GitHub Actions minutes?** CI can run on a self-hosted runner (set `CI_LINUX_RUNNER`,
-private repositories only), or you can connect the repository to Cloudflare's
+**Short of GitHub Actions minutes?** CI's checks can run on a self-hosted runner (set
+`CI_LINUX_RUNNER`, private repositories only), or you can connect the repository to Cloudflare's
 [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/) instead, which builds
-on Cloudflare's own minutes.
+on Cloudflare's own minutes. The deploy and preview jobs always run on GitHub-hosted runners,
+because they hold the Cloudflare token: with no hosted minutes left, a private repository can't
+deploy from CI that month, so deploy with `npm run deploy` from your machine.
 
 ## No lock-in
 

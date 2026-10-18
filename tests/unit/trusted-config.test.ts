@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -100,8 +100,12 @@ describe('the command line, as the token jobs run it', () => {
     made.push(path);
     return path;
   };
-  const run = (dir: string, output: string) =>
-    spawnSync(process.execPath, [root('scripts/trusted-config.mjs'), dir], { encoding: 'utf8', env: { ...process.env, GITHUB_OUTPUT: output } });
+  const run = (dir: string, output: string, script = root('scripts/trusted-config.mjs')) =>
+    spawnSync(process.execPath, [script, dir], { encoding: 'utf8', env: { ...process.env, GITHUB_OUTPUT: output } });
+  const pinned = (JSON.parse(read('package.json')) as { devDependencies: Record<string, string> }).devDependencies.wrangler;
+  // A directory whose wrangler.jsonc has a custom build.
+  file('wrangler.jsonc', '{ "name": "a", "build": { "command": "make" } }');
+  file('package.json', '{ "devDependencies": { "wrangler": "4.149.0" } }');
 
   afterAll(() => {
     for (const path of made) unlinkSync(path);
@@ -112,18 +116,35 @@ describe('the command line, as the token jobs run it', () => {
     const output = file('repo.out', '');
     const result = run(root('.'), output);
     expect(result.status, result.stderr).toBe(0);
-    const pinned = (JSON.parse(read('package.json')) as { devDependencies: Record<string, string> }).devDependencies.wrangler;
     expect(readFileSync(output, 'utf8')).toBe(`wrangler-version=${pinned}\n`);
   });
 
   test('fails with a one-line reason, and writes nothing, for a config with a build', () => {
-    file('wrangler.jsonc', '{ "name": "a", "build": { "command": "make" } }');
-    file('package.json', '{ "devDependencies": { "wrangler": "4.149.0" } }');
     const output = file('build.out', '');
     const result = run(scratch, output);
     expect(result.status).toBe(1);
     expect(result.stderr.trim()).toMatch(/^trusted-config: wrangler\.jsonc: .*build/);
     expect(result.stderr.trim().split('\n')).toHaveLength(1);
     expect(readFileSync(output, 'utf8')).toBe('');
+  });
+
+  // Node resolves a symlinked entry to its real path in import.meta.url, but not in process.argv.
+  test('runs, and refuses, when called through a symlink', (context) => {
+    const link = join(scratch, 'linked-trusted-config.mjs');
+    try {
+      symlinkSync(root('scripts/trusted-config.mjs'), link);
+    } catch (error) {
+      // Windows needs Developer Mode or an elevated shell to make a symlink.
+      if ((error as NodeJS.ErrnoException).code === 'EPERM') context.skip();
+      throw error;
+    }
+    made.push(link);
+    const repoOutput = file('linked-repo.out', '');
+    const repo = run(root('.'), repoOutput, link);
+    expect(repo.status, repo.stderr).toBe(0);
+    expect(readFileSync(repoOutput, 'utf8')).toBe(`wrangler-version=${pinned}\n`);
+    const buildOutput = file('linked-build.out', '');
+    expect(run(scratch, buildOutput, link).status).toBe(1);
+    expect(readFileSync(buildOutput, 'utf8')).toBe('');
   });
 });
