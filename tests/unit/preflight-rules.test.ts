@@ -135,6 +135,66 @@ describe('production mode (a custom domain)', () => {
   });
 });
 
+describe('production mode (real delivery, no route)', () => {
+  const live: PreflightInput = {
+    wrangler: {
+      name: 'acme-site',
+      workers_dev: true,
+      vars: { DELIVERY_PROVIDER: 'resend', CONTACT_TO_EMAIL: 'hi@acme.test', CONTACT_FROM_EMAIL: 'web@acme.test' },
+    },
+    site: { name: 'Acme', url: 'https://acme.sub.workers.dev', contact: { turnstileSiteKey: '0x4AAAAAAAreal', successMessage: 'Thanks.' } },
+    designPresent: true,
+    placeholders: [],
+  };
+
+  test('workers.dev with resend and real values passes, in production mode', () => {
+    expect(checkPreflight(live)).toEqual({ mode: 'production', errors: [], warnings: [], notes: [] });
+  });
+
+  test.each(['resend', 'slack', 'teams'])('%s starts production mode', (provider) => {
+    const result = checkPreflight({ ...live, wrangler: { ...live.wrangler, vars: { ...live.wrangler.vars, DELIVERY_PROVIDER: provider } } });
+    expect(result.mode).toBe('production');
+  });
+
+  test('the test secret left in vars is an error', () => {
+    const vars = { ...live.wrangler.vars, TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA' };
+    const result = checkPreflight({ ...live, wrangler: { ...live.wrangler, vars } });
+    expect(result.mode).toBe('production');
+    expect(result.errors.join('\n')).toContain('TURNSTILE_SECRET_KEY');
+  });
+
+  test('a placeholder is an error naming the page', () => {
+    const result = checkPreflight({ ...live, placeholders: [{ page: 'about/index.html', text: '[Your address]' }] });
+    expect(result.errors).toEqual(['about/index.html has the placeholder [Your address]']);
+  });
+
+  test('template values are errors too', () => {
+    const result = checkPreflight({ ...live, site: { ...live.site, name: EXAMPLE_SITE_NAME, url: 'https://example.com' } });
+    const all = result.errors.join('\n');
+    expect(all).toContain(EXAMPLE_SITE_NAME);
+    expect(all).toContain('example.com');
+    expect(all).not.toMatch(/custom domains/);
+  });
+
+  test('workers_dev false with no route still has no URL', () => {
+    const result = checkPreflight({ ...live, wrangler: { ...live.wrangler, workers_dev: false } });
+    expect(result.errors).toContain('workers_dev is false and no route is set, so the deploy would have no URL');
+  });
+
+  test('still warns when design/ is missing', () => {
+    expect(checkPreflight({ ...live, designPresent: false }).warnings).toHaveLength(1);
+  });
+
+  test('log on workers.dev stays demo mode with notes only; log with a route is production', () => {
+    const demo = checkPreflight(template);
+    expect(demo.mode).toBe('demo');
+    expect(demo.errors).toEqual([]);
+    expect(demo.notes.length).toBeGreaterThan(0);
+    const routed = checkPreflight({ ...template, wrangler: { ...template.wrangler, routes: [{ pattern: 'www.acme.test', custom_domain: true }] } });
+    expect(routed.mode).toBe('production');
+  });
+});
+
 describe('findPlaceholders', () => {
   const found = (text: string) => findPlaceholders(`<p>${text}</p>`);
 
