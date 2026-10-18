@@ -76,7 +76,8 @@ export function checkPreflight({ wrangler, site, designPresent, placeholders }: 
   const routeHostList = routeHosts(wrangler);
   const vars = wrangler.vars ?? {};
   const siteHost = new URL(site.url).hostname.toLowerCase();
-  const provider = vars.DELIVERY_PROVIDER;
+  // Trimmed, as readConfig (src/contact/config.ts) reads it: " resend " delivers for real.
+  const provider = vars.DELIVERY_PROVIDER?.trim();
 
   const templateValues = [
     [wrangler.name === TEMPLATE_WORKER_NAME, `wrangler.jsonc "name" is still "${TEMPLATE_WORKER_NAME}"`],

@@ -156,6 +156,13 @@ describe('production mode (real delivery, no route)', () => {
     expect(result.mode).toBe('production');
   });
 
+  // readConfig trims the provider, so " resend " delivers for real: preflight must read it the same way.
+  test.each([' resend ', '\tslack', 'teams\n'])('%j, padded, starts production mode too', (provider) => {
+    const result = checkPreflight({ ...template, wrangler: { ...template.wrangler, vars: { ...template.wrangler.vars, DELIVERY_PROVIDER: provider } } });
+    expect(result.mode).toBe('production');
+    expect(result.errors.join('\n')).toContain('TURNSTILE_SECRET_KEY');
+  });
+
   test('the test secret left in vars is an error', () => {
     const vars = { ...live.wrangler.vars, TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA' };
     const result = checkPreflight({ ...live, wrangler: { ...live.wrangler, vars } });
