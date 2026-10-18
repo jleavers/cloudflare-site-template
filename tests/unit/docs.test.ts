@@ -18,24 +18,23 @@ const SPEC = 'docs/superpowers/specs/2026-10-12-cloudflare-site-template-design.
 const exists = (path: string) => existsSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)));
 const TEMPLATE_README = '# cloudflare-site-template';
 const TEMPLATE_SECURITY = 'https://github.com/jleavers/cloudflare-site-template/security/advisories/new';
-const TEMPLATE_BRIEF = "This copy describes the template's own example site";
+// The brief's §1 must be filled in, so a real brief always changes this line (the intro sentence survives).
+const TEMPLATE_BRIEF = '- **Site name:** Example Co.';
 const TEMPLATE_WRANGLER = '"name": "cloudflare-site-template",';
 /** True while the document is still the template's own; a missing file is not. */
 const isTemplate = (path: string, marker: (text: string) => boolean) => exists(path) && marker(read(path));
 const templateReadme = isTemplate('README.md', (text) => text.split(/\r?\n/, 1)[0] === TEMPLATE_README);
 const templateSecurity = isTemplate('SECURITY.md', (text) => text.includes(TEMPLATE_SECURITY));
-const templateBrief = isTemplate('SITE_BRIEF.md', (text) => text.includes(TEMPLATE_BRIEF));
+const templateBrief = isTemplate('SITE_BRIEF.md', (text) => text.split(/\r?\n/).includes(TEMPLATE_BRIEF));
 const templateWrangler = isTemplate('wrangler.jsonc', (text) => text.includes(TEMPLATE_WRANGLER));
-/**
- * `test.each` over documents; the README row, which pins the template's wording, runs only while
- * README.md is the template's. A row is a path, or an array whose first item is one.
- */
-function eachDoc<Row extends string | readonly [string, ...string[]]>(name: string, rows: readonly Row[], run: (...row: any[]) => void) {
+/** `test.each` over documents: the README row runs only in the template, every other row always. A row is a path, or an array whose first item is one. */
+function eachDoc<Row extends string | readonly [string, ...string[]]>(name: string, rows: readonly Row[], run: (doc: string, ...rest: string[]) => void) {
   const doc = (row: Row) => (typeof row === 'string' ? row : row[0]);
   const rest = rows.filter((row) => doc(row) !== 'README.md');
-  if (rest.length) test.each(rest as Row[])(name, run);
+  const each = (rows: readonly unknown[]) => (title: string, fn: (...args: any[]) => void) => test.each(rows as unknown[][])(title, fn);
+  if (rest.length) each(rest)(name, run);
   describe.skipIf(!templateReadme)('template README only', () => {
-    test.each(rows.filter((row) => doc(row) === 'README.md') as Row[])(name, run);
+    each(rows.filter((row) => doc(row) === 'README.md'))(name, run);
   });
 }
 /** Text as it reads: line breaks, and a JSONC comment's leading slashes, become one space. */
@@ -135,7 +134,9 @@ describe('agent-facing documents', () => {
     test('SITE_BRIEF.md shows the success message the site ships', () => {
       const brief = read('SITE_BRIEF.md');
       expect(brief).toContain('{email}');
-      const message = /successMessage: '(.+)',/.exec(read('src/config/site.ts'))![1];
+      const match = /successMessage: '(.+)',/.exec(read('src/config/site.ts'));
+      expect(match, "src/config/site.ts must quote successMessage with ' on one line").not.toBeNull();
+      const message = match![1];
       expect(brief).toContain(`**Message shown after sending** (optional \`{email}\` is replaced with the visitor's address): ${message}`);
     });
   });
@@ -313,12 +314,13 @@ describe('agent-facing documents', () => {
 
   // In this repository nothing above may skip; a renamed title or a reworded marker would hide it.
   describe('the template-only checks have their markers here', () => {
-    const isTemplateRepo = exists('src/config/site.ts') && read('src/config/site.ts').includes('Example Co.');
+    // Two independent anchors, both of which a stamp-out changes: a rename of one cannot silently skip the guards.
+    const isTemplateRepo = (exists('src/config/site.ts') && read('src/config/site.ts').includes('Example Co.')) || (exists('wrangler.jsonc') && read('wrangler.jsonc').includes(TEMPLATE_WRANGLER));
     test.skipIf(!isTemplateRepo)("the template's README starts with its marker line", () => {
       expect(read('README.md').split(/\r?\n/, 1)[0]).toBe(TEMPLATE_README);
     });
     test.skipIf(!isTemplateRepo)("the template's SITE_BRIEF.md, SECURITY.md and wrangler.jsonc carry their markers", () => {
-      expect(read('SITE_BRIEF.md')).toContain(TEMPLATE_BRIEF);
+      expect(read('SITE_BRIEF.md').split(/\r?\n/)).toContain(TEMPLATE_BRIEF);
       expect(read('SECURITY.md')).toContain(TEMPLATE_SECURITY);
       expect(read('wrangler.jsonc')).toContain(TEMPLATE_WRANGLER);
     });
