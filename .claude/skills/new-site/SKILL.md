@@ -212,8 +212,8 @@ with `file:line`, and say that production preflight (a custom domain, or `DELIVE
      Account Settings → Read): bash,
      `read -rsp 'Cloudflare API token: ' CLOUDFLARE_API_TOKEN && echo && export CLOUDFLARE_API_TOKEN`
      and `export CLOUDFLARE_ACCOUNT_ID=<account id>`; PowerShell,
-     `$env:CLOUDFLARE_API_TOKEN = Read-Host -MaskInput 'Cloudflare API token'` and
-     `$env:CLOUDFLARE_ACCOUNT_ID = '<account id>'`.
+     `$env:CLOUDFLARE_API_TOKEN = Read-Host -MaskInput 'Cloudflare API token'` (PowerShell 7.1 or
+     later) and `$env:CLOUDFLARE_ACCOUNT_ID = '<account id>'`.
    - On a machine without a browser (SSH, a dev VM), `wrangler login` redirects to
      `http://localhost:8976/oauth/callback` on the browser's machine. Use the token (a custom
      domain also needs Zone → Workers Routes → Write), or forward the port from the machine with
@@ -223,10 +223,11 @@ with `file:line`, and say that production preflight (a custom domain, or `DELIVE
    ID, then push. Every push to `main` builds and deploys on GitHub-hosted runners: with no
    hosted minutes left, deploy with `npm run deploy` from your machine. Anyone who can merge into
    `main`, or push a workflow change, can read the token.
-   - On a public repository, or a private one on a paid plan: Settings → Environments → create
-     `production`, limited to the `main` branch, then
-     `gh secret set CLOUDFLARE_API_TOKEN --env production` and
-     `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`.
+   - On a public repository, or a private one on a paid plan: Settings → Environments → open the
+     `production` environment that CI's first run made, or create it, and limit it to the `main`
+     branch, then `gh secret set CLOUDFLARE_API_TOKEN --env production` and
+     `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`. On a repository with no runs yet,
+     those fail with a 404 until the environment exists.
    - On a private repository on GitHub Free, which has no environment secrets:
      `gh secret set CLOUDFLARE_API_TOKEN` and `gh secret set CLOUDFLARE_ACCOUNT_ID`. It has no
      rulesets either, so any identity with Contents write can push to `main`.

@@ -54,7 +54,7 @@ export const linkedin = (desktop) =>
       <ul class="points" style="margin-top:40px;font-size:27px;line-height:1.9;list-style:none">
         <li>Static Astro, 100 on Lighthouse</li>
         <li>Turnstile-protected form to email, Slack or Teams</li>
-        <li>A preview for every pull request</li>
+        <li>Opt-in previews for pull requests</li>
         <li>No lock-in: plain HTML, standard handler</li>
       </ul>
     </div>

@@ -19,8 +19,8 @@ within a few days.
   site owner receives; a request that makes the Worker read unbounded input or leak
   configuration, secrets or another visitor's data in a response or a log.
 - **The template's defaults**: a CSP or header in `public/_headers` that lets third-party script
-  run; a default that ships Turnstile test keys or `log` delivery to a custom domain past
-  `npm run preflight`.
+  run; a default that ships Turnstile test keys or `log` delivery to a live site (a custom domain,
+  or real delivery) past `npm run preflight`.
 - **The CI workflow**: a way for a pull request from a fork to obtain the Cloudflare token, write
   to the repository, or run on a self-hosted runner.
 - **The agent instructions** (`AGENTS.md`, `.claude/`): text in a Claude Design bundle, a site

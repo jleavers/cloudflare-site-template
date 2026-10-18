@@ -29,7 +29,9 @@ that emails you or posts to Slack or Teams, and optional previews of pull reques
 - **The site** is [Astro](https://astro.build) in static mode with [Tailwind CSS](https://tailwindcss.com):
   plain HTML and CSS in `dist/`, fonts and images self-hosted and optimised, no client framework.
 - **The Worker** (`src/worker.ts`) serves `dist/` from Cloudflare's edge and handles one route,
-  `POST /api/contact`. Static requests never touch it, so they are free and unlimited.
+  `POST /api/contact`. A request for a file in `dist/` never touches it, so those are free and
+  unlimited. A miss (an unknown page, a missing asset) does: the Worker answers it with the 404
+  page, uncached, and it counts as a Worker request.
 - **The contact form** loads [Turnstile](https://developers.cloudflare.com/turnstile/) only
   when it scrolls into view, then checks a honeypot, the origin, Turnstile and every field before
   delivering through Resend, Slack or Teams. That logic (`src/contact/`) is Web-standard
@@ -70,10 +72,11 @@ Worker secrets (nothing for Turnstile or email delivery). The form works and sen
 
 1. **One click:** the **Deploy to Cloudflare** button above. Cloudflare copies this repository
    into your GitHub account, builds it and deploys it.
-2. **Use this template** on GitHub, then store the CI token and account ID and push:
-   `gh secret set CLOUDFLARE_API_TOKEN --env production` and the same for `CLOUDFLARE_ACCOUNT_ID`,
-   in a `production` environment limited to `main`, or as repository secrets on a private Free
-   repository ([which token, and where, by plan](#cloudflare-api-token)).
+2. **Use this template** on GitHub. Open the `production` environment that CI's first run made
+   (Settings → Environments), or create it, and limit it to `main`. Then store the CI token and
+   account ID in it and push: `gh secret set CLOUDFLARE_API_TOKEN --env production` and the same
+   for `CLOUDFLARE_ACCOUNT_ID`. On a private Free repository, use repository secrets instead
+   ([which token, and where, by plan](#cloudflare-api-token)).
 3. **From your machine:** `npm ci`, `npx wrangler login`, `npm run deploy`.
 
 ## Stamp out a site
@@ -101,11 +104,12 @@ You need: a Claude Design handoff (or an archive or artifact link), the facts in
    certificate included. Then turn on **Always Use HTTPS** for the domain's zone (dashboard → SSL/TLS →
    Edge Certificates). Preflight can't check that setting, and without it the pages can be fetched
    over http. (The form refuses a cleartext post either way.)
-6. Store the CI token and account ID ([where, by plan](#cloudflare-api-token)):
-   `gh secret set CLOUDFLARE_API_TOKEN --env production` and the same for `CLOUDFLARE_ACCOUNT_ID`,
-   or repository secrets on a private Free repository, then push. From now on every push to
-   `main` deploys, so anyone who can merge into `main` can read the token: give a coding agent its
-   own GitHub identity ([how](#cloudflare-api-token)). Pull-request previews are
+6. Store the CI token and account ID ([where, by plan](#cloudflare-api-token)). First open the
+   `production` environment that CI's first run made (Settings → Environments), or create it, and
+   limit it to `main`; then `gh secret set CLOUDFLARE_API_TOKEN --env production` and the same for
+   `CLOUDFLARE_ACCOUNT_ID`. On a private Free repository, use repository secrets. Then push. From
+   now on every push to `main` deploys, so anyone who can merge into `main` can read the token: give
+   a coding agent its own GitHub identity ([how](#cloudflare-api-token)). Pull-request previews are
    [opt-in](#cloudflare-api-token).
 
 Steps 1, 5 and 6 take under five minutes once step 4 is done. Step 3 depends on the design.
@@ -159,10 +163,11 @@ to `main` deploys, running that commit's `scripts/trusted-config.mjs` before wra
 store the token decides who else can reach it:
 
 - **Public repository (any plan), or private on GitHub Enterprise:** in Settings → Environments,
-  create an environment `production` whose deployment branches are limited to `main`, and give it
-  the token and account ID as environment secrets:
-  `gh secret set CLOUDFLARE_API_TOKEN --env production` and
-  `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`. For previews, put the same two secrets
+  open the environment `production` that CI's first run made (with no rules), or create it, and
+  limit its deployment branches to `main`. Then give it the token and account ID as environment
+  secrets: `gh secret set CLOUDFLARE_API_TOKEN --env production` and
+  `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`. On a repository with no runs yet, that
+  command fails with a 404 until you create the environment. For previews, put the same two secrets
   in an environment `preview` with required reviewers. Then delete the repository-level copies
   (`gh secret delete CLOUDFLARE_API_TOKEN`, and the same for `CLOUDFLARE_ACCOUNT_ID`).
 - **Private on Pro or Team:** the `production` environment as above. Leave previews off: these
@@ -205,7 +210,8 @@ dev box or VM. Two ways round it:
 - **Use an API token instead of `wrangler login`.** The [CI token](#cloudflare-api-token) works
   from your terminal for a workers.dev site. Attaching a custom domain also needs
   **Zone → Workers Routes → Write**. `read -s` and `-MaskInput` keep the token off the screen
-  and out of shell history.
+  and out of shell history. `Read-Host -MaskInput` needs PowerShell 7.1 or later; Windows
+  PowerShell 5.1 doesn't have it.
 
   bash:
 
@@ -257,7 +263,9 @@ dev box or VM. Two ways round it:
 Fonts API, so building needs network access, while visitors never contact Google.
 
 `npm run preview` never sends a real message. To try real delivery locally, put the settings in
-a `.dev.vars` file (gitignored) and run `npx wrangler dev` yourself.
+a `.dev.vars` file (gitignored) with a real `TURNSTILE_SECRET_KEY`: the handler refuses a test
+secret with any provider but `log`. That secret's widget needs `localhost` among its hostnames, and
+`site.ts` its site key. Then run `npm run build` and `npx wrangler dev` yourself.
 
 **Pull-request previews**, once [turned on](#cloudflare-api-token), use Cloudflare
 [Previews](https://developers.cloudflare.com/workers/previews/): each gets its own URL,

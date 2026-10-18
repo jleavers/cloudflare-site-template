@@ -162,7 +162,7 @@ Every stamped-out site must satisfy these, whatever its design. AGENTS.md states
 | # | Contract | Enforced by |
 |---|---|---|
 | C1 | Design tokens live only in `src/styles/global.css` (`@theme`). Site-wide facts live only in `src/config/site.ts`. Page copy lives in the page files and is passed to sections as props. | AGENTS.md; skill |
-| C2 | Fonts are self-hosted through the Astro Fonts API. Raster images go through `<Image>`, from `src/assets/`. | dist: no external stylesheet or font hosts; every `<img>` has `width`, `height` and an `/_astro/` `src` (SVG excepted) |
+| C2 | Fonts are self-hosted through the Astro Fonts API. Raster images go through `<Image>`, from `src/assets/`. | dist: every URL a built page or stylesheet can fetch or connect to (`src`, `srcset`, `href` but on `<a>` and `<area>`, `poster`, `data`, `action`, `formaction`, `ping`, `xlink:href`, a meta refresh, and `url()` and `@import` in a `style` attribute, a `<style>` or a CSS file) resolves to the site's own origin, but a `data:` image and the script hosts C3 allows; an attribute name repeated on one element is refused, since a browser reads only the first; every `<img>` has `width`, `height` and `alt`, and a `src` under `/_astro/` or exactly `/favicon.svg` |
 | C3 | No client framework. No third-party scripts except Turnstile, and the Cloudflare Web Analytics beacon when it is enabled. | dist: script `src` allow-list; package.json has no react, vue, svelte, preact, solid or alpinejs |
 | C4 | Every page renders through `BaseLayout`. | dist: every HTML page has `<title>`, meta description, canonical, `og:title`, `og:description`, an absolute `og:image` URL and `lang` |
 | C5 | `ContactForm` markup may be restyled, but its contract is fixed: `form[data-contact-form]`, `action="/api/contact"`, `method="post"`, fields `name`, `email`, `message`, `_gotcha` (hidden), a `[data-turnstile]` container, a `[data-status]` live region, and the bundled submit script. | dist checks the structure; e2e checks the behaviour |
@@ -325,7 +325,7 @@ The owner then sets these with `wrangler secret put`:
 - `TURNSTILE_SECRET_KEY`;
 - `RESEND_API_KEY` or `WEBHOOK_URL`, depending on the provider.
 
-Preflight (§11.3) blocks a custom-domain deploy while the test secret is still in `vars`.
+Preflight (§11.3) refuses a live site (a custom domain, or real delivery) while the test secret is still in `vars`.
 
 **Previews** need no secrets. Previews do not inherit production vars, so `previews.vars` sets everything they read:
 
@@ -344,7 +344,7 @@ PR builds set `PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA`, the always-p
 **Local:** `scripts/dev-stack.mjs` builds with `PUBLIC_TURNSTILE_SITE_KEY` set to the test key, then runs `wrangler dev --var DELIVERY_PROVIDER:log --var TURNSTILE_SECRET_KEY:<test secret>`.
 - `npm run preview`, Playwright's `webServer` and the screenshot tool all use this one script.
 - A local run never sends a real message, whatever the site's production config says.
-- Anyone who wants to try real delivery locally writes their own `.dev.vars`. The README covers this.
+- Anyone who wants to try real delivery locally writes their own `.dev.vars`, with a real Turnstile secret from a widget whose hostnames include `localhost`, because the handler refuses a test secret with any provider but `log`. The README covers this.
 - There is deliberately **no `.dev.vars.example`**. The Deploy button treats every name in that file as a secret to prompt for, which would clash with the vars above.
 
 ## 8. Styling, fonts, images and headers
@@ -485,7 +485,7 @@ Pin each version to the current release at implementation time, with an exact en
 | `build` | `astro build` |
 | `preview` | `node scripts/dev-stack.mjs`: the full stack locally, with test keys and `log` delivery (§7.5) |
 | `check` | `astro check`: covers `.astro` and `.ts`, including the worker |
-| `test` | vitest `unit` project |
+| `test` | vitest `unit` and `sweep` projects |
 | `test:dist` | vitest `dist` project (needs `build`) |
 | `test:e2e` | Playwright, whose `webServer` is `scripts/dev-stack.mjs`. The run works the same in the template and in a stamped-out site whose production values are real. |
 | `verify` | `check` → `test` → `build` → `test:dist` |
@@ -539,7 +539,9 @@ It only warns when `design/SOURCE.md` and `design/bundle/` are both absent.
   2. A server-side error is surfaced in the UI. For example, a long name gets past client validation once `maxlength` is removed in the test, and the server's 400 appears.
   3. With JS disabled, the button is disabled and the `<noscript>` text is visible.
   4. An unknown path returns the 404 page with status 404.
-  5. On a 375px viewport, the `<details>` mobile nav opens and its links are reachable.
+  5. A missing hashed asset under `/_astro/` is a 404 with the 404 page, the CSP and `Cache-Control: no-store`, never cached as immutable.
+  6. The success message names the address that was sent, even when the email field changes while the request is in flight.
+  7. On a 375px viewport, the `<details>` mobile nav opens and its links are reachable.
 - **Lighthouse:**
   - Local: performance = 1, accessibility ≥ 0.95, best-practices ≥ 0.95, SEO = 1.
   - CI: accessibility and SEO are errors, because they are deterministic. Performance and best practices only warn, because a shared VM's CPU contention makes those scores noisy. These audits are also errors: `render-blocking-insight` (was `render-blocking-resources`), `unsized-images`, `cumulative-layout-shift` ≤ 0.01, `total-byte-weight` ≤ 300 KB, and `font-display-insight` (was `font-display`).
@@ -581,11 +583,13 @@ New users who only want to see the template working start with §14.2 instead. T
    1. `npx wrangler login`
    2. `npx wrangler secret put TURNSTILE_SECRET_KEY`, and `RESEND_API_KEY` or `WEBHOOK_URL`
    3. `npm run deploy`. This creates the Worker and attaches the custom domain from `routes`, which provisions DNS and TLS.
+   4. Turn on **Always Use HTTPS** for the domain's zone (SSL/TLS → Edge Certificates). Preflight can't check it, and without it the pages can be fetched over http.
 6. **Hand over to CI:**
-   1. `gh secret set CLOUDFLARE_API_TOKEN --env production`, or a repository secret on a private Free repository (§10, "Secrets")
-   2. `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`, likewise
-   3. Optionally, `gh variable set CI_LINUX_RUNNER` plus a runner registration (see ci-runners), and `CI_PREVIEWS` once a `preview` environment with required reviewers holds the token (§10).
-   4. Push. CI deploys `main`; pull-request previews are opt-in.
+   1. Unless the repository is private on GitHub Free: open the `production` environment that CI's first run made (Settings → Environments), or create it, and limit its deployment branches to `main`. On a repository with no runs yet, `gh secret set --env production` fails with a 404 until the environment exists.
+   2. `gh secret set CLOUDFLARE_API_TOKEN --env production`, or a repository secret on a private Free repository (§10, "Secrets")
+   3. `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`, likewise
+   4. Optionally, `gh variable set CI_LINUX_RUNNER` plus a runner registration (see ci-runners), and `CI_PREVIEWS` once a `preview` environment with required reviewers holds the token (§10).
+   5. Push. CI deploys `main`; pull-request previews are opt-in.
 
 The "under 5 minutes" target covers steps 1, 5 and 6 for an account where step 4 has already been done once. Step 3 depends on the design.
 

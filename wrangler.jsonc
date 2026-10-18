@@ -20,7 +20,8 @@
   // so this repository deploys to workers.dev with no secrets at all (the live demo, the Deploy
   // button). A real site sets its own provider and addresses here and DELETES
   // TURNSTILE_SECRET_KEY from this block, setting it as a secret instead: a var and a secret
-  // cannot share a name. `npm run preflight` refuses a custom-domain deploy until it has.
+  // cannot share a name. `npm run preflight` refuses a live site (a custom domain, or real
+  // delivery) until it has.
   "vars": {
     "DELIVERY_PROVIDER": "log",
     "TURNSTILE_SECRET_KEY": "1x0000000000000000000000000000000AA",

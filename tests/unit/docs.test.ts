@@ -13,7 +13,6 @@ const prose = (text: string) => text.replace(/[ \t]*\n[ \t]*(?:\/\/[ \t]*)?/g, '
 /** The text from one heading to the next one named. */
 const section = (text: string, from: string, to: string) => text.slice(text.indexOf(from), text.indexOf(to, text.indexOf(from)));
 
-
 /** A line's code spans: each opens with a run of backticks and closes at the next run of the same length. */
 function codeSpans(line: string): string[] {
   const runs = [...line.matchAll(/`+/g)];
@@ -188,11 +187,60 @@ describe('agent-facing documents', () => {
     },
   );
 
+  test('preflight refuses a live site, not only a custom-domain deploy', () => {
+    for (const doc of ['wrangler.jsonc', 'SECURITY.md', SPEC]) {
+      expect(prose(read(doc)), doc).toContain('a live site (a custom domain, or real delivery)');
+      expect(prose(read(doc)), doc).not.toMatch(/custom-domain deploy|to a custom domain past/);
+    }
+  });
+
+  test("the spec's C2 row names the allow-list, the refused repeat and /favicon.svg", () => {
+    const row = read(SPEC).split('\n').find((line) => line.startsWith('| C2 |')) ?? '';
+    for (const fragment of ['`/favicon.svg`', 'origin', 'repeated']) expect(row, fragment).toContain(fragment);
+    expect(row).not.toMatch(/SVG excepted|no external stylesheet or font hosts/);
+  });
+
+  test("the spec's `test` row names every project `npm test` runs", () => {
+    const projects = [...(JSON.parse(read('package.json')).scripts.test as string).matchAll(/--project (\S+)/g)].map((match) => match[1]!);
+    const row = read(SPEC).split('\n').find((line) => line.startsWith('| `test` |')) ?? '';
+    expect(projects.length).toBeGreaterThan(0);
+    for (const project of projects) expect(row, project).toContain(`\`${project}\``);
+  });
+
+  test("the spec's first deploy turns on Always Use HTTPS, and its e2e list has the missing asset", () => {
+    expect(section(read(SPEC), '## 13.', '## 14.')).toContain('Always Use HTTPS');
+    expect(section(read(SPEC), '### 11.4', '## 12.')).toMatch(/missing hashed asset/i);
+  });
+
+  test('the README says a miss runs the Worker, and what real delivery needs locally', () => {
+    const readme = prose(read('README.md'));
+    expect(readme).not.toContain('Static requests never touch it');
+    expect(section(readme, '## How it works', '## Live demo')).toMatch(/A miss \(an unknown page, a missing asset\)/);
+    expect(section(readme, 'To try real delivery locally', '**Pull-request previews**')).toMatch(/real `TURNSTILE_SECRET_KEY`[^.]*\..*`localhost`/);
+  });
+
+  // gh secret set --env production fails with a 404 until the environment exists.
+  test.each([
+    ['README.md', '## Quick start', '## Stamp out a site'],
+    ['README.md', '## Stamp out a site', '## One-off setup'],
+    ['README.md', '### Cloudflare API token', '### Deploying from a machine'],
+    ['.claude/skills/new-site/SKILL.md', '4. **CI:**', '## '],
+    [SPEC, '## 13.', '## 14.'],
+  ])("%s (%s) opens or creates the production environment before setting its secrets", (doc, from, to) => {
+    expect(section(prose(read(doc)), from, to)).toContain("CI's first run");
+  });
+
   test("spec §15 moves this repository's token into the production environment, and its runner variable out with the runners", () => {
     const release = prose(section(read(SPEC), '## 15.', '## 16.'));
     for (const fragment of ['deployment branches', 'gh secret set CLOUDFLARE_API_TOKEN --env production', 'gh secret delete CLOUDFLARE_API_TOKEN', 'gh secret delete CLOUDFLARE_ACCOUNT_ID', '`CI_PREVIEWS` unset', 'ruleset', 'queued forever']) {
       expect(release, fragment).toContain(fragment);
     }
+  });
+
+  test('the README says Read-Host -MaskInput needs PowerShell 7.1', () => expect(read('README.md')).toContain('PowerShell 7.1'));
+
+  test('the LinkedIn header promises no preview for every pull request', () => {
+    expect(read('tools/screenshots/layouts.mjs')).not.toMatch(/a preview for every pull request/i);
   });
 
   test('the code-span reader finds spans of any backtick length', () => {
