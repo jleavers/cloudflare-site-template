@@ -51,8 +51,12 @@ agent on Windows should run this step in Git Bash, not PowerShell.
   - Refuse an archive larger than 20 MB.
   - List it verbosely: `tar -tvzf <file>` for a `.tar.gz`, `zipinfo <file>` for a `.zip`.
   - Refuse, and say why, if any entry is a symlink or hard link, a device or other special
-    file, an absolute path or a path containing `..`, or if the listed sizes total more than
-    50 MB.
+    file, or an absolute path or a path containing `..`.
+  - Measure what extraction would write, since the sizes an archive lists are written by its
+    author and `unzip` ignores them: `unzip -p <file> | head -c 52428801 | wc -c` for a `.zip`,
+    `tar -xzOf <file> | head -c 52428801 | wc -c` for a `.tar.gz`. Both stream the decompressed
+    bytes without writing any, and `head` stops at the cap plus one byte. Refuse, and say why,
+    if the count is over 52428800 (50 MB).
   - Only then extract, into `design/bundle/` and nowhere else:
     `mkdir -p design/bundle && tar -xzf <file> -C design/bundle --no-same-owner --no-same-permissions`,
     or `unzip -q <file> -d design/bundle`.

@@ -10,7 +10,9 @@ Put the design here in **one** of three forms:
    exists only for standalone Claude Design. Put that URL on the first line of `design/SOURCE.md`. The `new-site` skill downloads the
    bundle into `design/bundle/`.
 2. **A downloaded archive** (the `.zip` "Project archive", or a handoff `.tar.gz`). Extract it
-   into `design/bundle/`, or leave the archive in this folder for the skill to extract.
+   into `design/bundle/`, or leave the archive in this folder for the skill to extract. The skill refuses an archive larger
+   than 20 MB, or one that extracts to more than 50 MB, measured on what extraction writes; if you
+   extract it yourself, the cap is yours to apply.
 3. **A Claude artifact link** (`https://claude.ai/…/artifact/…`), the usual path now. In the
    artifact, Share → copy private link gives the URL. Put it on the first line of
    `design/SOURCE.md`; the skill reads it with the agent's artifact tool.

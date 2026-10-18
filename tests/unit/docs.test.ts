@@ -48,6 +48,14 @@ describe('agent-facing documents', () => {
     expect(read('README.md')).toContain('preload');
   });
 
+  test('the archive cap counts the bytes extraction writes, not the sizes the archive lists', () => {
+    const skill = read('.claude/skills/new-site/SKILL.md');
+    expect(skill).toContain('unzip -p <file> | head -c 52428801 | wc -c');
+    expect(skill).toContain('tar -xzOf <file> | head -c 52428801 | wc -c');
+    expect(skill).not.toMatch(/listed sizes total/);
+    expect(read('design/README.md')).toMatch(/50 MB/);
+  });
+
   test('the new-site skill has frontmatter naming it', () => {
     expect(read('.claude/skills/new-site/SKILL.md')).toMatch(SKILL_FRONTMATTER);
   });
