@@ -31,7 +31,7 @@ The output is a working site. Once the template is working and tested, the repos
 - **CI runners:** the `jleavers/ci-runners` conventions. Browser tests run in CI on the self-hosted Linux VM, after Chromium's system libraries are added to it.
 - **A live demo is part of v1** (§14). The template's example site, with fabricated content, deploys from this repo to workers.dev. A new user can get the same site live on their own account straight away, using a "Deploy to Cloudflare" button, "Use this template" plus two secrets, or `npm run deploy`.
 - **A security sweep runs before the repository goes public** (§18). It is the Claude Code workflow from `jleavers/codervis`, ported with lanes for this repository, as was done for codervis and issuebot before they went public.
-- **Dependabot** keeps the SHA-pinned actions and the exact npm versions current (§10).
+- **Dependabot** keeps the SHA-pinned actions and hooks and the exact npm versions current (§10).
 - **The demo runs on a separate, free Cloudflare account** used for nothing else. The token this public repo holds can then reach only the demo, never the owner's real sites.
 - **README media is part of v1** (§14). Screenshots, a GIF of the form flow, a social preview and a LinkedIn header are captured from the example site, in the style of `issuebot` and `codervis`.
 
@@ -98,7 +98,7 @@ Browser ──► Cloudflare edge
 .claude/skills/new-site/SKILL.md   stamp-out procedure: design + brief → site → verify
 .claude/skills/security-sweep/SKILL.md  how the owner runs and audits the sweep (§18)
 .claude/workflows/security-sweep.js     the sweep: recon, lanes, refuters, triage, report (§18)
-.github/dependabot.yml             monthly grouped npm and Actions updates (§10)
+.github/dependabot.yml             monthly grouped npm, Actions and pre-commit updates (§10)
 .github/workflows/ci.yml           verify · e2e · deploy · preview-build · preview · preview-cleanup
 design/README.md                   where a site's Claude Design handoff goes (committed, never built)
 docs/PRD.md                        original requirements
@@ -441,8 +441,11 @@ PR builds set `PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA`, the always-p
   - private on Free: repository secrets.
 - **Optional repo variables:** `CI_LINUX_RUNNER`, and `CI_PREVIEWS` (`true` turns previews on).
 - **Fork PRs** never see secrets, so they run `verify` and `e2e` only. That is exactly what the public template needs.
-- **Dependabot** (`.github/dependabot.yml`) opens monthly, grouped updates for npm and GitHub Actions, with a 7-day cooldown and TypeScript held below 7. Stamped-out sites inherit it.
-- **Workflow linting:** `actionlint` and `zizmor` run as pre-commit hooks.
+- **Dependabot** (`.github/dependabot.yml`) opens monthly, grouped updates for npm, GitHub Actions and pre-commit hooks, with a 7-day cooldown and TypeScript held below 7. Stamped-out sites inherit it.
+- **Workflow linting:** `actionlint` and `zizmor` run as pre-commit hooks. The `actionlint-py` hook is pinned by SHA and its build verifies the downloaded actionlint binary's SHA-256 against `_custom_build/checksums.cfg` (checked against upstream's release checksums), so the pin fixes what runs.
+- **Admission test:** `tests/unit/supply-chain.test.ts`, in `npm run verify` and so inherited by every stamped-out site, admits upstream code only on pins the repository verifies, whichever path introduced it (Dependabot, a hand install, a lockfile edit, a hook). It asserts that (a) every `package-lock.json` entry's `resolved` is exactly `https://registry.npmjs.org/<name>/-/<unscoped-name>-<version>.tgz` for the entry's own name (its `name` field if an alias) and version, with `sha512-` integrity and no link, `git+`, `file:` or `http:` source (a host check alone would let an entry point at another package's tarball); (b) the entries with `hasInstallScript` are exactly `esbuild`, `fsevents` and `workerd`, an allow-list in the test that a new entry needs the owner's approval to change; (c) every `rev:` in `.pre-commit-config.yaml` is a 40-hex commit SHA followed by a `# vX.Y.Z` comment, read with a regex because no YAML parser is a dependency; and (d) `.npmrc`'s `min-release-age` equals every `default-days` in `dependabot.yml`.
+- **Pre-commit pins:** Dependabot's `pre-commit` ecosystem keeps those SHA-pinned revs current, monthly, in one group, under the same 7-day cooldown.
+- **Release-age floor:** `.npmrc` sets `min-release-age=7`, so a hand `npm install` takes no release younger than the cooldown. `npm ci` is unaffected: it installs the lockfile's versions whatever their age. npm 11.10 added the setting; Node 22's npm 10.x ignores it, so the README tells Node 22 users to upgrade npm or use Node 24.
 - **Self-hosted runners** may serve this repository only while it is private, and only its jobs without the token, and not `verify` on a push to `main`: `deploy`, `preview`, `preview-cleanup` and that `verify` run always use GitHub-hosted runners (see "Runners"). Self-hosted runners are removed before the repository goes public, per the ci-runners Trust rule.
 
 **One-off VM change, made by the owner.** jl-dev-02 needs Chromium's system libraries for `e2e`. Jobs have no sudo, so they cannot install them.
