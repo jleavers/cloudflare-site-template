@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { foreignInCss, foreignInHtml } from '../dist/foreign';
+import { attributeNames, foreignInCss, foreignInHtml, repeatedAttributes } from '../dist/foreign';
 
 const SITE = 'https://example.com';
 const PAGE = `${SITE}/privacy/`;
@@ -27,6 +27,12 @@ describe('foreignInHtml refuses', () => {
     ['a foreign form action', '<form action="https://example.net/post">'],
     ['a foreign imagesrcset', '<link rel="preload" as="image" imagesrcset="https://cdn.example.net/a.png 1x">'],
     ['a look-alike host', '<img src="https://example.com.evil.net/x.png">'],
+    // A browser keeps the first of a repeated attribute name and drops the rest; a check that
+    // reads another copy proves nothing. The final review's two cases, then the safe-looking one.
+    ['a preconnect whose href is repeated in capitals', '<link rel="preconnect" href="https://evil.example.net" HREF="/ok">'],
+    ['an image whose src is repeated in capitals', '<img src="https://evil.example.net/x.png" SRC="/favicon.svg">'],
+    ['a script whose src is repeated in capitals', '<script src="https://evil.example.net/x.js" SRC="/_astro/x.js"></script>'],
+    ['a repeated name even when the first copy is on the site', '<img src="/favicon.svg" src="https://evil.example.net/x.png">'],
   ])('%s', (_name, markup) => {
     expect(html(markup)).not.toEqual([]);
   });
@@ -37,6 +43,10 @@ describe('foreignInHtml refuses', () => {
     expect(message).toContain('<link>');
     expect(message).toContain('href');
     expect(message).toContain('https://fonts.gstatic.com');
+  });
+
+  test('names the repeated attribute', () => {
+    expect(html('<link rel="preconnect" href="https://evil.example.net" HREF="/ok">')).toContain(`${PAGE}: <link> repeats the attribute "href", and a browser keeps only the first`);
   });
 
   test('the analytics beacon without a token', () => {
@@ -86,5 +96,27 @@ describe('foreignInCss', () => {
   });
   test('allows same-origin and data: urls', () => {
     expect(css('@font-face{src:url(/_astro/fonts/a.woff2)} a{background:url("data:image/png;base64,AAAA")}')).toEqual([]);
+  });
+});
+
+// The attribute names as the HTML tokeniser reads them from node-html-parser's rawAttrs.
+describe('attributeNames', () => {
+  test.each([
+    ['ASCII case folded, repeats kept', 'rel="preconnect" href="https://evil.example.net" HREF="/ok"', ['rel', 'href', 'href']],
+    ['a quoted value hides nothing', 'alt="a src=b" title=\'c href=d\' src=/e', ['alt', 'title', 'src']],
+    ['no space after a quoted value', 'src="/a"SRC="https://evil.example.net/x.png"', ['src', 'src']],
+    ['a slash between attributes', 'alt="x" /src="https://evil.example.net/x.png" /', ['alt', 'src']],
+    ['a quote inside a name is part of it', 'x"src="/a" src=/b', ['x"src', 'src']],
+    ['an equals sign that starts a name', '=src=x src=y', ['=src', 'src']],
+    ['spaces around the equals sign', 'src = "/a" href =/b', ['src', 'href']],
+    ['names with no value', 'async defer SRC', ['async', 'defer', 'src']],
+    ['only ASCII letters fold', 'DATA-\u212A=1 data-k=2', ['data-\u212a', 'data-k']],
+  ])('%s', (_name, raw, names) => {
+    expect(attributeNames(raw)).toEqual(names);
+  });
+
+  test('repeatedAttributes names each repeated name once', () => {
+    expect(repeatedAttributes('src=a SRC=b Src=c alt=d')).toEqual(['src']);
+    expect(repeatedAttributes('src=a alt=b')).toEqual([]);
   });
 });

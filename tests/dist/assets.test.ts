@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { site } from '../../src/config/site';
-import { foreignInCss, foreignInHtml } from './foreign';
+import { foreignInCss, foreignInHtml, repeatedAttributes } from './foreign';
 import { allFiles, pages, readDist } from './helpers';
 
 const SCRIPT_HOSTS = ['https://challenges.cloudflare.com/', 'https://static.cloudflareinsights.com/'];
@@ -10,6 +10,8 @@ describe.each(pages().map((page) => [page.route, page] as const))('page %s', (_r
   // C3, and the CSP in public/_headers, which allows no inline script.
   test('runs only bundled scripts, plus Turnstile and the analytics beacon', () => {
     for (const script of page.root.querySelectorAll('script')) {
+      // A browser keeps the first of a repeated name, and getAttribute reads the last: refuse a repeat.
+      expect(repeatedAttributes(script.rawAttrs), `<script ${script.rawAttrs}>`).toEqual([]);
       const src = script.getAttribute('src');
       if (src) expect(src.startsWith('/_astro/') || SCRIPT_HOSTS.some((host) => src.startsWith(host)), src).toBe(true);
       else expect(script.getAttribute('type'), `inline script: ${script.text.slice(0, 80)}`).toBe('application/ld+json');
@@ -38,6 +40,7 @@ describe.each(pages().map((page) => [page.route, page] as const))('page %s', (_r
   // C2: raster images go through <Image>, which sizes them and puts them under /_astro/.
   test('sizes every image and serves rasters from /_astro/', () => {
     for (const img of page.root.querySelectorAll('img')) {
+      expect(repeatedAttributes(img.rawAttrs), `<img ${img.rawAttrs}>`).toEqual([]);
       const src = img.getAttribute('src') ?? '';
       expect(img.getAttribute('width'), src).toMatch(/^\d+$/);
       expect(img.getAttribute('height'), src).toMatch(/^\d+$/);

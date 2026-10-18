@@ -54,17 +54,71 @@ function srcsetUrls(value: string): string[] {
   return urls;
 }
 
+// The HTML tokeniser's whitespace inside a tag: tab, LF, FF and space, with CR (it becomes LF first).
+const TAG_SPACE = /[\t\n\f\r ]/;
+
+/**
+ * A start tag's attribute names, in order and with repeats, as the HTML tokeniser reads them from
+ * the raw text after the tag name (node-html-parser's `rawAttrs`): each name runs to whitespace,
+ * `/`, `>` or `=`, with its ASCII capitals folded, and each value, quoted or not, is skipped.
+ * A browser keeps the first of a repeated name and drops the rest, while node-html-parser's
+ * `attributes` keeps both spellings of a name in different case and only the first of an exact
+ * repeat, so neither shows what a check of "the" value would have to see.
+ */
+export function attributeNames(raw: string): string[] {
+  const names: string[] = [];
+  let i = 0;
+  const skipSpace = () => {
+    while (i < raw.length && TAG_SPACE.test(raw[i]!)) i++;
+  };
+  while (i < raw.length) {
+    skipSpace();
+    if (i >= raw.length) break;
+    if (raw[i] === '/' || raw[i] === '>') {
+      i++;
+      continue;
+    }
+    // A name may start with "=" (a parse error that the tokeniser keeps in the name).
+    const start = i++;
+    while (i < raw.length && !TAG_SPACE.test(raw[i]!) && !'/>='.includes(raw[i]!)) i++;
+    names.push(raw.slice(start, i).replace(/[A-Z]/g, (letter) => letter.toLowerCase()));
+    skipSpace();
+    if (raw[i] !== '=') continue;
+    i++;
+    skipSpace();
+    const quote = raw[i];
+    if (quote === '"' || quote === "'") {
+      const end = raw.indexOf(quote, i + 1);
+      i = end === -1 ? raw.length : end + 1;
+    } else {
+      while (i < raw.length && !TAG_SPACE.test(raw[i]!) && raw[i] !== '>') i++;
+    }
+  }
+  return names;
+}
+
+/** The names that occur more than once in a start tag's raw attributes, each named once. */
+export function repeatedAttributes(raw: string): string[] {
+  const names = attributeNames(raw);
+  return [...new Set(names.filter((name, i) => names.indexOf(name) !== i))];
+}
+
 const SIMPLE = new Set(['src', 'poster', 'data', 'action', 'formaction', 'background', 'manifest', 'xlink:href']);
 const NAVIGATES = new Set(['a', 'area']);
 
-function htmlReferences(html: string): Reference[] {
+function htmlReferences(html: string): { references: Reference[]; repeated: string[] } {
   // noscript is parsed as markup (the default keeps it as text), so nothing in it is hidden.
   const root = parse(html, { comment: false, blockTextElements: { script: true, style: true } });
   const references: Reference[] = [];
+  const repeated: string[] = [];
   for (const element of root.querySelectorAll('*')) {
     const tag = element.tagName.toLowerCase();
+    // Refused outright, whatever the name: which copy a check reads is not the question.
+    for (const name of repeatedAttributes(element.rawAttrs)) repeated.push(`<${tag}> repeats the attribute "${name}", and a browser keeps only the first`);
     // .attributes keeps the author's spelling of each name and decodes entities in the value.
-    const attributes = new Map(Object.entries(element.attributes).map(([name, value]) => [name.trim().toLowerCase(), value]));
+    // Every entry is checked: the list is never collapsed by name.
+    const attributes = Object.entries(element.attributes).map(([name, value]) => [name.trim().toLowerCase(), value] as const);
+    const get = (name: string) => attributes.find(([key]) => key === name)?.[1];
     const add = (attribute: string, url: string) =>
       references.push({
         element: tag,
@@ -79,13 +133,13 @@ function htmlReferences(html: string): Reference[] {
       else if (name === 'ping') for (const url of value.split(/\s+/).filter(Boolean)) add(name, url);
       else if (name === 'style') for (const url of cssUrls(value)) references.push({ element: tag, attribute: 'style', url, image: true, script: false });
     }
-    if (tag === 'meta' && attributes.get('http-equiv')?.trim().toLowerCase() === 'refresh') {
-      const target = /url\s*=\s*['"]?([^'";]*)/i.exec(attributes.get('content') ?? '');
+    if (tag === 'meta' && get('http-equiv')?.trim().toLowerCase() === 'refresh') {
+      const target = /url\s*=\s*['"]?([^'";]*)/i.exec(get('content') ?? '');
       if (target) add('content', target[1]!);
     }
     if (tag === 'style') for (const url of cssUrls(element.text)) references.push({ element: tag, attribute: 'text', url, image: true, script: false });
   }
-  return references;
+  return { references, repeated };
 }
 
 function violations(references: Reference[], options: Options, where: string): string[] {
@@ -109,9 +163,10 @@ function violations(references: Reference[], options: Options, where: string): s
   return problems;
 }
 
-/** Violations in one built page: one message per refused reference. */
+/** Violations in one built page: one message per repeated attribute name, and one per refused reference. */
 export function foreignInHtml(html: string, options: Options): string[] {
-  return violations(htmlReferences(html), options, options.page);
+  const { references, repeated } = htmlReferences(html);
+  return [...repeated.map((problem) => `${options.page}: ${problem}`), ...violations(references, options, options.page)];
 }
 
 /** Violations in one stylesheet: every url() and @import. */
