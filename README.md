@@ -82,12 +82,13 @@ You need: a Claude Design handoff (or an archive or artifact link), the facts in
 [`SITE_BRIEF.md`](SITE_BRIEF.md), and [Claude Code](https://claude.ai/code).
 
 1. `gh repo create <site> --template jleavers/cloudflare-site-template --private --clone`
-   The new repository's first CI run starts straight away, and is red until you finish the steps
-   below, which is harmless. Dependabot is on for the new repository too. On a private repository
-   the checks on pull requests can use a self-hosted runner
+   The new repository's first CI run starts straight away. With Actions minutes it passes:
+   preflight runs in demo mode, and the deploy skips with a notice until step 6. Dependabot is on
+   for the new repository too. On a private repository with no hosted minutes left, the run is
+   red, which is harmless: the checks on pull requests can use a self-hosted runner
    (see [Short of GitHub Actions minutes?](#development)), but every push to `main` builds and
-   deploys on GitHub-hosted minutes. With none left, each push to `main` shows a failed run until
-   the minutes return: deploy with `npm run deploy` from your machine meanwhile.
+   deploys on GitHub-hosted minutes, so until they return, deploy with `npm run deploy` from your
+   machine.
 2. Brief Claude Design with [`design/BRIEFING.md`](design/BRIEFING.md), put its design in
    `design/` ([how](design/README.md)) and fill in `SITE_BRIEF.md`.
 3. In Claude Code, run `/new-site`. It rebuilds the pages to match the design, then runs every
@@ -227,7 +228,7 @@ dev box or VM. Two ways round it:
 | Worker secrets | `TURNSTILE_SECRET_KEY` | always |
 | | `RESEND_API_KEY` or `WEBHOOK_URL` | for the provider |
 | GitHub secrets | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | for CI deploys and previews: in the `production` and `preview` environments, or repository secrets on a private Free repository ([where](#cloudflare-api-token)) |
-| GitHub variables | `CI_LINUX_RUNNER` | optional: a self-hosted runner label for the jobs without the token (private repositories only) |
+| GitHub variables | `CI_LINUX_RUNNER` | optional: a self-hosted runner label (private repositories only) for `e2e`, `preview-build`, and the pull-request and dispatch runs of `verify` |
 | | `CI_PREVIEWS` | optional: `true` turns on pull-request previews, once the `preview` environment has required reviewers ([why](#cloudflare-api-token)) |
 
 ## Development
