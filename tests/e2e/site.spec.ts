@@ -6,6 +6,13 @@ test('unknown paths get the 404 page with status 404', async ({ page }) => {
   await expect(page.locator('h1')).toBeVisible();
 });
 
+test('a missing hashed asset is a 404 that is never cached as immutable', async ({ request }) => {
+  const response = await request.get('/_astro/does-not-exist.js');
+  expect(response.status()).toBe(404);
+  expect(response.headers()['cache-control'] ?? '').not.toContain('immutable');
+  expect(response.headers()['content-security-policy']).toBeTruthy();
+});
+
 test('the mobile menu opens and its links are reachable', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 800 });
   await page.goto('/');

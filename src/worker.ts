@@ -19,6 +19,19 @@ function stringSettings(env: Env): ContactEnv {
   return settings;
 }
 
+/**
+ * wrangler.jsonc sets not_found_handling "none", so a miss reaches this Worker as a bare 404. It
+ * answers with the built 404 page, still a 404, and `no-store`: _headers matches by path, so
+ * left to the asset layer a missing /_astro/ file would be cached as immutable for a year.
+ */
+async function notFound(request: Request, miss: Response, env: Env): Promise<Response> {
+  const page = await env.ASSETS.fetch(new Request(new URL('/404', request.url), { headers: request.headers }));
+  if (page.status !== 200) return miss;
+  const headers = new Headers(page.headers);
+  headers.set('Cache-Control', 'no-store'); // never the asset layer's rule for this path
+  return new Response(request.method === 'HEAD' ? null : page.body, { status: 404, headers });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
@@ -30,6 +43,8 @@ export default {
       }
       return json(404, { ok: false, message: 'Not found.' });
     }
-    return env.ASSETS.fetch(request);
+    const response = await env.ASSETS.fetch(request);
+    if (response.status !== 404) return response;
+    return notFound(request, response, env);
   },
 };

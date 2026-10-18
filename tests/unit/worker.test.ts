@@ -41,3 +41,52 @@ describe('worker routing', () => {
     expect(assets).not.toHaveBeenCalled();
   });
 });
+
+describe('worker fallback: a miss is a 404 that is never cached', () => {
+  const PAGE = '<h1>Not found</h1>';
+  const CSP = "default-src 'self'";
+  // With not_found_handling "none" a miss comes back from the asset layer as a bare 404, and the
+  // 404 page is a separate asset request. The page carries the _headers rules for its own path.
+  function assetsEnv() {
+    const assets = vi.fn(async (request: Request) => {
+      const { pathname } = new URL(request.url);
+      if (pathname === '/404') {
+        return new Response(PAGE, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': CSP, 'Cache-Control': 'public, max-age=0, must-revalidate' } });
+      }
+      if (pathname === '/') return new Response('home', { status: 200, headers: { 'Cache-Control': 'public, max-age=31536000, immutable' } });
+      if (pathname === '/privacy') return new Response(null, { status: 307, headers: { Location: '/privacy/' } });
+      return new Response(null, { status: 404 });
+    });
+    const value: Env = { ASSETS: { fetch: assets } };
+    return { value, assets };
+  }
+
+  test.each(['/_astro/does-not-exist.js', '/no-such-page'])('%s is the 404 page, status 404, no-store, headers intact', async (path) => {
+    const { value } = assetsEnv();
+    const response = await worker.fetch(at(path), value);
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe(PAGE);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(response.headers.get('Content-Security-Policy')).toBe(CSP);
+    expect(response.headers.get('Content-Type')).toContain('text/html');
+  });
+
+  test('a HEAD for a miss is a 404 with no body and no-store', async () => {
+    const { value } = assetsEnv();
+    const response = await worker.fetch(at('/_astro/x.js', { method: 'HEAD' }), value);
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe('');
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+  });
+
+  test('a response that is not a 404 passes through untouched', async () => {
+    const { value } = assetsEnv();
+    const ok = await worker.fetch(at('/'), value);
+    expect(ok.status).toBe(200);
+    expect(await ok.text()).toBe('home');
+    expect(ok.headers.get('Cache-Control')).toBe('public, max-age=31536000, immutable');
+    const redirect = await worker.fetch(at('/privacy'), value);
+    expect(redirect.status).toBe(307);
+    expect(redirect.headers.get('Location')).toBe('/privacy/');
+  });
+});

@@ -8,7 +8,10 @@
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    "not_found_handling": "404-page",
+    // "none": a miss reaches the Worker, which serves 404.html as a 404 with `no-store`. With
+    // "404-page" the asset layer answered itself, and `_headers` made a missing /_astro/ file
+    // cacheable as immutable. Each miss is therefore a Worker invocation (bot probes count).
+    "not_found_handling": "none",
     // /api/* always reaches the Worker, even if a file in dist/ ever matched it.
     "run_worker_first": ["/api/*"]
   },

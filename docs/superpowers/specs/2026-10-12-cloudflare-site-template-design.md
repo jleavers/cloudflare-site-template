@@ -47,7 +47,7 @@ The output is a working site. Once the template is working and tested, the repos
 | # | PRD | This spec | Why |
 |---|---|---|---|
 | D1 | Astro 5.x | Astro 7.3.x, Node ≥ 22.12 (CI and `.nvmrc` use 24), TypeScript pinned `^6` | Astro 7 is current (7.0 shipped 2026-06-22). `@astrojs/check` does not support TS 7. |
-| D2 | `assets` has no `binding` | `"binding": "ASSETS"` plus `run_worker_first: ["/api/*"]` | Without the binding, `env.ASSETS` is undefined and every 404 crashes the Worker. |
+| D2 | `assets` has no `binding` | `"binding": "ASSETS"` plus `run_worker_first: ["/api/*"]` and `not_found_handling: "none"` | Without the binding, `env.ASSETS` is undefined and the Worker cannot serve a miss. With `"404-page"` the asset layer answered a miss itself, and `_headers` (matched by path) made a missing `/_astro/` file cacheable as immutable for a year; with `"none"` a miss reaches the Worker, which serves `404.html` as a 404 with `no-store`. |
 | D3 | `ALLOWED_ORIGIN` var | `Origin` must equal the request's own origin | A fixed origin rejects previews, workers.dev and local dev. Same-origin also removes a per-site edit. |
 | D4 | PR previews on version URLs | Cloudflare Previews (`wrangler preview --name pr-<n>`), deleted when the PR closes | Cloudflare discourages version URLs for PR testing. Version URLs also share production secrets, so a preview form would send real mail. |
 | D5 | Graceful non-JS form fallback | Submit stays disabled without JS, and a `<noscript>` note offers an email address | Turnstile needs JS, so a no-JS post can never pass verification. |
@@ -83,11 +83,11 @@ Browser ──► Cloudflare edge
                                                   │      ├─ turnstile.ts ──► challenges.cloudflare.com siteverify
                                                   │      ├─ validate.ts
                                                   │      └─ providers/{resend,webhook,log}.ts ──► api.resend.com | Slack | Teams
-                    anything else ────────────────┴──► env.ASSETS.fetch(request)   (404.html for misses)
+                    anything else ────────────────┴──► env.ASSETS.fetch(request)   (a miss: the 404 page, status 404, no-store)
 ```
 
 - **Build:** Astro in static output mode produces plain HTML and CSS in `dist/`, plus a few small bundled scripts for the form.
-- **Runtime:** one Worker, whose entry is `src/worker.ts`.
+- **Runtime:** one Worker, whose entry is `src/worker.ts`. A miss is a Worker invocation (`not_found_handling: "none"`), so bot probes of missing paths count toward the Workers request quota.
 - **Portability:** `src/contact/` uses only `Request`, `Response`, `fetch`, `FormData`, `URL` and `AbortSignal`. It never imports from `src/worker.ts` or anything Cloudflare-specific. The unit tests run it on plain Node, which proves that.
 
 ## 4. Repository layout
@@ -364,6 +364,7 @@ PR builds set `PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA`, the always-p
   /_astro/*
     Cache-Control: public, max-age=31536000, immutable
   ```
+  - The `/_astro/*` immutable rule applies to hashed files that exist. A missing one's 404 is served by the Worker with `Cache-Control: no-store` (and the `/*` security headers), so a browser never keeps it.
   - Enabling Cloudflare Web Analytics adds `https://static.cloudflareinsights.com` to `script-src` and `https://cloudflareinsights.com` to `connect-src`.
   - Whether Astro inlines small scripts, which this CSP would block, is verified during implementation (§16).
   - The Worker sets its own headers on `/api/*` responses, since `_headers` applies to static assets only.
