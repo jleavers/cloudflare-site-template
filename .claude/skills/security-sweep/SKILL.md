@@ -94,10 +94,11 @@ for f in <transcript-dir>/*.jsonl; do
 done > "$RD/audit-calls.jsonl"
 ```
 
-Then decode them, so that a newline is a newline and a command is one string to read:
+Then decode them, so that a newline is a newline and a command is one string to read. Each line
+keeps its transcript and its stage:
 
 ```bash
-jq -r '[.f, .n, (.i | to_entries | map(.value | if type=="string" then . else tojson end) | join(" "))] | join("\t")' "$RD/audit-calls.jsonl" > "$RD/audit-text.txt"
+jq -r '[.f, .s, .n, (.i | to_entries | map(.value | if type=="string" then . else tojson end) | join(" "))] | join("\t")' "$RD/audit-calls.jsonl" > "$RD/audit-text.txt"
 ```
 
 **The patterns come from a file**, because the prompts name them and a host hook may refuse any
@@ -132,9 +133,12 @@ wget[[:space:]]
 \bnc[[:space:]]
 ```
 
-One grep for the ones a single pass can answer, so that no bullet is left to memory:
+One grep for the ones a single pass can answer, so that no bullet is left to memory. The count
+comes first: the list stops at 80 lines, so a count above 80 means it was cut, and the rest
+(`| sed -n '81,$p'` in place of `| head -80`) is read before the audit is called clean:
 
 ```bash
+grep -cEf "$RD/audit-patterns.txt" "$RD/audit-text.txt"
 grep -nEf "$RD/audit-patterns.txt" "$RD/audit-text.txt" | head -80
 ```
 

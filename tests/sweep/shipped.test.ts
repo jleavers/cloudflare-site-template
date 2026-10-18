@@ -72,6 +72,16 @@ test('the post-run audit extracts tool calls first and reads its patterns from a
   expect(skill).not.toMatch(/grep -nE '/);
 });
 
+// The decoded text keeps each call's stage, which the extraction added, and the hit count comes
+// before the capped list, so a truncated list shows as one.
+test('the post-run audit keeps each call\'s stage and counts its hits before listing them', () => {
+  const skill = skillText();
+  expect(skill).toContain("jq -r '[.f, .s, .n, ");
+  const count = skill.indexOf('grep -cEf "$RD/audit-patterns.txt" "$RD/audit-text.txt"');
+  expect(count, 'the count').toBeGreaterThan(-1);
+  expect(skill.indexOf('grep -nEf "$RD/audit-patterns.txt" "$RD/audit-text.txt" | head -80'), 'the list, after the count').toBeGreaterThan(count);
+});
+
 test('phase 0 drops the credentials the sweep does not need, and phase 8 restores them', () => {
   const skill = skillText();
   const phase0 = section(skill, '## Phase 0', '### The tracker listing');
