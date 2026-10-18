@@ -266,9 +266,10 @@ repository can't deploy from CI that month, so deploy with `npm run deploy` from
 **Supply chain.** `.npmrc` sets `min-release-age=7`, the same seven days as the Dependabot
 cooldown, so a hand `npm install` takes no release younger than a week (`npm ci` installs what the
 lockfile says, whatever its age). The setting needs npm 11.10 or later: Node 22's bundled npm
-(10.x) doesn't know it and ignores it, so on Node 22 run `npm install -g npm@11`, or use Node 24
-(`.nvmrc`). CI's token jobs apply the same floor to wrangler-action's install (design spec §10).
-`tests/unit/supply-chain.test.ts`, part of
+(10.x) doesn't know it and ignores it (silently: npm 10.9.9 printed no warning, and installed the newest versions), so on
+Node 22 run `npm install -g npm@11`, or use Node 24 (`.nvmrc`). Other npm 10 releases may warn
+about an unknown config key; the floor is still not applied. CI's token jobs apply the same floor
+to wrangler-action's install (design spec §10). `tests/unit/supply-chain.test.ts`, part of
 `npm run verify`, checks that every lockfile entry is the registry tarball for its own name and
 version with sha512 integrity, that only `esbuild`, `fsevents` and `workerd` run install scripts
 (a new one needs the owner's approval), that every pre-commit `rev` is a commit SHA, and that the

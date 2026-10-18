@@ -12,6 +12,7 @@ repos:
   # (unpinned actions, template injection, credential persistence, dangerous triggers).
   # actionlint-py's build downloads the actionlint binary and verifies its SHA-256 against
   # _custom_build/checksums.cfg, which the SHA pin fixes (checked against upstream's release checksums).
+  # Its build requirements (setuptools, wheel, requests, semver) still come unpinned from PyPI at install.
   - repo: https://github.com/Mateusz-Grzelinski/actionlint-py
     rev: 805f85e558841bf4d852335e036b33d2b26be1cc  # v1.7.12.25
     hooks:

@@ -21,15 +21,24 @@ type LockEntry = {
 
 const REGISTRY = 'https://registry.npmjs.org';
 
-/** The package an entry installs: its `name` field (an npm alias), else the key after the last `node_modules/`. */
-function entryName(key: string, entry: LockEntry): string {
-  if (entry.name) return entry.name;
+/** The package a key names: the part after its last `node_modules/`, which may be `@scope/pkg`. */
+function keyName(key: string): string {
   const marker = 'node_modules/';
   return key.slice(key.lastIndexOf(marker) + marker.length);
 }
 
+// An npm alias (key-derived name -> real name). Empty: an alias needs the owner's approval like any dependency.
+const ALIASES: Record<string, string> = {};
+
+/** A `name` field that differs from the key's name would let an entry carry another package's tarball. */
+function entryName(key: string, entry: LockEntry, aliases: Record<string, string> = ALIASES): string {
+  const derived = keyName(key);
+  if (entry.name && entry.name !== derived && aliases[derived] !== entry.name) return `\0${entry.name}`;
+  return entry.name ?? derived;
+}
+
 /** Problems with the lockfile's entries; empty when every entry is bound to its own registry tarball. */
-function lockfileProblems(packages: Record<string, LockEntry>): string[] {
+function lockfileProblems(packages: Record<string, LockEntry>, aliases: Record<string, string> = ALIASES): string[] {
   const problems: string[] = [];
   for (const [key, entry] of Object.entries(packages)) {
     if (key === '') continue; // the root project, which is not fetched
@@ -42,7 +51,15 @@ function lockfileProblems(packages: Record<string, LockEntry>): string[] {
       continue;
     }
     if (/^(git\+|file:|http:)/.test(entry.resolved)) problems.push(`${key}: source ${entry.resolved}`);
-    const name = entryName(key, entry);
+    if (!entry.version) {
+      problems.push(`${key}: no version`);
+      continue;
+    }
+    const name = entryName(key, entry, aliases);
+    if (name.startsWith('\0')) {
+      problems.push(`${key}: name ${name.slice(1)} differs from the key and is not an allowed alias`);
+      continue;
+    }
     const unscoped = name.slice(name.lastIndexOf('/') + 1);
     const expected = `${REGISTRY}/${name}/-/${unscoped}-${entry.version}.tgz`;
     if (entry.resolved !== expected) problems.push(`${key}: resolved ${entry.resolved}, expected ${expected}`);
@@ -60,7 +77,7 @@ const good = (name: string, version: string, extra: LockEntry = {}): LockEntry =
 });
 
 describe('the lockfile checker', () => {
-  test('accepts plain, nested, scoped and aliased entries', () => {
+  test('accepts plain, nested, scoped and allow-listed aliased entries', () => {
     expect(
       lockfileProblems({
         '': { name: 'site', version: '1.0.0' },
@@ -68,7 +85,7 @@ describe('the lockfile checker', () => {
         'node_modules/@astrojs/sitemap': good('@astrojs/sitemap', '3.7.4'),
         'node_modules/a/node_modules/@s/p': good('@s/p', '1.0.0'),
         'node_modules/alias': { ...good('real-pkg', '2.0.0'), name: 'real-pkg' },
-      }),
+      }, { alias: 'real-pkg' }),
     ).toEqual([]);
   });
 
@@ -105,10 +122,21 @@ describe('the lockfile checker', () => {
     }
   });
 
-  test('checks an alias against its real name, not its key', () => {
+  test('checks an allow-listed alias against its real name, not its key', () => {
     const aliased = { ...good('real-pkg', '2.0.0'), name: 'real-pkg' };
-    expect(lockfileProblems({ 'node_modules/alias': aliased })).toEqual([]);
-    expect(lockfileProblems({ 'node_modules/alias': { ...aliased, resolved: good('alias', '2.0.0').resolved } })).toHaveLength(1);
+    const allowed = { alias: 'real-pkg' };
+    expect(lockfileProblems({ 'node_modules/alias': aliased }, allowed)).toEqual([]);
+    expect(lockfileProblems({ 'node_modules/alias': { ...aliased, resolved: good('alias', '2.0.0').resolved } }, allowed)).toHaveLength(1);
+  });
+
+  test("refuses a name field that rewrites an entry to another package's tarball (is-number -> kind-of)", () => {
+    const rewritten = { ...good('kind-of', '6.0.3'), name: 'kind-of' };
+    expect(lockfileProblems({ 'node_modules/is-number': rewritten })).toHaveLength(1);
+    expect(lockfileProblems({ 'node_modules/is-number': rewritten }, { 'is-number': 'other' })).toHaveLength(1);
+  });
+
+  test('refuses an entry with no version', () => {
+    expect(lockfileProblems({ 'node_modules/a': { ...good('a', '1.0.0'), version: undefined } })).toEqual(['node_modules/a: no version']);
   });
 });
 
@@ -124,15 +152,33 @@ describe('b. install scripts are on an allow-list', () => {
   // A new entry needs the owner's approval (AGENTS.md "No unapproved dependencies").
   const ALLOWED = ['esbuild', 'fsevents', 'workerd'];
 
+  /** Problems when the packages with install scripts are not exactly the allow-list. */
+  function installScriptProblems(packages: Record<string, LockEntry>, allowed: string[]): string[] {
+    const found = new Set(
+      Object.entries(packages)
+        .filter(([, entry]) => entry.hasInstallScript)
+        .map(([key]) => keyName(key)),
+    );
+    return [
+      ...[...found].filter((n) => !allowed.includes(n)).map((n) => `${n}: install script not allowed`),
+      ...allowed.filter((n) => !found.has(n)).map((n) => `${n}: allowed but has no install script`),
+    ];
+  }
+
   test('the packages with install scripts are exactly the allow-list', () => {
-    const found = Object.entries(lock.packages)
-      .filter(([, entry]) => entry.hasInstallScript)
-      .map(([key, entry]) => entryName(key, entry));
-    expect([...new Set(found)].sort()).toEqual(ALLOWED);
+    expect(installScriptProblems(lock.packages, ALLOWED)).toEqual([]);
+  });
+
+  test('refuses a new install-script package, and a stale allow-list entry', () => {
+    const packages = { 'node_modules/esbuild': { hasInstallScript: true }, 'node_modules/x/node_modules/sneaky': { hasInstallScript: true } };
+    expect(installScriptProblems(packages, ['esbuild'])).toEqual(['sneaky: install script not allowed']);
+    expect(installScriptProblems(packages, ['esbuild', 'sneaky', 'gone'])).toEqual(['gone: allowed but has no install script']);
   });
 });
 
 describe('c. pre-commit revs are commit SHAs', () => {
+  // That a SHA is the commit its tag comment names can't be checked offline: Dependabot's pre-commit
+  // updates write both together, and review carries the rest.
   const lines = read('.pre-commit-config.yaml')
     .split('\n')
     .filter((line) => /^\s*-?\s*rev:/.test(line));
@@ -147,17 +193,33 @@ describe('c. pre-commit revs are commit SHAs', () => {
 });
 
 describe('d. the release-age floor matches the cooldown', () => {
-  const days = [...read('.github/dependabot.yml').matchAll(/^\s*default-days:\s*(\d+)\s*$/gm)].map((m) => Number(m[1]));
-  const ecosystems = [...read('.github/dependabot.yml').matchAll(/package-ecosystem:\s*(\S+)/g)].map((m) => m[1]);
+  /** Problems with the cooldown's ecosystems, or a floor in .npmrc that differs from any cooldown. */
+  function floorProblems(npmrc: string, dependabot: string): string[] {
+    const days = [...dependabot.matchAll(/^\s*default-days:\s*(\d+)\s*$/gm)].map((m) => Number(m[1]));
+    const ecosystems = [...dependabot.matchAll(/package-ecosystem:\s*(\S+)/g)].map((m) => m[1]).sort();
+    const problems: string[] = [];
+    if (ecosystems.join() !== 'github-actions,npm,pre-commit') problems.push(`ecosystems: ${ecosystems.join()}`);
+    if (days.length !== ecosystems.length) problems.push('an ecosystem has no cooldown');
+    const floor = /^min-release-age=(\d+)$/m.exec(npmrc);
+    if (!floor) problems.push('.npmrc has no min-release-age');
+    for (const d of days) if (floor && Number(floor[1]) !== d) problems.push(`min-release-age ${floor[1]} differs from default-days ${d}`);
+    return problems;
+  }
 
-  test('Dependabot covers npm, GitHub Actions and pre-commit hooks, each with a cooldown', () => {
-    expect(ecosystems.sort()).toEqual(['github-actions', 'npm', 'pre-commit']);
-    expect(days).toHaveLength(ecosystems.length);
+  const dep = (npm: number, actions: number, hooks: number) =>
+    [['npm', npm], ['github-actions', actions], ['pre-commit', hooks]]
+      .map(([e, d]) => `  - package-ecosystem: ${e}\n    cooldown:\n      default-days: ${d}\n`)
+      .join('');
+
+  test('.npmrc min-release-age equals every default-days, for all three ecosystems', () => {
+    expect(floorProblems(read('.npmrc'), read('.github/dependabot.yml'))).toEqual([]);
   });
 
-  test('.npmrc min-release-age equals every default-days', () => {
-    const floor = /^min-release-age=(\d+)$/m.exec(read('.npmrc'));
-    expect(floor).not.toBeNull();
-    for (const d of days) expect(Number(floor?.[1])).toBe(d);
+  test('refuses a mismatched floor, a mismatched cooldown, a missing floor and a missing ecosystem', () => {
+    expect(floorProblems('min-release-age=7\n', dep(7, 7, 7))).toEqual([]);
+    expect(floorProblems('min-release-age=3\n', dep(7, 7, 7))).toHaveLength(3);
+    expect(floorProblems('min-release-age=7\n', dep(7, 7, 14))).toHaveLength(1);
+    expect(floorProblems('save-exact=true\n', dep(7, 7, 7))).toEqual(['.npmrc has no min-release-age']);
+    expect(floorProblems('min-release-age=7\n', dep(7, 7, 7).split('  - package-ecosystem: pre-commit')[0])).not.toEqual([]);
   });
 });
