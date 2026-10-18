@@ -24,11 +24,17 @@ function stringSettings(env: Env): ContactEnv {
  * answers with the built 404 page, still a 404, and `no-store`: _headers matches by path, so
  * left to the asset layer a missing /_astro/ file would be cached as immutable for a year.
  */
-async function notFound(request: Request, miss: Response, env: Env): Promise<Response> {
-  const page = await env.ASSETS.fetch(new Request(new URL('/404', request.url), { headers: request.headers }));
-  if (page.status !== 200) return miss;
+async function notFound(request: Request, env: Env): Promise<Response> {
+  // A fresh GET: the visitor's conditional and Range headers must not turn the page into a 304 or 206.
+  const forwarded = new Headers();
+  const encoding = request.headers.get('Accept-Encoding');
+  if (encoding) forwarded.set('Accept-Encoding', encoding);
+  const page = await env.ASSETS.fetch(new Request(new URL('/404', request.url), { headers: forwarded }));
+  // Whatever happens, a miss is a 404 that is never stored.
+  if (page.status !== 200) return new Response(null, { status: 404, headers: { 'Cache-Control': 'no-store' } });
   const headers = new Headers(page.headers);
   headers.set('Cache-Control', 'no-store'); // never the asset layer's rule for this path
+  headers.delete('Content-Length'); // the runtime sets it for the new body
   return new Response(request.method === 'HEAD' ? null : page.body, { status: 404, headers });
 }
 
@@ -45,6 +51,6 @@ export default {
     }
     const response = await env.ASSETS.fetch(request);
     if (response.status !== 404) return response;
-    return notFound(request, response, env);
+    return notFound(request, env);
   },
 };
