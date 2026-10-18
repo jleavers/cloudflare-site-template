@@ -7,6 +7,21 @@ const scripts = Object.keys(JSON.parse(read('package.json')).scripts as Record<s
 // Tolerant of CRLF, which Git for Windows can check out when .gitattributes is overridden.
 const SKILL_FRONTMATTER = /^---\r?\nname: new-site\r?\ndescription: .+\r?\n---\r?\n/;
 const DOCS = ['AGENTS.md', '.claude/skills/new-site/SKILL.md', 'SITE_BRIEF.md', 'design/README.md', 'README.md'];
+const SPEC = 'docs/superpowers/specs/2026-10-12-cloudflare-site-template-design.md';
+
+/** A line's code spans: each opens with a run of backticks and closes at the next run of the same length. */
+function codeSpans(line: string): string[] {
+  const runs = [...line.matchAll(/`+/g)];
+  const spans: string[] = [];
+  for (let i = 0; i < runs.length; i++) {
+    const open = runs[i]!;
+    const close = runs.findIndex((run, j) => j > i && run[0].length === open[0].length);
+    if (close === -1) continue;
+    spans.push(line.slice(open.index + open[0].length, runs[close]!.index));
+    i = close;
+  }
+  return spans;
+}
 
 describe('agent-facing documents', () => {
   test('CLAUDE.md imports AGENTS.md', () => expect(read('CLAUDE.md')).toMatch(/^@AGENTS\.md$/m));
@@ -135,5 +150,21 @@ describe('agent-facing documents', () => {
 
   test('the README gives coding agents a token without workflow permission, never an SSH key', () => {
     for (const fragment of ['workflow permission', 'SSH key']) expect(read('README.md').replace(/\s+/g, ' ')).toContain(fragment);
+  });
+
+  // GitHub splits a table row at every unescaped |, inside a code span too: `a || b` there needs \|\|.
+  test.each([...DOCS, SPEC].filter((doc) => existsSync(fileURLToPath(new URL(`../../${doc}`, import.meta.url)))))(
+    '%s escapes every | in a table row\'s code spans',
+    (doc) => {
+      read(doc)
+        .split('\n')
+        .forEach((line, i) => {
+          if (line.startsWith('|')) for (const span of codeSpans(line)) expect(span, `${doc}:${i + 1}`).not.toMatch(/(?<!\\)\|/);
+        });
+    },
+  );
+
+  test('the code-span reader finds spans of any backtick length', () => {
+    expect(codeSpans('| `` ` `` (backtick) | `\\` (backslash) | `a \\|\\| b` |')).toEqual([' ` ', '\\', 'a \\|\\| b']);
   });
 });

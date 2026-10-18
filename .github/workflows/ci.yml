@@ -150,7 +150,8 @@ jobs:
   # - copy only dist/ and the bundle's worker.js out of the artifact, into a fresh directory
   #   beside the trusted wrangler.jsonc: nothing else an artifact might carry (a .env, a .npmrc,
   #   a node_modules) reaches the directory wrangler runs in. The tokenless job could upload a
-  #   crafted zip; download-artifact extracts every entry inside its path and makes no symlinks.
+  #   crafted zip; download-artifact extracts every entry inside its path, makes no symlinks and,
+  #   from v8, fails on a digest mismatch.
   # - name that wrangler.jsonc with --config, because without it wrangler looks for a config
   #   beside the entry first.
   deploy:
@@ -198,9 +199,9 @@ jobs:
           WRANGLER_VERSION: ${{ steps.trusted.outputs.wrangler-version }}
         run: test -n "$WRANGLER_VERSION" || { echo "::error::trusted-config.mjs gave no wrangler version"; exit 1; }
       # npm 11.10.0 added min-release-age; an older npm only warns about it, and installs with no
-      # floor. No `npm config get` output tells them apart (npm 11.16+ prints null for both the
-      # setting and the `before` date it implies), so this reads npm's version, and fails closed on
-      # anything it can't parse.
+      # floor. No `npm config get` output tells them apart (with the floor set, npm 11.9.0 and npm
+      # 11.16+ both print 7 for the setting and null for the `before` date), so this reads npm's
+      # version, and fails closed on anything it can't parse.
       - name: Stop unless npm knows the release-age floor
         if: env.HAS_CLOUDFLARE == 'true'
         run: |
@@ -214,9 +215,16 @@ jobs:
             }
             console.log(`npm ${version} applies min-release-age`);
           ' "$(npm --version)"
+      # An empty artifact-ids would download every artifact in the run, so fail closed unless the
+      # ID is one number.
+      - name: Stop unless verify gave one artifact ID
+        if: env.HAS_CLOUDFLARE == 'true'
+        env:
+          ARTIFACT_ID: ${{ needs.verify.outputs.site-artifact-id }}
+        run: test -n "$ARTIFACT_ID" && test -z "${ARTIFACT_ID//[0123456789]/}" || { echo "::error::the artifact ID is empty or not a number, and an empty one would download every artifact in the run"; exit 1; }
       # By the ID verify uploaded, never by name (see verify's outputs).
       - if: env.HAS_CLOUDFLARE == 'true'
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.verify.outputs.site-artifact-id }}
           path: ${{ runner.temp }}/artifact
@@ -347,8 +355,13 @@ jobs:
             }
             console.log(`npm ${version} applies min-release-age`);
           ' "$(npm --version)"
+      - name: Stop unless preview-build gave one artifact ID
+        if: env.HAS_CLOUDFLARE == 'true'
+        env:
+          ARTIFACT_ID: ${{ needs.preview-build.outputs.site-artifact-id }}
+        run: test -n "$ARTIFACT_ID" && test -z "${ARTIFACT_ID//[0123456789]/}" || { echo "::error::the artifact ID is empty or not a number, and an empty one would download every artifact in the run"; exit 1; }
       - if: env.HAS_CLOUDFLARE == 'true'
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.preview-build.outputs.site-artifact-id }}
           path: ${{ runner.temp }}/artifact
