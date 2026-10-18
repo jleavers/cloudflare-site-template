@@ -284,6 +284,9 @@ to wrangler-action's install (design spec §10). `tests/unit/supply-chain.test.t
 version with sha512 integrity, that only `esbuild`, `fsevents` and `workerd` run install scripts
 (a new one needs the owner's approval), that every pre-commit `rev` is a commit SHA, and that the
 `.npmrc` floor equals the Dependabot cooldown.
+`tests/unit/ci-workflow.test.ts` pins each job that holds the token whole, each action's commit SHA
+included, so Dependabot's monthly Actions update fails `verify` when it moves one of those actions:
+look at the new commit, then move its SHA in the test's `TOKEN_ACTIONS` in the same pull request.
 
 ## No lock-in
 

