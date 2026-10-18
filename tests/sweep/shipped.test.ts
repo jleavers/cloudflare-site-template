@@ -23,7 +23,7 @@ test('.claude/ ships exactly these files', () => {
 
 test('the sweep skill’s post-run audit greps for this repository’s dangerous calls', () => {
   const skill = readFileSync('.claude/skills/security-sweep/SKILL.md', 'utf8');
-  for (const pattern of ['wrangler (deploy|preview|secret|delete|login)', 'npm publish', 'git push', '\\.dev\\.vars', 'api\\.cloudflare\\.com', 'api\\.resend\\.com']) {
+  for (const pattern of ['wrangler (deploy|preview|secret|delete|login)', 'npm publish', 'git push', '\\.dev\\.vars', '\\.credentials\\.json', 'api\\.cloudflare\\.com', 'api\\.resend\\.com']) {
     expect(skill, pattern).toContain(pattern);
   }
 });

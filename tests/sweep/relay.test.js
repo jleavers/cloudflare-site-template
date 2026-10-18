@@ -71,9 +71,8 @@ const GITHUB_SIDE_BY_DESIGN = {
 
 // The marker for a prompt that names the GitHub side. The lookbehind is why one marker can
 // serve: `WHERE` heads every prompt and names `~/.config/gh` among the secret stores no stage
-// may read, and without it every stage of every lane set matches and the assertion says nothing. A bare
-// `gh` in backticks is not a command: `design-ingest` names the operator's `gh` login.
-const GITHUB_SIDE = /(?<![\w./])gh[ \\]|Actions run|repository activity endpoint/;
+// may read, and without it every stage of every lane set matches and the assertion says nothing.
+const GITHUB_SIDE = /(?<![\w./])gh[ \\`]|Actions run|repository activity endpoint/;
 
 const PROFILE_FOR = {
   recon: "sweep-recon",
@@ -413,9 +412,9 @@ test("the dedupe pass is handed the tracker rather than sent to fetch it", async
   // host that holds both live tokens, and the bodies it read carried no author and no fence.
   //
   // Every lane set the workflow defines, read out of `LANE_SETS` rather than listed here.
-  // The briefs differ between them and `baseline` is the one whose briefs happen to name no
-  // `gh` command at all, so a check that ran only the default would have read as this whole
-  // property while four lane sets went unexamined. A set missing from the map above would never be
+  // The briefs differ between them: `baseline` has one lane that names `gh` and `public` has
+  // two, so a check that ran only the default would have read as this whole property while the
+  // other set went unexamined. A set missing from the map above would never be
   // asked the fenced half of this question. A hand-kept list is how that
   // happens, so the set of keys is asserted against the workflow's own before it is used.
   const defined = laneSetNames();
@@ -432,10 +431,8 @@ test("the dedupe pass is handed the tracker rather than sent to fetch it", async
       // the stubs write into every free-text field is exactly that -- and quoting it is the
       // point of the fence, not a breach of it.
       //
-      // The same marker as `tests/test_agent_tooling_context.py`'s `GITHUB_SIDE`, and it has
-      // to be: that one reads the workflow's source and this one the prompt a stage is really
-      // launched with, so a marker true of only one of them pins only half the property. The
-      // lookbehind is why it can be one marker at all. `WHERE` heads every prompt and names
+      // The marker is `GITHUB_SIDE` above, read against the prompt a stage is really launched
+      // with rather than the workflow's source. The lookbehind is why it works at all. `WHERE` heads every prompt and names
       // `~/.config/gh` among the secret stores no stage may read; without it every stage of
       // every lane set matches here and this assertion says nothing.
       const { lines, inside } = fenceMap(prompt);

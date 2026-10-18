@@ -1,11 +1,12 @@
 ---
 name: security-sweep
-description: Use when the owner runs /security-sweep - before a release, and before making the repository public. Audits origin/main in a throwaway worktree with a multi-agent workflow, clusters findings by root cause, checks the tracker for duplicates, and files nothing while the repository is private.
+description: Use when the owner runs /security-sweep - before a release, and before making the repository public. Audits origin/main, or another ref the owner names, in a throwaway worktree with a multi-agent workflow, clusters findings by root cause, checks the tracker for duplicates, and files nothing while the repository is private.
 ---
 
 # Security sweep
 
-Audits the tree a reader would clone, not the tree you happen to have checked out.
+Audits the tree a reader would clone, not the tree you happen to have checked out. That is
+`origin/main` unless the owner names another ref (phase 0).
 
 Findings are clustered by root cause and each cluster names the invariant it touches, because
 a sweep that emits one issue per finding produces a round of local patches and those patches
@@ -79,7 +80,7 @@ beside the workflow's `journal.jsonl`, in the directory the task notification na
 One grep for the ones a single pass can answer, so that no bullet is left to memory:
 
 ```bash
-grep -nE 'wrangler (deploy|preview|secret|delete|login)|npm publish|gh [a-z]+ (create|edit|close|comment|merge|delete)|(-X|--method) (POST|PATCH|PUT|DELETE)|git push|\.dev\.vars|\.wrangler|\.npmrc|\.config/gh|\.ssh\b|\.env\b|printenv|/proc/[0-9]+/environ|mcp__|api\.cloudflare\.com|api\.resend\.com|hooks\.slack\.com|webhook\.office|workers\.dev|WebFetch|curl |wget |\bnc ' <transcript-dir>/*.jsonl | head -80
+grep -nE 'wrangler (deploy|preview|secret|delete|login)|npm publish|gh [a-z]+ (create|edit|close|comment|merge|delete)|(-X|--method) (POST|PATCH|PUT|DELETE)|git push|\.dev\.vars|\.wrangler|\.npmrc|\.config/gh|\.ssh\b|\.env\b|\.credentials\.json|printenv|/proc/[0-9]+/environ|mcp__|api\.cloudflare\.com|api\.resend\.com|hooks\.slack\.com|webhook\.office|workers\.dev|WebFetch|curl |wget |\bnc ' <transcript-dir>/*.jsonl | head -80
 ```
 
 Every hit must be explained by a lane's brief. A web lane's `WebFetch` of a documentation page is
@@ -123,12 +124,13 @@ stage that falls back to the default subagent (below) inherits all of it.
 On Windows use PowerShell equivalents and chain with `;`; the commands below are the Bash form.
 
 ```bash
+REF=origin/main    # a pre-merge release sweep: push the branch, then REF=origin/<branch>
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 WT=.claude/worktrees/security-sweep-$STAMP
 RD=.claude/security-sweeps/$STAMP
 git fetch origin
-git rev-list --count main..origin/main          # informational only
-git worktree add --detach "$WT" origin/main
+git rev-list --count main.."$REF"                # informational only
+git worktree add --detach "$WT" "$REF"
 git -C "$WT" rev-parse HEAD                     # the swept SHA
 gh repo view --json nameWithOwner --jq .nameWithOwner   # the repo: where origin points
 mkdir -p "$RD" "$WT-scratch"
@@ -143,14 +145,17 @@ is passed.
 Then write `$RD/run.json`:
 
 ```json
-{"stamp": "...", "sha": "...", "repo": "<owner>/<name>",
+{"stamp": "...", "sha": "...", "ref": "origin/main", "repo": "<owner>/<name>",
  "worktree": "<absolute>", "run_dir": "<absolute>", "lane_set": "baseline", "phases": {}}
 ```
 
 - **`repo` is what `gh repo view` printed, never a literal.** It is the tracker the dedupe reads
   and where Phase 7 reports; a fork with more than one remote can resolve either way.
-- **The worktree is cut from `origin/main`, not local `main`**, so the local checkout's state is
-  irrelevant to what is audited. `--detach` leaves no branch to clean up.
+- **The worktree is cut from `$REF`, never from the local checkout**, so the local state is
+  irrelevant to what is audited. The default is `origin/main`. Before a release is merged, the
+  owner pushes the branch and sets `REF=origin/<branch>` (for example
+  `origin/feat/release-hardening`) after `git fetch origin`, so the sweep audits the fixes it
+  is checking; `run.json` records the `ref` beside the `sha`. `--detach` leaves no branch to clean up.
 - **The run directory lives in the main checkout, not the worktree**, so cleanup cannot take the
   findings with it. Both paths are gitignored.
 
@@ -213,7 +218,7 @@ resting on them alone as `related`. A `[bot]` login counts without being named. 
 collaborators are automation is the owner's to say:
 
 ```bash
-gh api repos/{owner}/{repo}/collaborators --jq '.[] | "\(.login)\t\(.role_name)"'
+gh api -X GET --paginate repos/{owner}/{repo}/collaborators --jq '.[] | "\(.login)\t\(.role_name)"'
 ```
 
 ## Phase 1-5: the workflow

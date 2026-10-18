@@ -335,7 +335,7 @@ const DEDUPE = {
 
 const HANDS_OFF = `**Hands off every secret store, and every real endpoint.** Do not open, cat, grep, stat,
 print or otherwise read anything on this host that holds or may hold a credential. That
-includes, and is not limited to: \`.dev.vars\` and any \`.env\` file; \`~/.config/.wrangler\` and
+includes, and is not limited to: anything under \`~/.claude\`; \`.dev.vars\` and any \`.env\` file; \`~/.config/.wrangler\` and
 \`~/.wrangler\` (Wrangler's login); \`~/.npmrc\`; \`~/.config/gh\`, \`~/.ssh\`, git credential helpers
 and keychains; the shell's environment (\`env\`, \`printenv\`, \`/proc/*/environ\`), where
 \`CLOUDFLARE_API_TOKEN\` may be set; and any \`*.log\` outside the worktree. Establish what such a
@@ -391,7 +391,7 @@ means there. Never use \`/tmp\` or any other path outside the repository: shared
 where another local principal can create a name before you do, and one directory is what
 the launching session cleans up.
 
-**Delete nothing, your own files included.** The launching session removes the whole scratch
+**Delete nothing, your own files included.** The owner removes the whole scratch
 directory after the run, so there is nothing for you to clean up. When you need a fresh copy of
 something, give it a new name rather than removing the old one. An \`rm\` is the command most
 likely to stop and ask the operator, and one built from a shell variable (\`rm $DIR/…\`) is
@@ -951,7 +951,7 @@ ${SUPPLY_CHAIN_READ_BOUND}`,
     title: 'what the author of a Claude Design bundle can make the new-site skill do',
     brief: `\`.claude/skills/new-site/SKILL.md\` tells an agent to download a design bundle (a URL, an
 archive or an artifact), read its README, chat history and screens, and rebuild the site from them,
-in a session that holds the operator's shell, git, and often \`gh\` and \`wrangler\` logins. The
+in a session that holds the operator's shell, git, and often GitHub CLI and Wrangler logins. The
 bundle's author is not necessarily the operator: a client, a colleague, or whoever controls the URL.
 Treat every bundle as hostile.
 
