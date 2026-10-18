@@ -82,10 +82,12 @@ You need: a Claude Design handoff (or an archive or artifact link), the facts in
 [`SITE_BRIEF.md`](SITE_BRIEF.md), and [Claude Code](https://claude.ai/code).
 
 1. `gh repo create <site> --template jleavers/cloudflare-site-template --private --clone`
-   The new repository's first CI run starts straight away. On a private repository it needs
-   Actions minutes or a self-hosted runner (see [Short of GitHub Actions minutes?](#development)),
-   otherwise expect a red first run, which is harmless. Dependabot is on for the new repository
-   too.
+   The new repository's first CI run starts straight away, and is red until you finish the steps
+   below, which is harmless. Dependabot is on for the new repository too. On a private repository
+   the checks on pull requests can use a self-hosted runner
+   (see [Short of GitHub Actions minutes?](#development)), but every push to `main` builds and
+   deploys on GitHub-hosted minutes. With none left, each push to `main` shows a failed run until
+   the minutes return: deploy with `npm run deploy` from your machine meanwhile.
 2. Brief Claude Design with [`design/BRIEFING.md`](design/BRIEFING.md), put its design in
    `design/` ([how](design/README.md)) and fill in `SITE_BRIEF.md`.
 3. In Claude Code, run `/new-site`. It rebuilds the pages to match the design, then runs every
@@ -99,7 +101,9 @@ You need: a Claude Design handoff (or an archive or artifact link), the facts in
 6. Store the CI token and account ID ([where, by plan](#cloudflare-api-token)):
    `gh secret set CLOUDFLARE_API_TOKEN --env production` and the same for `CLOUDFLARE_ACCOUNT_ID`,
    or repository secrets on a private Free repository, then push. From now on every push to
-   `main` deploys; pull-request previews are [opt-in](#cloudflare-api-token).
+   `main` deploys, so anyone who can merge into `main` can read the token: give a coding agent its
+   own GitHub identity ([how](#cloudflare-api-token)). Pull-request previews are
+   [opt-in](#cloudflare-api-token).
 
 Steps 1, 5 and 6 take under five minutes once step 4 is done. Step 3 depends on the design.
 
@@ -133,13 +137,15 @@ so keep the repositories that hold one to yourself.
 CI hands the token only to jobs that run no code from the branch or the lockfile. They take
 `wrangler.jsonc` and the wrangler version from `main` (for a pull request, from the default
 branch by name), deploy what a job without the token built, and always run on GitHub-hosted
-runners. That makes `main`'s `wrangler.jsonc` part of what you trust: its `assets.directory`,
+runners, as does the `verify` run on each push to `main` that builds what deploys. That makes `main`'s `wrangler.jsonc` part of what you trust: its `assets.directory`,
 `rules` and `tsconfig` steer what wrangler reads and uploads, so review a change to it as you
 would a change to `.github/workflows/`. Only the bundle's `worker.js` ships: a Worker whose
 bundle has more modules (a `.wasm`, text or data import) fails to deploy until the copy step in
 `ci.yml`, and the test that pins it, take them too.
 
-Where you store the token, and who can push to `main`, decide who else can reach it:
+**Anyone who can merge into `main`, or push a workflow change, can read the token**: every push
+to `main` deploys, running that commit's `scripts/trusted-config.mjs` before wrangler. Where you
+store the token decides who else can reach it:
 
 - **Public repository (any plan), or private on GitHub Enterprise:** in Settings → Environments,
   create an environment `production` whose deployment branches are limited to `main`, and give it
@@ -147,20 +153,17 @@ Where you store the token, and who can push to `main`, decide who else can reach
   `gh secret set CLOUDFLARE_API_TOKEN --env production` and
   `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`. For previews, put the same two secrets
   in an environment `preview` with required reviewers. Then delete the repository-level copies
-  (`gh secret delete CLOUDFLARE_API_TOKEN`, and the same for `CLOUDFLARE_ACCOUNT_ID`). Protect
-  `main` with a ruleset that requires a pull request (Settings → Rules → Rulesets): every push to
-  `main` deploys, running that commit's `scripts/trusted-config.mjs` before wrangler.
-- **Private on Pro or Team:** the `production` environment and the ruleset as above. Leave
-  previews off: these plans have no required reviewers for a private repository.
-- **Private on Free:** there are no environment secrets and no rulesets, so the token stays a
-  repository secret (`gh secret set CLOUDFLARE_API_TOKEN`) and `main` stays open to anyone who
-  can push. The deploy still runs: its job names `production`, and the repository secret resolves
-  there (checked on a private repository). **Anyone who can push to `main` or push a workflow
-  change can read the token**, and that includes a coding agent whose token has Contents write.
+  (`gh secret delete CLOUDFLARE_API_TOKEN`, and the same for `CLOUDFLARE_ACCOUNT_ID`).
+- **Private on Pro or Team:** the `production` environment as above. Leave previews off: these
+  plans have no required reviewers for a private repository.
+- **Private on Free:** there are no environment secrets, so the token stays a repository secret
+  (`gh secret set CLOUDFLARE_API_TOKEN`). The deploy still runs: its job names `production`, and
+  the repository secret resolves there (checked on a private repository). There are no rulesets
+  either, so any identity with Contents write can push to `main`.
 
-The jobs that hold the token need GitHub-hosted minutes. A private repository that has used up
-its minutes can't deploy from CI that month: deploy with `npm run deploy` from your machine
-instead.
+The jobs that hold the token, and `verify` on each push to `main`, need GitHub-hosted minutes, so
+each push to `main` spends them twice. A private repository that has used up its minutes can't
+deploy from CI that month: deploy with `npm run deploy` from your machine instead.
 
 **Previews** are off unless you set the repository variable `CI_PREVIEWS` to `true`
 (`gh variable set CI_PREVIEWS --body true`). Do that only once the `preview` environment has
@@ -171,12 +174,16 @@ Previews base config. A private site previews locally with `npm run preview` (`l
 test keys).
 
 **Coding agents:** if an agent can push branches to the repository ([AGENTS.md](AGENTS.md#git-workflow)
-lets it), give it an **HTTPS token without workflow permission**: a fine-grained token with
-Contents and Pull requests read and write and no Workflows permission, or a classic token without
-the `workflow` scope. Don't give it your SSH key. GitHub refuses a workflow change only from a
-token that lacks that permission; an SSH key, yours or a deploy key, can push anything. Contents
-write can still push to `main` unless a ruleset requires a pull request there, so set one up
-where the plan allows (above).
+lets it), give it a **separate GitHub identity**, a machine user or a GitHub App installation,
+and **never your own credential**: with yours, an agent can approve nothing, but can merge
+whatever you could. Give that identity write access through an **HTTPS token without workflow
+permission**: fine-grained with Contents and Pull requests read and write and no Workflows, or
+classic without the `workflow` scope. Don't give it an SSH key: GitHub refuses a workflow change
+only from a token that lacks that permission, and an SSH key, yours or a deploy key, can push
+anything. Then, where the plan has rulesets (a public repository, or a private one on a paid
+plan), require one approval on `main` in a ruleset (Settings → Rules → Rulesets), dismissing
+approvals when new commits are pushed, and keep the agent's identity off its bypass list. On a
+private Free repository there are no rulesets, so the agent's Contents write can push to `main`.
 
 ### Deploying from a machine without a browser
 
@@ -251,8 +258,9 @@ that is intended, because a preview without the addresses cannot send. Leave it.
 `CI_LINUX_RUNNER`, private repositories only), or you can connect the repository to Cloudflare's
 [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/) instead, which builds
 on Cloudflare's own minutes. The deploy and preview jobs always run on GitHub-hosted runners,
-because they hold the Cloudflare token: with no hosted minutes left, a private repository can't
-deploy from CI that month, so deploy with `npm run deploy` from your machine.
+because they hold the Cloudflare token, and so does `verify` on a push to `main`, because it
+builds what deploys: each push to `main` spends hosted minutes twice. With none left, a private
+repository can't deploy from CI that month, so deploy with `npm run deploy` from your machine.
 
 ## No lock-in
 

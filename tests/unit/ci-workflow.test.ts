@@ -77,11 +77,20 @@ const holdsSecrets = (block: string) => /\bsecrets\b(?!\.GITHUB_TOKEN\b)/i.test(
 const COOLDOWN_DAYS = [...read('.github/dependabot.yml').matchAll(/default-days: (\d+)/g)].map((match) => match[1]);
 const PIN = /^(actions\/[\w-]+|cloudflare\/wrangler-action)@[0-9a-f]{40} # v\d+\.\d+\.\d+$/;
 const RUNNER = "${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}";
+// verify on a push to main builds the artifact that deploys, so it too runs on a GitHub-hosted runner.
+const VERIFY_RUNNER = "${{ github.event_name == 'push' && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}";
 const ENABLED = "env.HAS_CLOUDFLARE == 'true'";
 const TRUSTED_FILES = ['/.nvmrc', '/package.json', '/scripts/trusted-config.mjs', '/wrangler.jsonc'];
 const SITE = '${{ runner.temp }}/site';
 const TRUSTED_CONFIG = 'node trusted/scripts/trusted-config.mjs trusted';
 const VERSION_CHECK = 'test -n "$WRANGLER_VERSION" || { echo "::error::trusted-config.mjs gave no wrangler version"; exit 1; }';
+// npm turns min-release-age into a `before` date. An npm that doesn't know the setting leaves
+// `before` null, and would install with no floor.
+const FLOOR_CHECK = [
+  'before=$(npm config get before)',
+  'test "$before" != null || { echo "::error::this npm ignores npm_config_min_release_age"; exit 1; }',
+  'echo "npm takes only versions published before $before"',
+].join('\n');
 const COPY_SITE = [
   'mkdir -p "$RUNNER_TEMP/site/bundle"',
   'cp -R "$RUNNER_TEMP/artifact/dist" "$RUNNER_TEMP/site/dist"',
@@ -125,6 +134,14 @@ const TOKEN_JOBS = {
 };
 
 describe.each([...WORKFLOWS])('%s', (file, text) => {
+  // A workflow-level env reaches every job, the token jobs among them, and none of the job checks below.
+  test('names no secrets, and sets no env, before jobs:', () => {
+    const lines = code(text);
+    const top = lines.slice(0, lines.indexOf('jobs:')).join('\n');
+    expect(top).not.toMatch(/\bsecrets\b/i);
+    expect(top).not.toMatch(/^env:/m);
+  });
+
   test('has only two-space job keys under jobs:, with no trailing comment, and nothing after them at the top level', () => {
     for (const line of jobLines(text)) {
       expect(line, `${file}: ${line}`).toMatch(/^ {2}/);
@@ -150,15 +167,27 @@ test('only the deploy and preview jobs can read a secret', () => {
   expect(holders.sort()).toEqual(Object.keys(TOKEN_JOBS).sort());
 });
 
-test('the jobs without the token run where CI_LINUX_RUNNER says', () => {
-  for (const [name, block] of JOBS) if (!holdsSecrets(block)) expect(block, name).toContain(`\n    runs-on: ${RUNNER}\n`);
+test('the jobs without the token, but verify, run where CI_LINUX_RUNNER says', () => {
+  for (const [name, block] of JOBS) if (!holdsSecrets(block) && name !== 'ci.yml:verify') expect(block, name).toContain(`\n    runs-on: ${RUNNER}\n`);
 });
 
-test.each(['ci.yml:verify', 'ci.yml:preview-build'])('%s uploads dist/ with its hidden files', (name) => {
+test('verify runs on a GitHub-hosted runner whenever it uploads the artifact that deploys', () => {
+  expect(job('ci.yml:verify')).toContain(`\n    runs-on: ${VERIFY_RUNNER}\n`);
+  const uploads = steps(job('ci.yml:verify')).filter((step) => action(step) === 'actions/upload-artifact');
+  expect(uploads).toHaveLength(1);
+  // the runner expression picks ubuntu-latest for every push; the upload needs a push.
+  expect(stepValue(uploads[0]!, 'if')).toBe("github.event_name == 'push' && github.ref == 'refs/heads/main'");
+});
+
+test.each([
+  ['ci.yml:verify', 'dist/\nbundle/'],
+  ['ci.yml:preview-build', 'dist/\nbundle/'],
+  ['ci.yml:e2e', 'test-results/\n.lighthouse/'],
+])('%s uploads its files, hidden ones included', (name, paths) => {
   const uploads = steps(job(name)).filter((step) => action(step) === 'actions/upload-artifact');
   expect(uploads).toHaveLength(1);
   expect(mapping(uploads[0]!, 'with', 8).get('include-hidden-files')).toBe('true');
-  expect(scalar(uploads[0]!, 'path', 10)).toBe('dist/\nbundle/');
+  expect(scalar(uploads[0]!, 'path', 10)).toBe(paths);
 });
 
 describe.each(Object.entries(TOKEN_JOBS))('the %s job, which holds the token', (name, expected) => {
@@ -179,9 +208,27 @@ describe.each(Object.entries(TOKEN_JOBS))('the %s job, which holds the token', (
     expect(block).toContain('\n    runs-on: ubuntu-latest\n');
   });
 
+  // The checks below read keys by their plain block-style spelling, so nothing else may appear.
+  test('is written in plain block style: no quoted keys, no flow collections, no commented block keys', () => {
+    let scalarKeyIndent = -1; // the indentation of the key whose block scalar (| or >) we are inside
+    for (const line of block.split('\n')) {
+      const indent = line.length - line.trimStart().length;
+      if (scalarKeyIndent >= 0 && indent > scalarKeyIndent) continue;
+      scalarKeyIndent = /:\s*[|>][-+]?$/.test(line) ? indent + (/^\s*- /.test(line) ? 2 : 0) : -1;
+      expect(line, line).not.toMatch(/^\s*(?:- )?["'][^"'\n]*["']\s*:/);
+      // A flow value hides keys from the line-based reading; a job's needs list only holds job ids.
+      if (!/^ {4}needs: \[[\w-]+(?:, [\w-]+)*\]$/.test(line)) expect(line, line).not.toMatch(/^\s*(?:- )?[\w-]+:\s*[{[]/);
+      expect(line, line).not.toMatch(/^\s*(?:- )?(?:with|env|run|steps):\s*#/);
+      if (indent === 4) expect(line, line).toMatch(/^ {4}[a-z][\w-]*:(?: .*)?$/);
+      else if (indent === 6) expect(line, line).toMatch(/^ {6}(?:- [a-z][\w-]*|[A-Za-z_][\w-]*):(?: .*)?$/);
+      else if (indent === 8) expect(line, line).toMatch(/^ {8}[a-z][\w-]*:(?: .*)?$/);
+      else if (indent < 10) expect(line, line).toMatch(/^ {2}[\w-]+:$/);
+    }
+  });
+
   test('installs, builds and tests nothing, and runs only the shell it must', () => {
     for (const command of ['npm ci', 'npm install', 'npm i ', 'npm run', 'npm test', 'npx ']) expect(block, command).not.toContain(command);
-    const allowed = [TRUSTED_CONFIG, VERSION_CHECK, expected.artifact ? COPY_SITE : COPY_CONFIG];
+    const allowed = [TRUSTED_CONFIG, VERSION_CHECK, FLOOR_CHECK, expected.artifact ? COPY_SITE : COPY_CONFIG];
     for (const script of runs) expect(allowed.includes(script) || NOTICE.test(script), script).toBe(true);
     for (const script of allowed) expect(runs, script).toContain(script);
   });
@@ -239,6 +286,14 @@ describe.each(Object.entries(TOKEN_JOBS))('the %s job, which holds the token', (
     expect(mapping(all[check]!, 'env', 8).get('WRANGLER_VERSION')).toBe('${{ steps.trusted.outputs.wrangler-version }}');
     expect(wranglers.length).toBeGreaterThan(0);
     expect(all.indexOf(wranglers[0]!)).toBeGreaterThan(check);
+  });
+
+  test("stops unless the runner's npm applies the release-age floor, before wrangler runs", () => {
+    const floor = at((step) => scalar(step, 'run', 8) === FLOOR_CHECK);
+    expect(floor).toBeGreaterThan(at((step) => action(step) === 'actions/setup-node'));
+    expect(all.indexOf(wranglers[0]!)).toBeGreaterThan(floor);
+    expect(COOLDOWN_DAYS.length).toBeGreaterThan(0);
+    for (const days of COOLDOWN_DAYS) expect(mapping(all[floor]!, 'env', 8).get('npm_config_min_release_age')).toBe(`'${days}'`);
   });
 
   test('copies only dist/ and bundle/worker.js from the artifact, into a fresh directory outside it', () => {

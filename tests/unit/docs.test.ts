@@ -123,12 +123,17 @@ describe('agent-facing documents', () => {
     expect(text).not.toMatch(/(every|each) pull request gets a preview|previews each pull request|a preview for every pull request/i);
   });
 
-  test.each(['README.md', '.claude/skills/new-site/SKILL.md'])('%s protects main with a ruleset, and deploys by hand without hosted minutes', (doc) => {
-    const text = read(doc);
-    for (const fragment of ['ruleset', 'push to `main`', 'GitHub-hosted', 'npm run deploy']) expect(text, `${doc}: ${fragment}`).toContain(fragment);
+  // A pull-request rule alone requires no approval, so an agent holding the owner's credential, or
+  // any Contents-and-Pull-requests token, can open a pull request and merge it.
+  test.each(['README.md', '.claude/skills/new-site/SKILL.md'])('%s keeps agents out of main with their own identity and a required approval, and deploys by hand without hosted minutes', (doc) => {
+    const text = read(doc).replace(/\s+/g, ' '); // as rendered: line breaks are spaces
+    for (const fragment of ['merge into `main`', 'separate GitHub identity', 'own credential', 'one approval', 'bypass list', 'GitHub-hosted', 'npm run deploy']) {
+      expect(text, `${doc}: ${fragment}`).toContain(fragment);
+    }
+    expect(text).not.toMatch(/ruleset that requires a pull request|unless a ruleset requires a pull request/);
   });
 
   test('the README gives coding agents a token without workflow permission, never an SSH key', () => {
-    for (const fragment of ['workflow permission', 'SSH key']) expect(read('README.md')).toContain(fragment);
+    for (const fragment of ['workflow permission', 'SSH key']) expect(read('README.md').replace(/\s+/g, ' ')).toContain(fragment);
   });
 });

@@ -19,7 +19,8 @@ permissions:
   contents: read
 
 # The jobs without the token run on the repository's self-hosted runner when CI_LINUX_RUNNER
-# names one, else on GitHub's. A public repository must not use self-hosted runners
+# names one, else on GitHub's; verify on a push to main, which builds what deploys, always runs on
+# GitHub's. A public repository must not use self-hosted runners
 # (jleavers/ci-runners "Trust"). Every action is pinned to a commit SHA. Nothing here runs on
 # pull_request_target.
 #
@@ -38,7 +39,10 @@ jobs:
   verify:
     name: Verify
     if: github.event.action != 'closed'
-    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    # A push (only ever to main) builds the artifact that deploys, so it runs on a GitHub-hosted
+    # runner, like the token jobs below: a pull request's code on the self-hosted runner could have
+    # poisoned its tool cache, npx or ~/.npmrc. Pull requests and dispatches use CI_LINUX_RUNNER.
+    runs-on: ${{ github.event_name == 'push' && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -121,6 +125,7 @@ jobs:
           path: |
             test-results/
             .lighthouse/
+          include-hidden-files: true
           retention-days: 7
           if-no-files-found: ignore
 
@@ -177,6 +182,17 @@ jobs:
         env:
           WRANGLER_VERSION: ${{ steps.trusted.outputs.wrangler-version }}
         run: test -n "$WRANGLER_VERSION" || { echo "::error::trusted-config.mjs gave no wrangler version"; exit 1; }
+      # An npm that doesn't know min-release-age only warns, and installs with no floor. npm turns
+      # the setting into a `before` date, so check that; `npm config get min-release-age` can't
+      # tell, as npm 11 prints null for it and an older npm echoes the unknown value back.
+      - name: Stop unless npm applies the release-age floor
+        if: env.HAS_CLOUDFLARE == 'true'
+        env:
+          npm_config_min_release_age: '7'
+        run: |
+          before=$(npm config get before)
+          test "$before" != null || { echo "::error::this npm ignores npm_config_min_release_age"; exit 1; }
+          echo "npm takes only versions published before $before"
       - if: env.HAS_CLOUDFLARE == 'true'
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -293,6 +309,14 @@ jobs:
         env:
           WRANGLER_VERSION: ${{ steps.trusted.outputs.wrangler-version }}
         run: test -n "$WRANGLER_VERSION" || { echo "::error::trusted-config.mjs gave no wrangler version"; exit 1; }
+      - name: Stop unless npm applies the release-age floor
+        if: env.HAS_CLOUDFLARE == 'true'
+        env:
+          npm_config_min_release_age: '7'
+        run: |
+          before=$(npm config get before)
+          test "$before" != null || { echo "::error::this npm ignores npm_config_min_release_age"; exit 1; }
+          echo "npm takes only versions published before $before"
       - if: env.HAS_CLOUDFLARE == 'true'
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -381,6 +405,14 @@ jobs:
         env:
           WRANGLER_VERSION: ${{ steps.trusted.outputs.wrangler-version }}
         run: test -n "$WRANGLER_VERSION" || { echo "::error::trusted-config.mjs gave no wrangler version"; exit 1; }
+      - name: Stop unless npm applies the release-age floor
+        if: env.HAS_CLOUDFLARE == 'true'
+        env:
+          npm_config_min_release_age: '7'
+        run: |
+          before=$(npm config get before)
+          test "$before" != null || { echo "::error::this npm ignores npm_config_min_release_age"; exit 1; }
+          echo "npm takes only versions published before $before"
       - name: Put the trusted config in a fresh directory
         if: env.HAS_CLOUDFLARE == 'true'
         run: |
