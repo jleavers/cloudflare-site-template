@@ -121,17 +121,20 @@ function setUp(form: HTMLFormElement): void {
     if (form.dataset.state === 'sending' || !hasToken) return;
     clearErrors(form);
     setState('sending', 'Sending…');
+    // One snapshot for the request and the thank-you: the fields stay editable while it is in
+    // flight, so the message must name the address that was sent, not the field's value later.
+    const sent = new FormData(form);
     try {
       const response = await fetch(form.action, {
         method: 'POST',
-        body: new FormData(form),
+        body: sent,
         headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(15_000),
       });
       const body: ApiResponse = await response.json().catch(() => ({}));
       consumeToken();
       if (response.ok && body.ok) {
-        const email = String(new FormData(form).get('email') ?? '');
+        const email = String(sent.get('email') ?? '');
         form.reset();
         setState('sent', successText(successMessage, email));
         return;
