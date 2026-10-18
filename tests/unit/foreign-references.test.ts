@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { attributeNames, foreignInCss, foreignInHtml, repeatedAttributes } from '../dist/foreign';
+import { attributeNames, foreignInCss, foreignInHtml, refreshUrl, repeatedAttributes } from '../dist/foreign';
 
 const SITE = 'https://example.com';
 const PAGE = `${SITE}/privacy/`;
@@ -18,6 +18,11 @@ describe('foreignInHtml refuses', () => {
     ['a style element @import', '<style>@import "https://cdn.example.net/x.css";</style>'],
     ['a style attribute url()', '<div style="background:url(//cdn.example.net/i.png)">'],
     ['a meta refresh', '<meta http-equiv="refresh" content="0; url=https://elsewhere.example.net/">'],
+    // The HTML spec follows a refresh URL with no "url=" (final review, minor 1).
+    ['a meta refresh without url=', '<meta http-equiv="refresh" content="0; https://elsewhere.example.net/">'],
+    ['a meta refresh with a comma and no space', '<meta http-equiv="refresh" content="0,https://elsewhere.example.net/">'],
+    ['a meta refresh with a quoted URL and no url=', `<meta http-equiv="refresh" content="0; 'https://elsewhere.example.net/'">`],
+    ['a meta refresh with spaces around the equals sign', `<meta http-equiv="refresh" content='.5; URL = "https://elsewhere.example.net/"'>`],
     ['an entity-encoded src', '<img src="&#47;&#47;cdn.example.net/x.png">'],
     ['an SVG xlink:href', '<svg><use xlink:href="https://cdn.example.net/s.svg#a"/></svg>'],
     ['a src inside noscript', '<noscript><img src="https://cdn.example.net/t.gif"></noscript>'],
@@ -71,6 +76,7 @@ describe('foreignInHtml allows', () => {
     ['a same-origin absolute stylesheet', `<link rel="stylesheet" href="${SITE}/_astro/a.css">`],
     ['a same-origin ping', '<a href="/x" ping="/p">x</a>'],
     ['a same-origin meta refresh', '<meta http-equiv="refresh" content="0; url=/other/">'],
+    ['a meta refresh that reloads the page', '<meta http-equiv="refresh" content="30">'],
     ['a same-origin style url', '<div style="background:url(/_astro/a.png)">'],
   ])('%s', (_name, markup) => {
     expect(html(markup)).toEqual([]);
@@ -118,5 +124,25 @@ describe('attributeNames', () => {
   test('repeatedAttributes names each repeated name once', () => {
     expect(repeatedAttributes('src=a SRC=b Src=c alt=d')).toEqual(['src']);
     expect(repeatedAttributes('src=a alt=b')).toEqual([]);
+  });
+});
+
+// The shared declarative refresh steps of the HTML spec, which a <meta http-equiv="refresh"> follows.
+describe('refreshUrl', () => {
+  test.each([
+    ['0; url=https://a.example.net/', 'https://a.example.net/'],
+    ['0; https://a.example.net/', 'https://a.example.net/'],
+    ['  3 ,https://a.example.net/', 'https://a.example.net/'],
+    ['0;URL=\'https://a.example.net/\'x', 'https://a.example.net/'],
+    ['0; url = "https://a.example.net/', 'https://a.example.net/'],
+    ['1.5 \'https://a.example.net/\'', 'https://a.example.net/'],
+    ['0; urn:x', 'urn:x'],
+    ['0; url https://a.example.net/', 'url https://a.example.net/'],
+  ])('%s gives %s', (content, url) => {
+    expect(refreshUrl(content)).toBe(url);
+  });
+
+  test.each(['5', '0;', '', 'soon; https://a.example.net/', '0x; https://a.example.net/'])('%j navigates nowhere else', (content) => {
+    expect(refreshUrl(content)).toBeUndefined();
   });
 });

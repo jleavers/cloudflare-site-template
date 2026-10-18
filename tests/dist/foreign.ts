@@ -103,6 +103,50 @@ export function repeatedAttributes(raw: string): string[] {
   return [...new Set(names.filter((name, i) => names.indexOf(name) !== i))];
 }
 
+/**
+ * Where a `<meta http-equiv="refresh">` sends the page, read as the HTML spec's shared declarative
+ * refresh steps read its content: a time, then `;` or `,`, then a URL with or without `url=`, in
+ * quotes or not. Undefined when it navigates nowhere else: no URL (the page reloads itself), or a
+ * content the steps give up on.
+ */
+export function refreshUrl(content: string): string | undefined {
+  let i = 0;
+  const at = (pattern: RegExp) => i < content.length && pattern.test(content[i]!);
+  const skipSpace = () => {
+    while (at(TAG_SPACE)) i++;
+  };
+  skipSpace();
+  const time = i;
+  while (at(/[0-9]/)) i++;
+  if (i === time && !at(/\./)) return undefined;
+  while (at(/[0-9.]/)) i++;
+  if (i < content.length) {
+    if (!at(/[\t\n\f\r ;,]/)) return undefined;
+    skipSpace();
+    if (at(/[;,]/)) i++;
+    skipSpace();
+  }
+  if (i >= content.length) return undefined;
+  const whole = content.slice(i);
+  const skipQuotes = () => {
+    const quote = at(/['"]/) ? content[i++]! : '';
+    const rest = content.slice(i);
+    return quote && rest.includes(quote) ? rest.slice(0, rest.indexOf(quote)) : rest;
+  };
+  // "url", then "=", each optional as the steps read them; a partial match is part of the URL.
+  if (!at(/[Uu]/)) return skipQuotes();
+  i++;
+  if (!at(/[Rr]/)) return whole;
+  i++;
+  if (!at(/[Ll]/)) return whole;
+  i++;
+  skipSpace();
+  if (!at(/=/)) return whole;
+  i++;
+  skipSpace();
+  return skipQuotes();
+}
+
 const SIMPLE = new Set(['src', 'poster', 'data', 'action', 'formaction', 'background', 'manifest', 'xlink:href']);
 const NAVIGATES = new Set(['a', 'area']);
 
@@ -134,8 +178,8 @@ function htmlReferences(html: string): { references: Reference[]; repeated: stri
       else if (name === 'style') for (const url of cssUrls(value)) references.push({ element: tag, attribute: 'style', url, image: true, script: false });
     }
     if (tag === 'meta' && get('http-equiv')?.trim().toLowerCase() === 'refresh') {
-      const target = /url\s*=\s*['"]?([^'";]*)/i.exec(get('content') ?? '');
-      if (target) add('content', target[1]!);
+      const target = refreshUrl(get('content') ?? '');
+      if (target !== undefined) add('content', target);
     }
     if (tag === 'style') for (const url of cssUrls(element.text)) references.push({ element: tag, attribute: 'text', url, image: true, script: false });
   }
