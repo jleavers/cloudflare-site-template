@@ -2,12 +2,42 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 
+// Some documents are the template's own until /new-site (SKILL.md §9a) replaces them: README.md and
+// SECURITY.md are rewritten for the site (SECURITY.md may be removed), SITE_BRIEF.md is filled in, and
+// wrangler.jsonc's example-site comment is rewritten for the site's own settings. A test that pins the
+// template's own wording in one of them runs only while that document is still the template's, and
+// skips itself, under a title that says so, once it is not. A stamped-out site's `npm run verify` stays
+// green. Structure the skill depends on (SITE_BRIEF.md's numbered sections and field lines) stays
+// checked everywhere. In this repository nothing skips: the guard tests below fail if a marker goes.
 const read = (path: string) => readFileSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)), 'utf8');
 const scripts = Object.keys(JSON.parse(read('package.json')).scripts as Record<string, string>);
 // Tolerant of CRLF, which Git for Windows can check out when .gitattributes is overridden.
 const SKILL_FRONTMATTER = /^---\r?\nname: new-site\r?\ndescription: .+\r?\n---\r?\n/;
 const DOCS = ['AGENTS.md', '.claude/skills/new-site/SKILL.md', 'SITE_BRIEF.md', 'design/README.md', 'README.md'];
 const SPEC = 'docs/superpowers/specs/2026-10-12-cloudflare-site-template-design.md';
+const exists = (path: string) => existsSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)));
+const TEMPLATE_README = '# cloudflare-site-template';
+const TEMPLATE_SECURITY = 'https://github.com/jleavers/cloudflare-site-template/security/advisories/new';
+const TEMPLATE_BRIEF = "This copy describes the template's own example site";
+const TEMPLATE_WRANGLER = '"name": "cloudflare-site-template",';
+/** True while the document is still the template's own; a missing file is not. */
+const isTemplate = (path: string, marker: (text: string) => boolean) => exists(path) && marker(read(path));
+const templateReadme = isTemplate('README.md', (text) => text.split(/\r?\n/, 1)[0] === TEMPLATE_README);
+const templateSecurity = isTemplate('SECURITY.md', (text) => text.includes(TEMPLATE_SECURITY));
+const templateBrief = isTemplate('SITE_BRIEF.md', (text) => text.includes(TEMPLATE_BRIEF));
+const templateWrangler = isTemplate('wrangler.jsonc', (text) => text.includes(TEMPLATE_WRANGLER));
+/**
+ * `test.each` over documents; the README row, which pins the template's wording, runs only while
+ * README.md is the template's. A row is a path, or an array whose first item is one.
+ */
+function eachDoc<Row extends string | readonly [string, ...string[]]>(name: string, rows: readonly Row[], run: (...row: any[]) => void) {
+  const doc = (row: Row) => (typeof row === 'string' ? row : row[0]);
+  const rest = rows.filter((row) => doc(row) !== 'README.md');
+  if (rest.length) test.each(rest as Row[])(name, run);
+  describe.skipIf(!templateReadme)('template README only', () => {
+    test.each(rows.filter((row) => doc(row) === 'README.md') as Row[])(name, run);
+  });
+}
 /** Text as it reads: line breaks, and a JSONC comment's leading slashes, become one space. */
 const prose = (text: string) => text.replace(/[ \t]*\n[ \t]*(?:\/\/[ \t]*)?/g, ' ');
 /** The text from one heading to the next one named. */
@@ -43,13 +73,22 @@ describe('agent-facing documents', () => {
 
   test('C7 covers a live site, not only a custom domain', () => {
     expect(read('AGENTS.md')).toMatch(/\*\*C7 — Example values never reach a live site/);
-    for (const doc of ['AGENTS.md', 'README.md', SPEC]) expect(read(doc), doc).toContain('`DELIVERY_PROVIDER`');
+    for (const doc of ['AGENTS.md', SPEC]) expect(read(doc), doc).toContain('`DELIVERY_PROVIDER`');
+  });
+
+  describe.skipIf(!templateReadme)('template README only', () => {
+    test('the README names DELIVERY_PROVIDER', () => expect(read('README.md')).toContain('`DELIVERY_PROVIDER`'));
   });
 
   test('a custom domain needs Always Use HTTPS, which preflight cannot check', () => {
-    expect(read('README.md')).toContain('Always Use HTTPS');
     expect(read('.claude/skills/new-site/SKILL.md')).toContain('Always Use HTTPS');
-    expect(read('README.md')).toContain('preload');
+  });
+
+  describe.skipIf(!templateReadme)('template README only', () => {
+    test('the README says a custom domain needs Always Use HTTPS, and mentions preload', () => {
+      expect(read('README.md')).toContain('Always Use HTTPS');
+      expect(read('README.md')).toContain('preload');
+    });
   });
 
   test('the archive cap counts the bytes extraction writes, not the sizes the archive lists', () => {
@@ -89,9 +128,16 @@ describe('agent-facing documents', () => {
     const brief = read('SITE_BRIEF.md');
     expect(brief).toMatch(/^## 4\. Business details \(optional\)/m);
     for (const line of ['Phone', 'Public address', 'Opening hours']) expect(brief).toContain(`**${line}`);
-    expect(brief).toContain('{email}');
-    const message = /successMessage: '(.+)',/.exec(read('src/config/site.ts'))![1];
-    expect(brief).toContain(`**Message shown after sending** (optional \`{email}\` is replaced with the visitor's address): ${message}`);
+  });
+
+  // The guidance wording and the example message are the template's; an operator rewrites them.
+  describe.skipIf(!templateBrief)('template SITE_BRIEF.md only', () => {
+    test('SITE_BRIEF.md shows the success message the site ships', () => {
+      const brief = read('SITE_BRIEF.md');
+      expect(brief).toContain('{email}');
+      const message = /successMessage: '(.+)',/.exec(read('src/config/site.ts'))![1];
+      expect(brief).toContain(`**Message shown after sending** (optional \`{email}\` is replaced with the visitor's address): ${message}`);
+    });
   });
 
   test('the new-site skill handles placeholders, testimonials and business details', () => {
@@ -122,40 +168,57 @@ describe('agent-facing documents', () => {
 
   test('design/BRIEFING.md exists, is linked, and carries the run\'s lessons', () => {
     expect(existsSync(fileURLToPath(new URL('../../design/BRIEFING.md', import.meta.url)))).toBe(true);
-    expect(read('README.md')).toContain('design/BRIEFING.md');
     expect(read('design/README.md')).toContain('BRIEFING.md');
     const briefing = read('design/BRIEFING.md');
     expect(briefing).toContain('[Bracketed');
     expect(briefing).toContain('design/SOURCE.md');
   });
 
-  test.each(['README.md', '.claude/skills/new-site/SKILL.md'])('%s covers a first deploy without a browser', (doc) => {
+  describe.skipIf(!templateReadme)('template README only', () => {
+    test('the README links design/BRIEFING.md', () => expect(read('README.md')).toContain('design/BRIEFING.md'));
+  });
+
+  eachDoc('%s covers a first deploy without a browser', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
     const text = read(doc);
     for (const fragment of ['8976', 'CLOUDFLARE_API_TOKEN', 'Read-Host -MaskInput']) expect(text, `${doc}: ${fragment}`).toContain(fragment);
   });
 
-  test.each(['SITE_BRIEF.md', 'README.md', '.claude/skills/new-site/SKILL.md'])('%s says CONTACT_FROM_EMAIL may carry a display name', (doc) => {
-    expect(read(doc)).toMatch(/display name/i);
+  test('the new-site skill says CONTACT_FROM_EMAIL may carry a display name', () => {
+    expect(read('.claude/skills/new-site/SKILL.md')).toMatch(/display name/i);
   });
 
-  test('the README warns that a new repository\'s first CI run starts at once', () => {
-    expect(read('README.md')).toMatch(/first CI run starts straight away/);
-    expect(read('README.md')).toMatch(/Dependabot/);
+  // Guidance wording: an operator may rewrite SITE_BRIEF.md's guidance, and a site's README replaces ours.
+  describe.skipIf(!templateBrief)('template SITE_BRIEF.md only', () => {
+    test('SITE_BRIEF.md says CONTACT_FROM_EMAIL may carry a display name', () => expect(read('SITE_BRIEF.md')).toMatch(/display name/i));
+  });
+  describe.skipIf(!templateReadme)('template README only', () => {
+    test('the README says CONTACT_FROM_EMAIL may carry a display name', () => expect(read('README.md')).toMatch(/display name/i));
   });
 
   test('wrangler.jsonc explains the preview warning about missing addresses', () => {
     expect(read('wrangler.jsonc')).toContain('not for Previews');
-    expect(read('README.md')).toMatch(/`wrangler preview` warns that\s+`CONTACT_TO_EMAIL`.*not for\s+Previews/s);
   });
 
-  test('the README shows the design-to-site image, and it exists', () => {
-    expect(read('README.md')).toContain('](docs/images/design-to-site.png)');
-    expect(existsSync(fileURLToPath(new URL('../../docs/images/design-to-site.png', import.meta.url)))).toBe(true);
-  });
-
+  // A stamped-out site keeps its README free of unfilled tokens, whatever else it says.
   test('the README has no unfilled tokens', () => expect(read('README.md')).not.toMatch(/DEMO_URL/));
 
-  test.each(['README.md', '.claude/skills/new-site/SKILL.md'])('%s puts the CI token in an environment and keeps previews opt-in', (doc) => {
+  describe.skipIf(!templateReadme)('template README only', () => {
+    test('the README warns that a new repository\'s first CI run starts at once', () => {
+      expect(read('README.md')).toMatch(/first CI run starts straight away/);
+      expect(read('README.md')).toMatch(/Dependabot/);
+    });
+
+    test('the README explains the preview warning about missing addresses', () => {
+      expect(read('README.md')).toMatch(/`wrangler preview` warns that\s+`CONTACT_TO_EMAIL`.*not for\s+Previews/s);
+    });
+
+    test('the README shows the design-to-site image, and it exists', () => {
+      expect(read('README.md')).toContain('](docs/images/design-to-site.png)');
+      expect(exists('docs/images/design-to-site.png')).toBe(true);
+    });
+  });
+
+  eachDoc('%s puts the CI token in an environment and keeps previews opt-in', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
     const text = read(doc);
     for (const fragment of ['--env production', 'CI_PREVIEWS']) expect(text, `${doc}: ${fragment}`).toContain(fragment);
     expect(text).not.toMatch(/(every|each) pull request gets a preview|previews each pull request|a preview for every pull request/i);
@@ -163,7 +226,7 @@ describe('agent-facing documents', () => {
 
   // A pull-request rule alone requires no approval, so an agent holding the owner's credential, or
   // any Contents-and-Pull-requests token, can open a pull request and merge it.
-  test.each(['README.md', '.claude/skills/new-site/SKILL.md'])('%s keeps agents out of main with their own identity and a required approval, and deploys by hand without hosted minutes', (doc) => {
+  eachDoc('%s keeps agents out of main with their own identity and a required approval, and deploys by hand without hosted minutes', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
     const text = read(doc).replace(/\s+/g, ' '); // as rendered: line breaks are spaces
     for (const fragment of ['merge into `main`', 'separate GitHub identity', 'own credential', 'one approval', 'bypass list', 'GitHub-hosted', 'npm run deploy']) {
       expect(text, `${doc}: ${fragment}`).toContain(fragment);
@@ -171,8 +234,10 @@ describe('agent-facing documents', () => {
     expect(text).not.toMatch(/ruleset that requires a pull request|unless a ruleset requires a pull request/);
   });
 
-  test('the README gives coding agents a token without workflow permission, never an SSH key', () => {
-    for (const fragment of ['workflow permission', 'SSH key']) expect(read('README.md').replace(/\s+/g, ' ')).toContain(fragment);
+  describe.skipIf(!templateReadme)('template README only', () => {
+    test('the README gives coding agents a token without workflow permission, never an SSH key', () => {
+      for (const fragment of ['workflow permission', 'SSH key']) expect(read('README.md').replace(/\s+/g, ' ')).toContain(fragment);
+    });
   });
 
   // GitHub splits a table row at every unescaped |, inside a code span too: `a || b` there needs \|\|.
@@ -187,8 +252,11 @@ describe('agent-facing documents', () => {
     },
   );
 
+  // wrangler.jsonc's comment about the example site's settings is rewritten for a real site's own (the
+  // skill has the agent set its name, vars and routes there), and SECURITY.md is replaced or removed.
   test('preflight refuses a live site, not only a custom-domain deploy', () => {
-    for (const doc of ['wrangler.jsonc', 'SECURITY.md', SPEC]) {
+    const docs = [SPEC, ...(templateWrangler ? ['wrangler.jsonc'] : []), ...(templateSecurity ? ['SECURITY.md'] : [])];
+    for (const doc of docs) {
       expect(prose(read(doc)), doc).toContain('a live site (a custom domain, or real delivery)');
       expect(prose(read(doc)), doc).not.toMatch(/custom-domain deploy|to a custom domain past/);
     }
@@ -212,21 +280,23 @@ describe('agent-facing documents', () => {
     expect(section(read(SPEC), '### 11.4', '## 12.')).toMatch(/missing hashed asset/i);
   });
 
-  test('the README says a miss runs the Worker, and what real delivery needs locally', () => {
-    const readme = prose(read('README.md'));
-    expect(readme).not.toContain('Static requests never touch it');
-    expect(section(readme, '## How it works', '## Live demo')).toMatch(/A miss \(an unknown page, a missing asset\)/);
-    expect(section(readme, 'To try real delivery locally', '**Pull-request previews**')).toMatch(/real `TURNSTILE_SECRET_KEY`[^.]*\..*`localhost`/);
+  describe.skipIf(!templateReadme)('template README only', () => {
+    test('the README says a miss runs the Worker, and what real delivery needs locally', () => {
+      const readme = prose(read('README.md'));
+      expect(readme).not.toContain('Static requests never touch it');
+      expect(section(readme, '## How it works', '## Live demo')).toMatch(/A miss \(an unknown page, a missing asset\)/);
+      expect(section(readme, 'To try real delivery locally', '**Pull-request previews**')).toMatch(/real `TURNSTILE_SECRET_KEY`[^.]*\..*`localhost`/);
+    });
   });
 
   // gh secret set --env production fails with a 404 until the environment exists.
-  test.each([
+  eachDoc("%s (%s) opens or creates the production environment before setting its secrets", [
     ['README.md', '## Quick start', '## Stamp out a site'],
     ['README.md', '## Stamp out a site', '## One-off setup'],
     ['README.md', '### Cloudflare API token', '### Deploying from a machine'],
     ['.claude/skills/new-site/SKILL.md', '4. **CI:**', '## '],
     [SPEC, '## 13.', '## 14.'],
-  ])("%s (%s) opens or creates the production environment before setting its secrets", (doc, from, to) => {
+  ], (doc: string, from: string, to: string) => {
     expect(section(prose(read(doc)), from, to)).toContain("CI's first run");
   });
 
@@ -237,7 +307,22 @@ describe('agent-facing documents', () => {
     }
   });
 
-  test('the README says Read-Host -MaskInput needs PowerShell 7.1', () => expect(read('README.md')).toContain('PowerShell 7.1'));
+  describe.skipIf(!templateReadme)('template README only', () => {
+    test('the README says Read-Host -MaskInput needs PowerShell 7.1', () => expect(read('README.md')).toContain('PowerShell 7.1'));
+  });
+
+  // In this repository nothing above may skip; a renamed title or a reworded marker would hide it.
+  describe('the template-only checks have their markers here', () => {
+    const isTemplateRepo = exists('src/config/site.ts') && read('src/config/site.ts').includes('Example Co.');
+    test.skipIf(!isTemplateRepo)("the template's README starts with its marker line", () => {
+      expect(read('README.md').split(/\r?\n/, 1)[0]).toBe(TEMPLATE_README);
+    });
+    test.skipIf(!isTemplateRepo)("the template's SITE_BRIEF.md, SECURITY.md and wrangler.jsonc carry their markers", () => {
+      expect(read('SITE_BRIEF.md')).toContain(TEMPLATE_BRIEF);
+      expect(read('SECURITY.md')).toContain(TEMPLATE_SECURITY);
+      expect(read('wrangler.jsonc')).toContain(TEMPLATE_WRANGLER);
+    });
+  });
 
   test('the LinkedIn header promises no preview for every pull request', () => {
     expect(read('tools/screenshots/layouts.mjs')).not.toMatch(/a preview for every pull request/i);

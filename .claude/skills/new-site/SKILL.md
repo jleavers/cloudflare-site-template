@@ -189,6 +189,9 @@ Before the hand-back, remove what still names the template:
   delete it with `git rm` if the person prefers;
 - remove `repository`, `bugs` and `homepage` from `package.json`.
 
+The template-only docs tests (`tests/unit/docs.test.ts`) skip themselves once `README.md` and
+`SECURITY.md` are replaced (or `SECURITY.md` is removed), so `npm run verify` stays green.
+
 ## 9. Hand back
 
 Commit (see AGENTS.md "Git Workflow"). List every `[bracketed]` placeholder still in the site,
