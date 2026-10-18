@@ -18,7 +18,7 @@ const { stamp, sha, repo, worktree, runDir } = args
 const escalationCap = Number.isInteger(args.escalationCap) ? args.escalationCap : 3
 // Where agents put everything temporary: npm installs, clones, stub servers, throwaway copies of the worktree.
 // Inside the repository (under the gitignored .claude/worktrees/) but outside the worktree:
-// one directory the launching session deletes after the run, and not shared /tmp, where a
+// one directory the owner deletes after the run, and not shared /tmp, where a
 // fixed name is one another local principal can create first.
 const scratch = args.scratch || `${worktree}-scratch`
 
@@ -347,8 +347,8 @@ Teams webhook, to Turnstile's siteverify, or to the Cloudflare API, and never ru
 deploy\`, \`preview\`, \`secret\`, \`delete\` or \`login\`, or \`npm publish\`. To demonstrate
 behaviour, import \`src/contact/handler.ts\` into a script in your scratch directory and call
 \`handleContact\` with a hand-built \`Request\`, a synthetic env and a stub \`fetch\`; or copy the
-worktree into your scratch directory, run \`npm ci --ignore-scripts\` there, and use \`npm run
-build\`, the tests, and \`npx wrangler dev\` on \`127.0.0.1\`. Never install, build or run anything
+worktree into your scratch directory, run \`npm ci --ignore-scripts --userconfig <empty file>\` there, and use \`npm run
+build\`, the tests, and \`npx --userconfig <empty file> wrangler dev\` on \`127.0.0.1\`. Never install, build or run anything
 in the worktree itself.
 
 **Run \`wrangler dev\` on a free port, and prove the answer is yours.** Pick the port as free, never a
@@ -406,7 +406,7 @@ named for your task: npm installs, clones and mirrors, synthetic data, stub serv
 worktree, throwaway client configuration. Wherever a brief says "a temporary directory", it
 means there. Never use \`/tmp\` or any other path outside the repository: shared \`/tmp\` is
 where another local principal can create a name before you do, and one directory is what
-the launching session cleans up.
+the owner cleans up.
 
 **Delete nothing, your own files included.** The owner removes the whole scratch
 directory after the run, so there is nothing for you to clean up. When you need a fresh copy of

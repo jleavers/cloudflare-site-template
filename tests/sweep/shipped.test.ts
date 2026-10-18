@@ -31,11 +31,36 @@ const auditPatterns = () => {
   return block ? block[1] : '';
 };
 
-test('the sweep skill’s post-run audit greps for this repository’s dangerous calls', () => {
-  const patterns = auditPatterns();
-  for (const pattern of ['wrangler (deploy|preview|secret|delete|login)', 'npm publish', 'git push', '\\.dev\\.vars', '\\.credentials\\.json', 'api\\.cloudflare\\.com', 'api\\.resend\\.com']) {
-    expect(patterns, pattern).toContain(pattern);
-  }
+// One alternative per line, as the skill shows them. A missing, changed or extra line fails.
+const AUDIT_PATTERNS = [
+  'wrangler (deploy|preview|secret|delete|login)',
+  'npm publish',
+  'gh [a-z]+ (create|edit|close|comment|merge|delete)',
+  '(-X|--method) (POST|PATCH|PUT|DELETE)',
+  'git push',
+  '\\.dev\\.vars',
+  '\\.wrangler',
+  '\\.npmrc',
+  '\\.config/gh',
+  '\\.ssh\\b',
+  '\\.env\\b',
+  '\\.credentials\\.json',
+  'printenv',
+  '/proc/[0-9]+/environ',
+  'mcp__',
+  'api\\.cloudflare\\.com',
+  'api\\.resend\\.com',
+  'hooks\\.slack\\.com',
+  'webhook\\.office',
+  'workers\\.dev',
+  'WebFetch',
+  'curl[[:space:]]',
+  'wget[[:space:]]',
+  '\\bnc[[:space:]]',
+];
+
+test('the sweep skill’s audit-patterns block is exactly this repository’s dangerous-call list', () => {
+  expect(auditPatterns().trim().split('\n')).toEqual(AUDIT_PATTERNS);
 });
 
 test('the post-run audit extracts tool calls first and reads its patterns from a file', () => {
@@ -56,11 +81,24 @@ test('phase 0 drops the credentials the sweep does not need, and phase 8 restore
   expect(section(skill, '## Phase 8', '## Growing the lanes')).toContain('gh auth login');
 });
 
-test('the shared lane rules keep a lane to a free port, an empty npm userconfig and its own packages', () => {
+test('the shared lane rules, inside HANDS_OFF, keep a lane to a free port, an empty npm userconfig and its own packages', () => {
   const source = readFileSync('.claude/workflows/security-sweep.js', 'utf8');
-  for (const word of ['--userconfig', 'listen(0,', 'node_modules/.bin', '<title>']) {
-    expect(source, word).toContain(word);
+  const start = source.indexOf('const HANDS_OFF = `');
+  const handsOff = source.slice(start).split(/[^\\]`\n/)[0];
+  expect(handsOff.length).toBeGreaterThan(1000);
+  for (const word of ['--userconfig', 'listen(0,', 'node_modules/.bin', '<title>', 'npx --userconfig']) {
+    expect(handsOff, word).toContain(word);
   }
+});
+
+test('phase 7 gets its write credential back before filing, and phase 8 unsets GH_TOKEN before gh auth login', () => {
+  const skill = skillText();
+  const phase7 = section(skill, '## Phase 7', '## Phase 8');
+  expect(phase7.indexOf('GH_TOKEN')).toBeGreaterThan(-1);
+  expect(phase7.indexOf('GH_TOKEN')).toBeLessThan(phase7.indexOf('gh auth login'));
+  const phase8 = section(skill, '## Phase 8', '## Growing the lanes');
+  expect(phase8.indexOf('GH_TOKEN')).toBeGreaterThan(-1);
+  expect(phase8.indexOf('GH_TOKEN')).toBeLessThan(phase8.indexOf('gh auth login'));
 });
 
 test('the sweep skill never removes recursively', () => {

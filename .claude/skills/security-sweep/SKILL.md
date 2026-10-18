@@ -82,12 +82,14 @@ names every forbidden store and verb, so a grep over the raw files hits every on
 newline inside a command is the two characters `\n` in the JSON, so `\bnc ` matches a line that
 starts `nc`. Extract the tool calls first, from the transcripts under
 `~/.claude/projects/` (the session's own; reading their tool calls is the audit's job), each
-labelled with its stage from the agent's `.meta.json`. Write only `$RD/audit-calls.jsonl` and the
+labelled with its stage from the agent's `.meta.json`. The loop expects `agent-<id>.jsonl` beside
+`agent-<id>.meta.json`; the main session's transcript has no meta file, so its stage is empty. Write only `$RD/audit-calls.jsonl` and the
 two files below it (`RD` is the run directory from phase 0; set it again in a fresh shell):
 
 ```bash
 for f in <transcript-dir>/*.jsonl; do
-  jq -c --arg f "$(basename "$f")" --arg s "$(jq -r .description "${f%.jsonl}.meta.json")" \
+  m="${f%.jsonl}.meta.json"; [ -f "$m" ] && st=$(jq -r '.description // empty' "$m") || st=""
+  jq -c --arg f "$(basename "$f")" --arg s "$st" \
     'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use") | {f: $f, s: $s, n: .name, i: .input}' "$f"
 done > "$RD/audit-calls.jsonl"
 ```
@@ -178,8 +180,8 @@ stage that falls back to the default subagent (below) inherits all of it.
   switch`, so run `gh auth status` to see the saved logins, log each out for the run
   (`gh auth logout --hostname github.com --user <login>`), and only then export the token.
 - Unload the SSH agent's keys (`ssh-add -D`; `ssh-add -l` should then list none), because GitHub
-  accepts a `git push` from any key in `ssh-agent`, whatever `gh` holds. Your own check, which no
-  agent and not this session makes: that no unencrypted key GitHub accepts sits in `~/.ssh`.
+  accepts a `git push` from any key in `ssh-agent`, whatever `gh` holds. Check this yourself: no
+  unencrypted key GitHub accepts should sit in `~/.ssh`. No agent, and not this session, reads it.
 - If you are logged in to Wrangler (OAuth), run `npx wrangler logout` for the run, because its
   login reaches the Cloudflare API.
 - If `~/.npmrc` holds a registry token, move it aside for the run; the lanes are told not to read
@@ -383,7 +385,11 @@ public at the flip, before it is fixed.
 Write the approved clusters to `<runDir>/07-held.md` and fix them before the flip. A critical or
 high cluster blocks the release.
 
-Once the repository is public, file each approved cluster as a **draft security advisory**
+Once the repository is public, and only then, filing needs the write credential phase 0 took
+away: unset the read-only `GH_TOKEN` (`gh auth login` refuses to store credentials while it is
+set), then `gh auth login`.
+
+File each approved cluster as a **draft security advisory**
 (`gh api repos/<repo>/security-advisories -X POST --input <file>`), as below, and record it in
 `06-filed.json`. Only on the owner's explicit say-so does an advisory become a public issue.
 
@@ -432,9 +438,9 @@ repository's AGENTS.md forbids agents from deleting a directory tree.
 
 **Keep the run directory.** It is the comparison the next sweep needs.
 
-**Give back what phase 0 took away,** once the clusters are filed or held: log back in to `gh`
-(`gh auth login`), reload the SSH keys you want (`ssh-add`), log back in to Wrangler if you want it
-(`npx wrangler login`), and move `~/.npmrc` back. Unset the read-only `GH_TOKEN`.
+**Give back what phase 0 took away,** once the clusters are filed or held: unset the read-only `GH_TOKEN`, then log back in to `gh`
+(`gh auth login`, unless phase 7 already did), reload the SSH keys you want (`ssh-add`), log back in to Wrangler if you want it
+(`npx wrangler login`), and move `~/.npmrc` back.
 
 ## Growing the lanes
 
