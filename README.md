@@ -54,7 +54,7 @@ not, and the tests enforce them (details in [AGENTS.md](AGENTS.md#contracts)):
 | C4 | Title, description, canonical and OpenGraph on every page |
 | C5 | The contact form's hooks |
 | C6 | The form handler uses Web-standard APIs only |
-| C7 | Example values and design placeholders never reach a custom domain |
+| C7 | Example values and design placeholders never reach a live site (a custom domain, or real delivery) |
 
 ## Live demo
 
@@ -98,7 +98,9 @@ You need: a Claude Design handoff (or an archive or artifact link), the facts in
    then `npx wrangler secret put TURNSTILE_SECRET_KEY` and `RESEND_API_KEY` (or `WEBHOOK_URL`),
    then `npm run deploy`. Before the first deploy, `secret put` asks whether to create the Worker:
    answer yes, and `npm run deploy` fills it. The deploy attaches your domain, DNS and
-   certificate included.
+   certificate included. Then turn on **Always Use HTTPS** for the domain's zone (dashboard → SSL/TLS →
+   Edge Certificates). Preflight can't check that setting, and without it the pages can be fetched
+   over http. (The form refuses a cleartext post either way.)
 6. Store the CI token and account ID ([where, by plan](#cloudflare-api-token)):
    `gh secret set CLOUDFLARE_API_TOKEN --env production` and the same for `CLOUDFLARE_ACCOUNT_ID`,
    or repository secrets on a private Free repository, then push. From now on every push to
@@ -109,6 +111,14 @@ You need: a Claude Design handoff (or an archive or artifact link), the facts in
 Steps 1, 5 and 6 take under five minutes once step 4 is done. Step 3 depends on the design.
 
 ## One-off setup
+
+### HTTPS and HSTS
+
+The template sends `Strict-Transport-Security: max-age=31536000` (`public/_headers`). Turn on
+**Always Use HTTPS** for a custom domain's zone, as in step 5 of [Stamp out a site](#stamp-out-a-site).
+HSTS preload (`includeSubDomains; preload` in that header, then a submission at hstspreload.org) is a
+per-domain choice, not a template default, because it binds every subdomain to HTTPS for a long
+time and is slow to undo. Only a preloaded domain is protected on a visitor's very first visit.
 
 ### Turnstile
 
@@ -240,7 +250,7 @@ dev box or VM. Two ways round it:
 | `npm run verify` | type check, unit tests, build, contract tests on the build |
 | `npm run test:e2e` | the browser tests (Playwright, Chromium) |
 | `npm run lighthouse` | the Lighthouse budgets; performance must score 100 |
-| `npm run preflight` | is this checkout still the template, or does a built page still have a `[bracketed]` design placeholder? (decides whether a deploy may go ahead; build first) |
+| `npm run preflight` | is this checkout still the template, or does a built page still have a `[bracketed]` design placeholder? Example values are refused once the site is live: a custom domain, or `DELIVERY_PROVIDER` set to `resend`, `slack` or `teams` (decides whether a deploy may go ahead; build first) |
 | `npm run deploy` | build, preflight, deploy |
 
 `npm run build` downloads the site's fonts from Google Fonts at build time, through the Astro

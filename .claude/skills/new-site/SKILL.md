@@ -188,8 +188,8 @@ Before the hand-back, remove what still names the template:
 ## 9. Hand back
 
 Commit (see AGENTS.md "Git Workflow"). List every `[bracketed]` placeholder still in the site,
-with `file:line`, and say that production preflight will refuse them while demo mode only notes
-them. Then give the person this checklist, filled in with the site's values:
+with `file:line`, and say that production preflight (a custom domain, or `DELIVERY_PROVIDER` set to
+`resend`, `slack` or `teams`) will refuse them while demo mode only notes them. Then give the person this checklist, filled in with the site's values:
 
 1. **Turnstile widget:** Cloudflare dashboard → Turnstile → Add widget, managed mode, hostnames
    `<production domain>` and `<their-subdomain>.workers.dev`. Send me the site key (I'll put it in
@@ -199,6 +199,8 @@ them. Then give the person this checklist, filled in with the site's values:
 3. **First deploy, from your machine:** sign in, then
    `npx wrangler secret put TURNSTILE_SECRET_KEY` →
    `npx wrangler secret put RESEND_API_KEY` (or `WEBHOOK_URL`) → `npm run deploy`.
+   - Then turn on **Always Use HTTPS** for the domain's zone (SSL/TLS → Edge Certificates). Preflight
+     can't check it, and without it the pages can be fetched over http.
    - Before the first deploy, `secret put` asks whether to create the Worker: answer yes; it
      creates an empty Worker and `npm run deploy` fills it.
    - Signing in: `npx wrangler login` where there is a browser. On a workers.dev site (no custom

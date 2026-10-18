@@ -37,6 +37,17 @@ describe('agent-facing documents', () => {
     }
   });
 
+  test('C7 covers a live site, not only a custom domain', () => {
+    expect(read('AGENTS.md')).toMatch(/\*\*C7 — Example values never reach a live site/);
+    for (const doc of ['AGENTS.md', 'README.md', SPEC]) expect(read(doc), doc).toContain('`DELIVERY_PROVIDER`');
+  });
+
+  test('a custom domain needs Always Use HTTPS, which preflight cannot check', () => {
+    expect(read('README.md')).toContain('Always Use HTTPS');
+    expect(read('.claude/skills/new-site/SKILL.md')).toContain('Always Use HTTPS');
+    expect(read('README.md')).toContain('preload');
+  });
+
   test('the new-site skill has frontmatter naming it', () => {
     expect(read('.claude/skills/new-site/SKILL.md')).toMatch(SKILL_FRONTMATTER);
   });

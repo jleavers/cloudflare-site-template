@@ -47,10 +47,12 @@ change that needs one of those tests weakened is the wrong change.
 - **C6 — The handler stays portable.** `src/contact/**` uses Web-standard APIs only (`Request`,
   `Response`, `fetch`, `FormData`, `URL`) and imports nothing from outside `src/contact/`. Do not
   add KV, D1, Durable Objects or any other Cloudflare binding unless explicitly instructed.
-- **C7 — Example values never reach a custom domain.** `npm run preflight` allows the template's
-  example values, and a design's `[bracketed]` placeholders left in the built pages, on workers.dev
-  (the demo) and refuses them once `wrangler.jsonc` has a custom domain. `npm run deploy` and CI
-  run it, after building.
+- **C7 — Example values never reach a live site.** `npm run preflight` allows the template's
+  example values, and a design's `[bracketed]` placeholders left in the built pages, on a
+  workers.dev demo that delivers only to `log`. It refuses them once `wrangler.jsonc` has a custom
+  domain or sets `DELIVERY_PROVIDER` to `resend`, `slack` or `teams`. `npm run deploy` and CI run
+  it, after building. The handler backs it up: it refuses a Turnstile test secret with any
+  provider but `log`, and a form posted from a cleartext origin that is not loopback.
 
 ## Rules
 

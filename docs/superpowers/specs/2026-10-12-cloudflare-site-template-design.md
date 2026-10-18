@@ -167,7 +167,7 @@ Every stamped-out site must satisfy these, whatever its design. AGENTS.md states
 | C4 | Every page renders through `BaseLayout`. | dist: every HTML page has `<title>`, meta description, canonical, `og:title`, `og:description`, an absolute `og:image` URL and `lang` |
 | C5 | `ContactForm` markup may be restyled, but its contract is fixed: `form[data-contact-form]`, `action="/api/contact"`, `method="post"`, fields `name`, `email`, `message`, `_gotcha` (hidden), a `[data-turnstile]` container, a `[data-status]` live region, and the bundled submit script. | dist checks the structure; e2e checks the behaviour |
 | C6 | The worker stays portable: `src/contact/**` uses only Web-standard APIs, and no KV, D1, Durable Objects or other proprietary bindings are added unless explicitly instructed. | unit tests on Node; a test asserts no `cloudflare:` imports in `src/contact` |
-| C7 | The template's example values, and a design's `[bracketed]` placeholders, may be deployed to workers.dev, which is how the demo works, but never to a custom domain. | `npm run preflight` (§11.3), run by `npm run deploy` and by the `deploy` job |
+| C7 | The template's example values, and a design's `[bracketed]` placeholders, may be deployed to a workers.dev demo that delivers only to `log`, which is how the demo works, but never to a live site: one whose `wrangler.jsonc` has a custom domain or sets `DELIVERY_PROVIDER` to `resend`, `slack` or `teams`. The handler adds two refusals: a Turnstile test secret with any provider but `log`, and a form posted from a cleartext origin that is not loopback. | `npm run preflight` (§11.3), run by `npm run deploy` and by the `deploy` job; unit tests on `readConfig` and `handleContact` |
 
 ## 6. Site configuration and inputs
 
@@ -275,10 +275,10 @@ Every response is JSON: `{ ok: boolean, message: string, errors?: Record<string,
 
 | Step | Check | On failure |
 |---|---|---|
-| 1 | The `Origin` header equals `new URL(request.url).origin` | 403 "Forbidden" |
+| 1 | The `Origin` header equals `new URL(request.url).origin`, and the request URL is `https:` or its host is loopback (`localhost`, `127.x.x.x`, `[::1]`) | 403 "Forbidden" |
 | 2 | `Content-Type` is `multipart/form-data` or `application/x-www-form-urlencoded`, and the body is ≤ 32 KB (checked on `Content-Length` and on the bytes actually read) | 400, or 413 when too large |
 | 3 | `_gotcha` is empty | **200** `{ ok: true }`. Nothing is sent and the request is logged as spam. |
-| 3a | Config: `readConfig(env)` succeeds | 500, generic message, detail logged |
+| 3a | Config: `readConfig(env)` succeeds (it also refuses a Turnstile test secret, `/^[123]x0{31}[A-Z]{2}$/`, with any provider but `log`) | 500, generic message, detail logged |
 | 4 | Turnstile siteverify `POST`s `secret`, `response` (`cf-turnstile-response`) and `remoteip` (`CF-Connecting-IP` when present), with a 5 s timeout | Token missing or `success: false`: 403. Siteverify unreachable, timed out or 5xx: 503, unless `TURNSTILE_FAIL_OPEN === "true"`, which logs a warning and continues. |
 | 5 | Validate after trimming. `name` is 1–100 characters with no control characters. `email` is ≤ 254 characters, has no whitespace or control characters, and matches `local@domain.tld`. `message` is 1–5,000 characters; control characters other than `\n` and `\t` are stripped and `\r\n` becomes `\n`. | 400 with per-field `errors` |
 | 6 | Deliver through the provider named by `DELIVERY_PROVIDER` | The provider rejects or is unreachable: 502. |
@@ -498,15 +498,15 @@ All helper scripts are Node (`.mjs`) or TypeScript, so they behave the same on W
 
 `npm run preflight` picks its mode from `wrangler.jsonc`.
 
-**Demo mode** applies only when there is no `route` and `routes` is absent or empty, at the top level **and** in every `env.*` block, so the deploy goes to workers.dev only.
+**Demo mode** applies only when there is no `route` and `routes` is absent or empty, at the top level **and** in every `env.*` block, so the deploy goes to workers.dev only, and `vars.DELIVERY_PROVIDER` is not `resend`, `slack` or `teams`, so nothing reaches a real recipient.
 - It passes, and prints which example values and `[bracketed]` placeholders are still present, so a demo deploy is never blocked.
 - This is how the live demo, the Deploy button and a new user's first experiment work.
 - It fails only if `workers_dev` is `false`, because then the deploy would have no URL at all.
 - It **warns** (never fails) when `site.url` is still on `example.com` but `site.name` is not `Example Co.` or the Worker `name` is not the template's: the site has been customised but still advertises the template's address (canonical and OpenGraph URLs, sitemap).
 
-**Production mode** applies when a route of any kind exists: a custom domain, a zone route string, a `{ pattern, zone_name }` object, the singular `route`, or any of these under an `env.*` block. It fails, naming each problem, when any of these hold:
+**Production mode** applies when `vars.DELIVERY_PROVIDER` is `resend`, `slack` or `teams` (a live site, with or without a route), or when a route of any kind exists: a custom domain, a zone route string, a `{ pattern, zone_name }` object, the singular `route`, or any of these under an `env.*` block. It fails, naming each problem, when any of these hold:
 - `wrangler.jsonc` `name` is `cloudflare-site-template`;
-- `site.url` is on `example.com`, or its host is not the host of any route (a route string's host is the part before the first `/`; an object's is its `pattern`; comparison is case-insensitive);
+- `site.url` is on `example.com`, or, when there is a route, its host is not the host of any route (a route string's host is the part before the first `/`; an object's is its `pattern`; comparison is case-insensitive);
 - `site.contact.turnstileSiteKey` is a Turnstile test key (`1x…`, `2x…` or `3x…`);
 - `TURNSTILE_SECRET_KEY` is still in the top-level `vars`;
 - `DELIVERY_PROVIDER` is `log` or missing in the top-level `vars`;
@@ -515,6 +515,8 @@ All helper scripts are Node (`.mjs`) or TypeScript, so they behave the same on W
 - a built page (`dist/**/*.html`) has a `[bracketed]` placeholder in its visible text, which a design leaves for a fact it did not know (for example `[Phone number]`); the error names the page and the placeholder. Script, style, comment and attribute text is ignored. If `dist/` is missing, the error says to run `npm run build` first.
 
 A `CONTACT_FROM_EMAIL` may carry a display name (`Example Co. <hello@example.com>`); the check reads the address inside `<…>`.
+
+Without a route, production mode skips only the "host of a route" check, and still fails when `workers_dev` is `false`, because the deploy would have no URL.
 
 It only warns when `design/SOURCE.md` and `design/bundle/` are both absent.
 
