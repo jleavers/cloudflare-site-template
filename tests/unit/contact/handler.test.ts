@@ -53,6 +53,26 @@ describe('step 1: origin', () => {
   });
 });
 
+describe('step 1: only an https origin, or a loopback one', () => {
+  test.each([
+    ['https', 'https://www.example.org'],
+    ['loopback IPv4', 'http://127.0.0.1:8787'],
+    ['localhost', 'http://localhost:4321'],
+    ['loopback IPv6', 'http://[::1]:8787'],
+  ])('accepts a post from %s to itself', async (_label, origin) => {
+    const request = new Request(`${origin}/api/contact`, { method: 'POST', body: new URLSearchParams(GOOD), headers: { Origin: origin } });
+    expect((await run(request)).response.status).toBe(200);
+  });
+
+  test('refuses a cleartext site posting to itself, before any network call', async () => {
+    const origin = 'http://www.example.org';
+    const request = new Request(`${origin}/api/contact`, { method: 'POST', body: new URLSearchParams(GOOD), headers: { Origin: origin } });
+    const { response, fetchFn } = await run(request);
+    expect(response.status).toBe(403);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+});
+
 describe('step 2: body', () => {
   test.each(['application/json', 'text/plain'])('400 for %s', async (type) => {
     const request = new Request(`${ORIGIN}/api/contact`, {

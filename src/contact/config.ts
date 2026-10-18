@@ -24,6 +24,9 @@ export class ConfigError extends Error {
   }
 }
 
+/** Cloudflare's published Turnstile test secrets (always pass, always fail, token already spent). */
+const TURNSTILE_TEST_SECRET = /^[123]x0{31}[A-Z]{2}$/;
+
 const isProvider = (value: string): value is ProviderName => (PROVIDERS as readonly string[]).includes(value);
 
 /** Reads and checks the settings the chosen provider needs, naming everything missing at once. */
@@ -57,6 +60,13 @@ export function readConfig(env: ContactEnv): ContactConfig {
 
   if (missing.length > 0) {
     throw new ConfigError(missing, `The contact form is missing configuration: ${missing.join(', ')}.`);
+  }
+  if (provider !== 'log' && TURNSTILE_TEST_SECRET.test(config.turnstileSecretKey)) {
+    throw new ConfigError(
+      [],
+      'TURNSTILE_SECRET_KEY is a Turnstile test secret, which accepts every submission: delivery through ' +
+        `"${provider}" needs a real one. Set it with \`npx wrangler secret put TURNSTILE_SECRET_KEY\`.`,
+    );
   }
   if (config.webhookUrl !== undefined && !config.webhookUrl.startsWith('https://')) {
     throw new ConfigError([], 'WEBHOOK_URL must be an https URL.');

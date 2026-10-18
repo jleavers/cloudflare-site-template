@@ -70,4 +70,39 @@ describe('readConfig', () => {
   ])('TURNSTILE_FAIL_OPEN=%j reads as %s', (value, expected) => {
     expect(readConfig({ ...base, DELIVERY_PROVIDER: 'log', TURNSTILE_FAIL_OPEN: value }).turnstileFailOpen).toBe(expected);
   });
+
+  describe('the Turnstile test secret', () => {
+    const TEST_SECRET = '1x0000000000000000000000000000000AA';
+    const extras: Record<string, Record<string, string>> = {
+      resend: { CONTACT_TO_EMAIL: 'to@acme.test', CONTACT_FROM_EMAIL: 'from@acme.test', RESEND_API_KEY: 're_live' },
+      slack: { WEBHOOK_URL: 'https://hooks.acme.test/x' },
+      teams: { WEBHOOK_URL: 'https://hooks.acme.test/x' },
+    };
+
+    test.each(['resend', 'slack', 'teams'])('is refused with %s, naming the fix and not echoing the value', (provider) => {
+      const env = { DELIVERY_PROVIDER: provider, TURNSTILE_SECRET_KEY: TEST_SECRET, ...extras[provider] };
+      let message = '';
+      try {
+        readConfig(env);
+      } catch (error) {
+        expect(error).toBeInstanceOf(ConfigError);
+        message = (error as Error).message;
+      }
+      expect(message).toContain('npx wrangler secret put TURNSTILE_SECRET_KEY');
+      expect(message).not.toContain(TEST_SECRET);
+    });
+
+    test.each(['2x0000000000000000000000000000000AA', '3x0000000000000000000000000000000AA'])('the other published test secret %s is refused too', (secret) => {
+      expect(() => readConfig({ DELIVERY_PROVIDER: 'slack', TURNSTILE_SECRET_KEY: secret, ...extras.slack })).toThrow(ConfigError);
+    });
+
+    test('passes with log: the demo, previews and the e2e suite', () => {
+      expect(readConfig({ DELIVERY_PROVIDER: 'log', TURNSTILE_SECRET_KEY: TEST_SECRET }).provider).toBe('log');
+    });
+
+    test('a real-looking secret passes with resend', () => {
+      const env = { DELIVERY_PROVIDER: 'resend', TURNSTILE_SECRET_KEY: '0x4AAAAAAAreal_secret_value', ...extras.resend };
+      expect(readConfig(env).provider).toBe('resend');
+    });
+  });
 });
