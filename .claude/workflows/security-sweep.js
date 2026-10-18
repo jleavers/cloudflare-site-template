@@ -351,6 +351,23 @@ worktree into your scratch directory, run \`npm ci --ignore-scripts\` there, and
 build\`, the tests, and \`npx wrangler dev\` on \`127.0.0.1\`. Never install, build or run anything
 in the worktree itself.
 
+**Run \`wrangler dev\` on a free port, and prove the answer is yours.** Pick the port as free, never a
+fixed or default one:
+\`node -e "const s=require('node:net').createServer().listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close()})"\`.
+Before you trust a response, check that it came from your own server, for example the built page's
+\`<title>\`. In an earlier run a \`wrangler dev\` port collided with another local process and one
+request reached it.
+
+**Give npm an empty userconfig.** Every \`npm\` and \`npx\` command passes \`--userconfig\` pointing at an
+empty file in your scratch directory, so npm never reads the operator's \`~/.npmrc\`; the first \`npm ci\`
+of an earlier run may have.
+
+**Use your copy's packages only.** The scratch directory sits inside the main checkout, so Node
+resolves any package your copy lacks from the main checkout's \`node_modules\`. Install in your copy
+first (\`npm ci --ignore-scripts --userconfig <your empty file>\`) and run tools from your copy's
+\`node_modules/.bin\`. If a tool resolves from outside your copy, say so in \`coverage\` rather than
+relying on it; Playwright did in an earlier run.
+
 If a token-shaped string turns up in the worktree or its history, cite its file, line and
 commit and quote at most its first six characters -- never the whole value. Turnstile's published
 test keys (\`1x00000000000000000000AA\`, \`1x0000000000000000000000000000000AA\`) are public by

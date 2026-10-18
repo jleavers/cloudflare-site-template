@@ -77,24 +77,82 @@ beside the workflow's `journal.jsonl`, in the directory the task notification na
 - a call to an MCP connector: the profiles grant none, so one means a stage did not launch with
   its profile. Check for that before reading the findings
 
+**Grep the tool calls, not the transcripts.** A transcript opens with the stage's prompt, which
+names every forbidden store and verb, so a grep over the raw files hits every one of them. And a
+newline inside a command is the two characters `\n` in the JSON, so `\bnc ` matches a line that
+starts `nc`. Extract the tool calls first, from the transcripts under
+`~/.claude/projects/` (the session's own; reading their tool calls is the audit's job), each
+labelled with its stage from the agent's `.meta.json`. Write only `$RD/audit-calls.jsonl` and the
+two files below it (`RD` is the run directory from phase 0; set it again in a fresh shell):
+
+```bash
+for f in <transcript-dir>/*.jsonl; do
+  jq -c --arg f "$(basename "$f")" --arg s "$(jq -r .description "${f%.jsonl}.meta.json")" \
+    'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use") | {f: $f, s: $s, n: .name, i: .input}' "$f"
+done > "$RD/audit-calls.jsonl"
+```
+
+Then decode them, so that a newline is a newline and a command is one string to read:
+
+```bash
+jq -r '[.f, .n, (.i | to_entries | map(.value | if type=="string" then . else tojson end) | join(" "))] | join("\t")' "$RD/audit-calls.jsonl" > "$RD/audit-text.txt"
+```
+
+**The patterns come from a file**, because the prompts name them and a host hook may refuse any
+shell command whose text contains one (a dotenv path, say). Write this list with the Write tool
+to `$RD/audit-patterns.txt`, one alternative per line (`grep -E` reads each line as its own
+pattern):
+
+```
+wrangler (deploy|preview|secret|delete|login)
+npm publish
+gh [a-z]+ (create|edit|close|comment|merge|delete)
+(-X|--method) (POST|PATCH|PUT|DELETE)
+git push
+\.dev\.vars
+\.wrangler
+\.npmrc
+\.config/gh
+\.ssh\b
+\.env\b
+\.credentials\.json
+printenv
+/proc/[0-9]+/environ
+mcp__
+api\.cloudflare\.com
+api\.resend\.com
+hooks\.slack\.com
+webhook\.office
+workers\.dev
+WebFetch
+curl[[:space:]]
+wget[[:space:]]
+\bnc[[:space:]]
+```
+
 One grep for the ones a single pass can answer, so that no bullet is left to memory:
 
 ```bash
-grep -nE 'wrangler (deploy|preview|secret|delete|login)|npm publish|gh [a-z]+ (create|edit|close|comment|merge|delete)|(-X|--method) (POST|PATCH|PUT|DELETE)|git push|\.dev\.vars|\.wrangler|\.npmrc|\.config/gh|\.ssh\b|\.env\b|\.credentials\.json|printenv|/proc/[0-9]+/environ|mcp__|api\.cloudflare\.com|api\.resend\.com|hooks\.slack\.com|webhook\.office|workers\.dev|WebFetch|curl |wget |\bnc ' <transcript-dir>/*.jsonl | head -80
+grep -nEf "$RD/audit-patterns.txt" "$RD/audit-text.txt" | head -80
 ```
 
 Every hit must be explained by a lane's brief. A web lane's `WebFetch` of a documentation page is
 expected; anything else is a finding about the sweep.
 
-A second pass for the GitHub-side question, which is expected to print lines:
+A second pass for the GitHub-side question, over the same tool calls, which is expected to print
+lines:
 
 ```bash
-grep -ohE '(gh (api|issue|pr|repo|ruleset|run|search|release|workflow|cache|secret|variable)|git (ls-remote|clone|fetch|push))( [-a-zA-Z0-9@:/{}._]+)*' <transcript-dir>/*.jsonl | sort | uniq -c | sort -rn | head -40
+grep -ohE '(gh (api|issue|pr|repo|ruleset|run|search|release|workflow|cache|secret|variable)|git (ls-remote|clone|fetch|push))( [-a-zA-Z0-9@:/{}._]+)*' "$RD/audit-text.txt" | sort | uniq -c | sort -rn | head -40
 ```
 
 Read it against the `coverage` records of the three lanes with a read list: a call no record
 accounts for, and a record that claims more than the transcripts show, are the two halves of
 one question.
+
+**Record the result** in `$RD/run.json`, under `phases["post-run-audit"]`: `"clean"`, or each hit
+with the lane's brief that explains it, or the finding it is. The next sweep and the owner read
+that, not your memory of the session.
 
 Both are a starting point and not a verdict: the first matches things that are fine and misses
 what it does not name (a store nobody thought of, a command assembled from a shell variable).
@@ -115,7 +173,17 @@ stage that falls back to the default subagent (below) inherits all of it.
 
 - Disconnect any MCP connector this run does not need.
 - Use a `gh` credential that can read this repository's tracker and not write to it. Phase 7 is
-  the only step that needs more, and it happens after the owner names the clusters.
+  the only step that needs more, and it happens after the owner names the clusters. A read-only
+  token in `GH_TOKEN` only shadows a saved login, and any agent can `unset GH_TOKEN` or run `gh auth
+  switch`, so run `gh auth status` to see the saved logins, log each out for the run
+  (`gh auth logout --hostname github.com --user <login>`), and only then export the token.
+- Unload the SSH agent's keys (`ssh-add -D`; `ssh-add -l` should then list none), because GitHub
+  accepts a `git push` from any key in `ssh-agent`, whatever `gh` holds. Your own check, which no
+  agent and not this session makes: that no unencrypted key GitHub accepts sits in `~/.ssh`.
+- If you are logged in to Wrangler (OAuth), run `npx wrangler logout` for the run, because its
+  login reaches the Cloudflare API.
+- If `~/.npmrc` holds a registry token, move it aside for the run; the lanes are told not to read
+  it, and this removes the token rather than relying on that.
 - **Run the sweep with the session in auto mode.** Outside it, every shell command an agent runs
   asks the owner first: several hundred prompts across a run. Auto mode's classifier approves
   the routine read-only commands and still stops the risky ones. Check the mode before
@@ -363,6 +431,10 @@ Then **tell the owner** the scratch directory's path
 repository's AGENTS.md forbids agents from deleting a directory tree.
 
 **Keep the run directory.** It is the comparison the next sweep needs.
+
+**Give back what phase 0 took away,** once the clusters are filed or held: log back in to `gh`
+(`gh auth login`), reload the SSH keys you want (`ssh-add`), log back in to Wrangler if you want it
+(`npx wrangler login`), and move `~/.npmrc` back. Unset the read-only `GH_TOKEN`.
 
 ## Growing the lanes
 
