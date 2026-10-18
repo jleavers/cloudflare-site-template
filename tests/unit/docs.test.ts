@@ -116,4 +116,14 @@ describe('agent-facing documents', () => {
   });
 
   test('the README has no unfilled tokens', () => expect(read('README.md')).not.toMatch(/DEMO_URL/));
+
+  test.each(['README.md', '.claude/skills/new-site/SKILL.md'])('%s puts the CI token in an environment and keeps previews opt-in', (doc) => {
+    const text = read(doc);
+    for (const fragment of ['--env production', 'CI_PREVIEWS']) expect(text, `${doc}: ${fragment}`).toContain(fragment);
+    expect(text).not.toMatch(/(every|each) pull request gets a preview|previews each pull request|a preview for every pull request/i);
+  });
+
+  test('the README gives coding agents a token without workflow permission, never an SSH key', () => {
+    for (const fragment of ['workflow permission', 'SSH key']) expect(read('README.md')).toContain(fragment);
+  });
 });

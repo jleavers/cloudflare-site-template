@@ -213,6 +213,19 @@ them. Then give the person this checklist, filled in with the site's values:
      domain also needs Zone → Workers Routes → Write), or forward the port from the machine with
      the browser: `ssh -L 8976:localhost:8976 <host>`, run `npx wrangler login` in that session
      and open its link locally.
-4. **CI:** `gh secret set CLOUDFLARE_API_TOKEN` and `gh secret set CLOUDFLARE_ACCOUNT_ID`, then
-   push. Every push to `main` deploys; every pull request gets a preview.
+4. **CI:** store the CI token (Workers Scripts → Edit, Account Settings → Read) and the account
+   ID, then push. Every push to `main` deploys.
+   - On a public repository, or a private one on a paid plan: Settings → Environments → create
+     `production`, limited to the `main` branch, then
+     `gh secret set CLOUDFLARE_API_TOKEN --env production` and
+     `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`.
+   - On a private repository on GitHub Free, which has no environment secrets:
+     `gh secret set CLOUDFLARE_API_TOKEN` and `gh secret set CLOUDFLARE_ACCOUNT_ID`. Anyone who
+     can push a workflow change to the repository can then read the token.
+   - Pull-request previews are off until the repository variable `CI_PREVIEWS` is `true`. Turn
+     them on only as the template's README describes
+     (https://github.com/jleavers/cloudflare-site-template#cloudflare-api-token): they need a
+     `preview` environment with required reviewers.
+   - If a coding agent pushes branches for you, give it an HTTPS token without workflow
+     permission, never your SSH key (same README section).
 5. **Check the live form:** send yourself a message from the production site.

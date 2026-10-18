@@ -59,7 +59,7 @@ The output is a working site. Once the template is working and tested, the repos
 | D11 | Recipient email in `site.ts` and in wrangler vars | Only in the wrangler var `CONTACT_TO_EMAIL` | Only the Worker needs it. |
 | D12 | `CLAUDE.md` symlinked to `AGENTS.md` | `CLAUDE.md` is the single line `@AGENTS.md` | Git symlinks break on Windows without Developer Mode. |
 | D13 | Alpine.js optional | No Alpine.js. The mobile menu is `<details>`, and the form script is plain JS. | One dependency fewer, and no client runtime. |
-| D14 | `deploy.yml` | `ci.yml`, with jobs `verify`, `e2e`, `deploy`, `preview`, `preview-cleanup` | It does more than deploy (§10). |
+| D14 | `deploy.yml` | `ci.yml`, with jobs `verify`, `e2e`, `deploy`, `preview-build`, `preview`, `preview-cleanup` | It does more than deploy (§10). |
 | D15 | Org-level GitHub secrets | Per-repo secrets set with `gh secret set` | `jleavers/` is a personal account, which has no account-level Actions secrets. |
 | D16 | API token: Workers Scripts:Edit plus Account Settings:Read | The same token is enough for CI. Each site's first deploy runs locally with `wrangler login`. | This token is enough to create and deploy a workers.dev Worker and to deploy previews (shown by the demo deploy). Only attaching a custom domain needs more (Zone → Workers Routes → Write). Doing that once locally keeps the CI token narrow. |
 | D17 | `public/robots.txt` | `src/pages/robots.txt.ts`, generated from `site.url` | Removes a per-site edit, because the `Sitemap:` line needs the absolute URL. |
@@ -99,7 +99,7 @@ Browser ──► Cloudflare edge
 .claude/skills/security-sweep/SKILL.md  how the owner runs and audits the sweep (§18)
 .claude/workflows/security-sweep.js     the sweep: recon, lanes, refuters, triage, report (§18)
 .github/dependabot.yml             monthly grouped npm and Actions updates (§10)
-.github/workflows/ci.yml           verify · e2e · deploy · preview · preview-cleanup
+.github/workflows/ci.yml           verify · e2e · deploy · preview-build · preview · preview-cleanup
 design/README.md                   where a site's Claude Design handoff goes (committed, never built)
 docs/PRD.md                        original requirements
 docs/images/                       README media (§14.3)
@@ -112,6 +112,7 @@ scripts/
   dev-stack.mjs                    builds with the test site key, then runs `wrangler dev` with test vars (§7.5)
   lighthouse.mjs                   drives Lighthouse 13 in local or CI mode (§11.4)
   test-keys.mjs                    Turnstile's published always-pass test keys
+  trusted-config.mjs               run by CI's token jobs from the trusted ref: refuses a custom build, reads the wrangler pin (§10)
 src/
   assets/                          images processed by <Image>
   components/                      Header Hero Features Testimonials FAQ ContactForm Footer DemoNotice (.astro)
@@ -404,21 +405,36 @@ PR builds set `PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA`, the always-p
 **Supply chain:**
 - Every action is pinned to a full commit SHA, with the version in a trailing comment (`uses: actions/checkout@<sha> # v5.0.0`). A moved or compromised tag then cannot change what runs.
 - Jobs that receive the Cloudflare token use only GitHub's own `actions/*` and Cloudflare's `cloudflare/wrangler-action`.
+- **Those jobs also run no code that the checked-out tree or the lockfile chose.** The boundary is the code executed while the token is present, not only the actions a job `uses:`:
+  - no `npm ci`, build, test or preflight, and no wrangler resolved from the lockfile;
+  - `wrangler.jsonc`, `.nvmrc`, the wrangler version (`package.json` → `devDependencies.wrangler`, an exact `x.y.z` only) and `scripts/trusted-config.mjs` come from the **trusted ref**, through a sparse checkout (`persist-credentials: false`) into a directory of their own: `github.sha` for `deploy`, and the pull request's base commit for the previews, never its head;
+  - `trusted-config.mjs` refuses a `build` key, at the top level or in any `env.*`, because a custom build makes wrangler run a shell command. It also refuses a `__proto__` key, which wrangler's parser would read as an inherited `build`. A unit test applies the same check to the repository's own `wrangler.jsonc` in `npm run verify`;
+  - the site and the Worker bundle come from a tokenless job's artifact, as data. The job copies only `dist/` and `bundle/worker.js` out of it, into a fresh directory under `$RUNNER_TEMP` beside the trusted `wrangler.jsonc`, so nothing else an artifact might carry (a `.env`, a `.npmrc`, a `node_modules`) reaches the directory wrangler runs in;
+  - wrangler-action gets the trusted `wranglerVersion` and `npm_config_ignore_scripts: 'true'`, so its own install of that wrangler runs no install scripts. Every command names `--config wrangler.jsonc`: without it, wrangler looks for a config beside the entry first.
+- **Every job that holds the token runs through an environment** (`production` or `preview`), so that, where the plan allows, the token is an environment secret behind a deployment-branch rule or required reviewers (below).
 - No workflow uses `pull_request_target`.
 - These rules protect every stamped-out site as well, because each one holds a token that can edit every Worker on its account.
+- `tests/unit/ci-workflow.test.ts` holds `ci.yml` to these rules.
 
 | Job | When | Steps |
 |---|---|---|
-| `verify` | Every event except `closed` | `npm ci` → `npm run verify` (check, unit tests, build, dist contracts) |
+| `verify` | Every event except `closed` | `npm ci` → `npm run verify` (check, unit tests, build, dist contracts) → `npm run preflight`. On a push to `main`, then `npx wrangler deploy --dry-run --outdir bundle`, and an upload of `dist/` and `bundle/` as the artifact `site` (one-day retention): the `dist/` that preflight just checked. |
 | `e2e` | Same as `verify` | `npm ci` → `npx playwright install chromium`, adding `--with-deps` when `runner.environment == 'github-hosted'` → `npm run test:e2e` → `npm run lighthouse:ci` |
-| `deploy` | `push` to `main` | Needs `verify` and `e2e`. Detects whether `CLOUDFLARE_API_TOKEN` is set, and if not prints a notice and skips the rest. Then `npm ci` → `npm run build` → `npm run preflight` → `cloudflare/wrangler-action@v4` with `command: deploy`. In this repo, that is what keeps the live demo current (§14.1). |
-| `preview` | PR opened, synchronized or reopened, from a branch in the same repo, with the token set | Needs `verify`. Build with `PUBLIC_TURNSTILE_SITE_KEY` set to the test key → wrangler-action with `command: preview --name pr-<number>` → upsert a single PR comment (marked with a hidden HTML marker) holding the `preview-url` output, using `actions/github-script`. |
-| `preview-cleanup` | PR `closed`, with the token set | wrangler-action with `command: preview delete --name pr-<number>` |
+| `deploy` | `push` to `main` | Needs `verify` and `e2e`. Environment `production`. Detects whether `CLOUDFLARE_API_TOKEN` is set, and if not prints a notice and skips the rest. Then the sparse checkout of `github.sha` → `setup-node` with its `.nvmrc` and `package-manager-cache: false` → `node trusted/scripts/trusted-config.mjs trusted` → download `site` → copy into a fresh directory → `cloudflare/wrangler-action@v4` with `command: deploy bundle/worker.js --no-bundle --config wrangler.jsonc`. In this repo, that is what keeps the live demo current (§14.1). |
+| `preview-build` | PR opened, synchronized or reopened, from a branch in the same repo, into the default branch, with `CI_PREVIEWS` set to `true` | Needs `verify`. No token. `npm ci` → build with `PUBLIC_TURNSTILE_SITE_KEY` set to the test key → `npx wrangler deploy --dry-run --outdir bundle` → upload `dist/` and `bundle/` as the artifact `preview-site`. |
+| `preview` | Same as `preview-build` | Needs `preview-build`. Environment `preview`. The same steps as `deploy`, from the PR's base commit and the `preview-site` artifact, with `command: preview bundle/worker.js --name pr-<number> --config wrangler.jsonc` (`wrangler preview` has no `--no-bundle`: it re-bundles the built entry, which executes none of it) → upsert a single PR comment (marked with a hidden HTML marker) holding the `preview-url` output, using `actions/github-script`. |
+| `preview-cleanup` | PR `closed`, with the same gate | Environment `preview`. The sparse checkout of the PR's base commit → `trusted-config.mjs` → wrangler-action with `command: preview delete --name pr-<number> --config wrangler.jsonc`, from a directory holding only the trusted `wrangler.jsonc`. |
 
-- **Required repo secrets:**
-  - `CLOUDFLARE_API_TOKEN`: Account → Workers Scripts → Edit, and Account → Account Settings → Read. Preview permissions are verified in §16.
-  - `CLOUDFLARE_ACCOUNT_ID`.
-- **Optional repo variable:** `CI_LINUX_RUNNER`.
+**Environments.** A job that names an environment which does not exist still runs: GitHub creates the environment with no protection rules, and a repository secret resolves inside it (checked on a private repository). What an environment can add depends on the plan. For a private repository, Free has no environment secrets, deployment-branch rules or required reviewers; Pro and Team have the first two; Enterprise has all three. A public repository has all three on any plan.
+- **`production`:** the token as an environment secret, with deployment branches limited to `main`, wherever the plan has environment secrets. On a private Free repository the token stays a repository secret, and anyone who can push a workflow change can read it.
+- **`preview`:** the token as an environment secret behind required reviewers, so on a public repository or on Enterprise only. A pull request's run uses that PR's own workflow file, so the reviewer is the gate. Each preview waits for an approval, and so does each deletion of one when its PR closes.
+- **The `CI_PREVIEWS` gate:** `preview-build`, `preview` and `preview-cleanup` run only when the repository variable `CI_PREVIEWS` is `'true'`, whatever the visibility, because an environment that does not exist yet would be created unprotected. They also run only for a PR into the default branch, so the base commit they trust is a commit on that branch. Previews are off by default; a private site previews locally with `npm run preview`.
+
+- **Secrets:** `CLOUDFLARE_API_TOKEN` (Account → Workers Scripts → Edit, and Account → Account Settings → Read; preview permissions are verified in §16) and `CLOUDFLARE_ACCOUNT_ID`. Where they go:
+  - public repository (any plan), or private on Enterprise: environment secrets in `production` (deployment branches: `main`) and, for previews, in `preview` (required reviewers), with no repository-level copies;
+  - private on Pro or Team: environment secrets in `production`, and previews stay off;
+  - private on Free: repository secrets.
+- **Optional repo variables:** `CI_LINUX_RUNNER`, and `CI_PREVIEWS` (`true` turns previews on).
 - **Fork PRs** never see secrets, so they run `verify` and `e2e` only. That is exactly what the public template needs.
 - **Dependabot** (`.github/dependabot.yml`) opens monthly, grouped updates for npm and GitHub Actions, with a 7-day cooldown and TypeScript held below 7. Stamped-out sites inherit it.
 - **Workflow linting:** `actionlint` and `zizmor` run as pre-commit hooks.
@@ -554,10 +570,10 @@ New users who only want to see the template working start with §14.2 instead. T
    2. `npx wrangler secret put TURNSTILE_SECRET_KEY`, and `RESEND_API_KEY` or `WEBHOOK_URL`
    3. `npm run deploy`. This creates the Worker and attaches the custom domain from `routes`, which provisions DNS and TLS.
 6. **Hand over to CI:**
-   1. `gh secret set CLOUDFLARE_API_TOKEN`
-   2. `gh secret set CLOUDFLARE_ACCOUNT_ID`
-   3. Optionally, `gh variable set CI_LINUX_RUNNER` plus a runner registration (see ci-runners).
-   4. Push. CI deploys `main` and builds a preview for each PR.
+   1. `gh secret set CLOUDFLARE_API_TOKEN --env production`, or a repository secret on a private Free repository (§10, "Secrets")
+   2. `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`, likewise
+   3. Optionally, `gh variable set CI_LINUX_RUNNER` plus a runner registration (see ci-runners), and `CI_PREVIEWS` once a `preview` environment with required reviewers holds the token (§10).
+   4. Push. CI deploys `main`; pull-request previews are opt-in.
 
 The "under 5 minutes" target covers steps 1, 5 and 6 for an account where step 4 has already been done once. Step 3 depends on the design.
 
@@ -590,7 +606,7 @@ There are three routes. Each puts the example site live on the user's own worker
    - Cloudflare clones the repo into the user's GitHub account and creates the Worker under a name they choose. It builds and deploys with Workers Builds, using the `build` and `deploy` scripts.
    - The copy's own GitHub Actions run `verify` and `e2e` only, because the copy has no Cloudflare secrets.
    - It requires the repo to be public.
-2. **"Use this template"**, then `gh secret set CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, then push. The `deploy` job does the rest.
+2. **"Use this template"**, then `gh secret set CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (repository secrets, or in a `production` environment where the plan has environment secrets, §10), then push. The `deploy` job does the rest.
 3. **Locally:** `npm ci`, then `npx wrangler login`, then `npm run deploy`.
 
 ### 14.3 README media: `tools/screenshots/`

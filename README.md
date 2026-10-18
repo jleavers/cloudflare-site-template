@@ -6,7 +6,7 @@
 **A Claude Design handoff in, a fast website with a working contact form out.** This template
 turns a design from [Claude Design](https://claude.ai) and a one-page brief into a static site on
 Cloudflare's network: 100 on Lighthouse, no client-side framework, a spam-protected contact form
-that emails you or posts to Slack or Teams, and a preview for every pull request.
+that emails you or posts to Slack or Teams, and optional previews of pull requests.
 
 ![The example site, a fictional garden-design studio called Example Co., shown in a desktop browser window with a cream background, a large serif headline reading "Small gardens, designed to be lived in" and an illustration of green hills under a yellow sun; beside it, the same page on a phone. The content shown is fabricated.](docs/images/hero.png)
 
@@ -34,8 +34,8 @@ that emails you or posts to Slack or Teams, and a preview for every pull request
   when it scrolls into view, then checks a honeypot, the origin, Turnstile and every field before
   delivering through Resend, Slack or Teams. That logic (`src/contact/`) is Web-standard
   TypeScript with no Cloudflare APIs.
-- **CI** checks every change, deploys `main`, and gives every pull request its own preview URL,
-  where the form works and sends nothing.
+- **CI** checks every change and deploys `main`. Once you [turn previews on](#cloudflare-api-token),
+  it also gives each pull request its own preview URL, where the form works and sends nothing.
 - **A Claude Code skill** (`/new-site`) rebuilds the pages from a Claude Design handoff, and then
   holds the result to the template's contracts.
 
@@ -72,7 +72,7 @@ Worker secrets (nothing for Turnstile or email delivery). The form works and sen
    into your GitHub account, builds it and deploys it.
 2. **Use this template** on GitHub, then add two repository secrets and push:
    `gh secret set CLOUDFLARE_API_TOKEN` and `gh secret set CLOUDFLARE_ACCOUNT_ID`
-   ([which token](#cloudflare-api-token)).
+   ([which token, and where it belongs](#cloudflare-api-token)).
 3. **From your machine:** `npm ci`, `npx wrangler login`, `npm run deploy`.
 
 ## Stamp out a site
@@ -95,8 +95,10 @@ You need: a Claude Design handoff (or an archive or artifact link), the facts in
    then `npm run deploy`. Before the first deploy, `secret put` asks whether to create the Worker:
    answer yes, and `npm run deploy` fills it. The deploy attaches your domain, DNS and
    certificate included.
-6. `gh secret set CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, and push. From now on CI
-   deploys `main` and previews each pull request.
+6. Store the CI token and account ID ([where, by plan](#cloudflare-api-token)):
+   `gh secret set CLOUDFLARE_API_TOKEN --env production` and the same for `CLOUDFLARE_ACCOUNT_ID`,
+   or repository secrets on a private Free repository, then push. From now on every push to
+   `main` deploys; pull-request previews are [opt-in](#cloudflare-api-token).
 
 Steps 1, 5 and 6 take under five minutes once step 4 is done. Step 3 depends on the design.
 
@@ -126,6 +128,38 @@ deploy a workers.dev Worker and to deploy previews. Only **attaching a custom do
 (Zone → Workers Routes → Write), which is why that first deploy runs from your machine with
 `wrangler login` (or a token that has it). A token with Workers Scripts → Edit can change **every** Worker on its account,
 so keep the repositories that hold one to yourself.
+
+CI hands the token only to jobs that run no code from the branch or the lockfile: they take
+`wrangler.jsonc` and the wrangler version from `main` (or from a pull request's base) and deploy
+what a job without the token built. Where you store the token decides who else can reach it:
+
+- **Public repository (any plan), or private on GitHub Enterprise:** in Settings → Environments,
+  create an environment `production` whose deployment branches are limited to `main`, and give it
+  the token and account ID as environment secrets:
+  `gh secret set CLOUDFLARE_API_TOKEN --env production` and
+  `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`. For previews, put the same two secrets
+  in an environment `preview` with required reviewers. Then delete the repository-level copies
+  (`gh secret delete CLOUDFLARE_API_TOKEN`, and the same for `CLOUDFLARE_ACCOUNT_ID`).
+- **Private on Pro or Team:** the `production` environment as above. Leave previews off: these
+  plans have no required reviewers for a private repository.
+- **Private on Free:** there are no environment secrets, so the token stays a repository secret
+  (`gh secret set CLOUDFLARE_API_TOKEN`). The deploy still runs: its job names `production`, and
+  the repository secret resolves there (checked on a private repository). **Anyone who can push a
+  workflow change to the repository can read the token.**
+
+**Previews** are off unless you set the repository variable `CI_PREVIEWS` to `true`
+(`gh variable set CI_PREVIEWS --body true`). Do that only once the `preview` environment has
+required reviewers and holds the token, because a pull request's run uses that pull request's own
+workflow file. Each preview then waits for an approval, and so does each deletion of one when
+its pull request closes. Previews don't inherit production secrets; don't add any to the
+Previews base config. A private site previews locally with `npm run preview` (`log` delivery,
+test keys).
+
+**Coding agents:** if an agent can push branches to the repository ([AGENTS.md](AGENTS.md#git-workflow)
+lets it), give it an **HTTPS token without workflow permission**: a fine-grained token with
+Contents and Pull requests read and write and no Workflows permission, or a classic token without
+the `workflow` scope. Don't give it your SSH key. GitHub refuses a workflow change only from a
+token that lacks that permission; an SSH key, yours or a deploy key, can push anything.
 
 ### Deploying from a machine without a browser
 
@@ -168,8 +202,9 @@ dev box or VM. Two ways round it:
 | | `TURNSTILE_FAIL_OPEN` | `true` lets messages through when Turnstile is unreachable (default `false`) |
 | Worker secrets | `TURNSTILE_SECRET_KEY` | always |
 | | `RESEND_API_KEY` or `WEBHOOK_URL` | for the provider |
-| GitHub secrets | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | for CI deploys and previews |
-| GitHub variable | `CI_LINUX_RUNNER` | optional: a self-hosted runner label (private repositories only) |
+| GitHub secrets | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | for CI deploys and previews: in the `production` and `preview` environments, or repository secrets on a private Free repository ([where](#cloudflare-api-token)) |
+| GitHub variables | `CI_LINUX_RUNNER` | optional: a self-hosted runner label (private repositories only) |
+| | `CI_PREVIEWS` | optional: `true` turns on pull-request previews, once the `preview` environment has required reviewers ([why](#cloudflare-api-token)) |
 
 ## Development
 
@@ -189,7 +224,7 @@ Fonts API, so building needs network access, while visitors never contact Google
 `npm run preview` never sends a real message. To try real delivery locally, put the settings in
 a `.dev.vars` file (gitignored) and run `npx wrangler dev` yourself.
 
-**Pull-request previews** use Cloudflare
+**Pull-request previews**, once [turned on](#cloudflare-api-token), use Cloudflare
 [Previews](https://developers.cloudflare.com/workers/previews/): each gets its own URL,
 Turnstile's test keys and `log` delivery, and is deleted when the pull request closes. On a Resend site, `wrangler preview` warns that
 `CONTACT_TO_EMAIL` and `CONTACT_FROM_EMAIL` are configured for production but not for Previews:
