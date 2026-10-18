@@ -658,8 +658,14 @@ The capture tools are Node scripts using Playwright (already a dev dependency), 
 1. Add `LICENSE` with the Apache-2.0 text and `Copyright 2026 James Leavers`, as in `codervis`.
 2. Write the README per §14.3. Include the escape hatches (S3 or Caddy for `dist/`; wrapping `handleContact` in FastAPI or Lambda), and a note that the template code is Apache-2.0 while each site's content belongs to its owner.
 3. Check for personal data: no real emails or keys in the example. `site.ts` and `SITE_BRIEF.md` use example.com.
-4. Before flipping visibility, remove the jl-dev-02 runners and the `CI_LINUX_RUNNER` variable from this repo, and update the ci-runners Deployments table. Confirm that this repo's Cloudflare secrets belong to the demo account (§14.1), not the main one.
+4. Before flipping visibility, remove the jl-dev-02 runners and the `CI_LINUX_RUNNER` variable from this repo, together, and update the ci-runners Deployments table. A `CI_LINUX_RUNNER` that outlives its runners leaves `e2e` queued forever, and `deploy`, which needs `e2e`, never runs. Confirm that this repo's Cloudflare secrets belong to the demo account (§14.1), not the main one.
 4a. Run the security sweep (§18) with `baseline` and then `public`, and fix every critical and high cluster before the flip.
+4b. Move this repo's token to where the README tells every public repository to keep it (§10, "Environments"). Do it before the flip if the plan gives a private repository environment secrets, deployment-branch rules and rulesets (Pro, Team or Enterprise); on GitHub Free, which gives a private one none of them, do it straight after step 5, before anything else merges into `main`.
+   - Limit the `production` environment's deployment branches to `main`. A probe run created it, with no rules.
+   - Set both secrets in it: `gh secret set CLOUDFLARE_API_TOKEN --env production` and `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`.
+   - Delete the repository-level copies: `gh secret delete CLOUDFLARE_API_TOKEN` and `gh secret delete CLOUDFLARE_ACCOUNT_ID`.
+   - Leave `CI_PREVIEWS` unset, unless a `preview` environment with required reviewers holds the token.
+   - Add the ruleset the README describes ("Coding agents"): one approval on `main`, approvals dismissed when new commits are pushed, and no agent's identity on its bypass list.
 5. Set "Template repository" (`gh api -X PATCH repos/jleavers/cloudflare-site-template -F is_template=true`), and make the repo public.
 6. Confirm, after the first public push, that CI is green on GitHub-hosted runners and that the `deploy` job redeployed the live demo.
 7. Upload `social-preview.png` under Settings → General → Social preview.

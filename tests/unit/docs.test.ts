@@ -8,6 +8,11 @@ const scripts = Object.keys(JSON.parse(read('package.json')).scripts as Record<s
 const SKILL_FRONTMATTER = /^---\r?\nname: new-site\r?\ndescription: .+\r?\n---\r?\n/;
 const DOCS = ['AGENTS.md', '.claude/skills/new-site/SKILL.md', 'SITE_BRIEF.md', 'design/README.md', 'README.md'];
 const SPEC = 'docs/superpowers/specs/2026-10-12-cloudflare-site-template-design.md';
+/** Text as it reads: line breaks, and a JSONC comment's leading slashes, become one space. */
+const prose = (text: string) => text.replace(/[ \t]*\n[ \t]*(?:\/\/[ \t]*)?/g, ' ');
+/** The text from one heading to the next one named. */
+const section = (text: string, from: string, to: string) => text.slice(text.indexOf(from), text.indexOf(to, text.indexOf(from)));
+
 
 /** A line's code spans: each opens with a run of backticks and closes at the next run of the same length. */
 function codeSpans(line: string): string[] {
@@ -182,6 +187,13 @@ describe('agent-facing documents', () => {
         });
     },
   );
+
+  test("spec §15 moves this repository's token into the production environment, and its runner variable out with the runners", () => {
+    const release = prose(section(read(SPEC), '## 15.', '## 16.'));
+    for (const fragment of ['deployment branches', 'gh secret set CLOUDFLARE_API_TOKEN --env production', 'gh secret delete CLOUDFLARE_API_TOKEN', 'gh secret delete CLOUDFLARE_ACCOUNT_ID', '`CI_PREVIEWS` unset', 'ruleset', 'queued forever']) {
+      expect(release, fragment).toContain(fragment);
+    }
+  });
 
   test('the code-span reader finds spans of any backtick length', () => {
     expect(codeSpans('| `` ` `` (backtick) | `\\` (backslash) | `a \\|\\| b` |')).toEqual([' ` ', '\\', 'a \\|\\| b']);
