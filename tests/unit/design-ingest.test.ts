@@ -12,6 +12,7 @@ import {
   checkHops,
   checkPath,
   download,
+  fold,
   formatSummary,
   ingest,
   omission,
@@ -399,6 +400,8 @@ describe('refusing the whole bundle', () => {
       ['a long s and an s', ['s.html', '\u017f.html'], /differ only in case or Unicode normalisation/],
       ['the Kelvin sign and a K', ['K.html', '\u212a.html'], /differ only in case or Unicode normalisation/],
       ['ß and ss', ['ss.html', '\u00df.html'], /differ only in case or Unicode normalisation/],
+      // The capital ẞ lower-cases to ß, which upper-cases to SS: a fold that upper-cased first kept them apart.
+      ['ẞ and ß', ['\u1e9e.html', '\u00df.html'], /differ only in case or Unicode normalisation/],
       ['fullwidth and ASCII letters', ['a.html', '\uff41.html'], /differ only in case or Unicode normalisation/],
       ['a name with and without a leading ./', ['./a.html', 'a.html'], /"a\.html" appears twice/],
       ['a name that is both a file and a folder', ['a.html', 'a.html/b.png'], /both a file and a folder/],
@@ -406,6 +409,17 @@ describe('refusing the whole bundle', () => {
   )('%s: %s', (format, _what, names, reason) => {
     refuses(() => inMemory(BUILD[format]!(names.map((name) => ({ name, data: 'x' })))), reason);
   });
+
+  // Duplicates and omissions both compare folded names, so a name folded once must fold to itself:
+  // otherwise two names one fold apart (ẞ and ß) are judged different and both written.
+  test('the fold is idempotent for every code point', () => {
+    const unstable: string[] = [];
+    for (let point = 0; point <= 0x10ffff; point++) {
+      const once = fold(String.fromCodePoint(point));
+      if (fold(once) !== once) unstable.push(`U+${point.toString(16).toUpperCase().padStart(4, '0')}`);
+    }
+    expect(unstable).toEqual([]);
+  }, 30000);
 
   test.each([
     ['a hard link', { type: '1', linkname: 'index.html' }, /hard link/],
@@ -621,12 +635,35 @@ describe('omitting, not writing', () => {
     ['fold4/\uff21\uff27\uff25\uff2e\uff34\uff33.md', /agent instructions/],
     ['AGENTS.override.md', /agent instructions/],
     // Ruling 89, I1: only names safe in a double-quoted shell word are written.
-    ['hero`id`.png', /name has a character a shell treats specially/],
-    ['assets/hero$(touch${IFS}pwned).png', /name has a character a shell treats specially/],
-    ["it's;id;'.png", /name has a character a shell treats specially/],
-    ['a&b!c.png', /name has a character a shell treats specially/],
-    ['-rf.png', /name has a character a shell treats specially/],
-    ['assets-$HOME/logo.png', /name has a character a shell treats specially/],
+    ['hero`id`.png', /name has a character outside the allowed set/],
+    ['assets/hero$(touch${IFS}pwned).png', /name has a character outside the allowed set/],
+    ["it's;id;'.png", /name has a character outside the allowed set/],
+    ['a&b!c.png', /name has a character outside the allowed set/],
+    ['-rf.png', /name has a character outside the allowed set/],
+    ['assets-$HOME/logo.png', /name has a character outside the allowed set/],
+    // Ruling 92: a combining mark is allowed after the first character, but not one that is default-ignorable.
+    ['x\u{FE0F}.png', /name has a character outside the allowed set/],
+    ['x\u{034F}.png', /name has a character outside the allowed set/],
+    ['marks/\u0301x.png', /name has a character outside the allowed set/],
+    // The extension is compared lower-cased, not folded: a fullwidth or long-s extension is not .png or .svg.
+    ['x.\uff30\uff2e\uff27', /"\.\uff50\uff4e\uff47" is not a design file type/],
+    ['x.\u017fvg', /"\.\u017fvg" is not a design file type/],
+    // Tool configurations, which an editor tool looking upward from a file may load and run.
+    ['vite.config.js', /tool configuration/],
+    ['tailwind.config.mjs', /tool configuration/],
+    ['postcss.config.cjs', /tool configuration/],
+    ['vitest.config.ts', /tool configuration/],
+    ['astro.config.mts', /tool configuration/],
+    ['eslint.config.cts', /tool configuration/],
+    ['package.json', /tool configuration/],
+    ['screens/package.json', /tool configuration/],
+    ['tsconfig.json', /tool configuration/],
+    ['tsconfig.app.json', /tool configuration/],
+    ['jsconfig.json', /tool configuration/],
+    ['cfg/vite.config.js/logo.png', /tool configuration/],
+    ['cfg1/Package.JSON', /tool configuration/],
+    ['cfg2/\uff36ite.CONFIG.JS', /tool configuration/],
+    ['cfg3/TSCONFIG.Build.JSON', /tool configuration/],
   ];
 
   test.each(OMITTED)('omission(%s) gives a reason', (name, reason) => {
@@ -640,19 +677,48 @@ describe('omitting, not writing', () => {
     ]),
   )('keeps %s', (name) => expect(omission(['assets', name], 'file')).toBeNull());
 
-  test.each([['hero (1).png'], ['Caf\u00e9 menu.png'], ['a+b,c@2x.png'], ['under_score.png'], ['2x.png'], ['_draft.html']])('keeps the shell-safe name %s', (name) => {
+  test.each([
+    ['hero (1).png'],
+    ['Caf\u00e9 menu.png'],
+    ['a+b,c@2x.png'],
+    ['under_score.png'],
+    ['2x.png'],
+    ['_draft.html'],
+    // Ruling 92: non-initial combining marks, as an NFD (macOS) name and Indic and Thai names hold.
+    ['Cafe\u0301 menu.png'],
+    ['\u0915\u093e\u092e.png'],
+    ['\u0928\u092e\u0938\u094d\u0924\u0947.png'],
+    ['\u0e17\u0e35\u0e48.png'],
+    // Near the tool-configuration names, but none of them.
+    ['config.js'],
+    ['site.config.json'],
+    ['packages.json'],
+    ['my-tsconfig.json'],
+  ])('keeps the allowed name %s', (name) => {
     expect(omission(['assets', name], 'file')).toBeNull();
   });
 
-  test('a folder with a character a shell treats specially omits everything under it', () => {
-    expect(omission(['a&b'], 'dir')).toMatch(/name has a character a shell treats specially/);
-    expect(omission(['a&b', 'logo.png'], 'file')).toMatch(/name has a character a shell treats specially/);
+  test('a folder with a character outside the allowed set omits everything under it', () => {
+    expect(omission(['a&b'], 'dir')).toMatch(/name has a character outside the allowed set/);
+    expect(omission(['a&b', 'logo.png'], 'file')).toMatch(/name has a character outside the allowed set/);
+  });
+
+  // A variation selector or a combining grapheme joiner renders as nothing, so a name holding one would print as another name.
+  test('an omission shows a default-ignorable character escaped', () => {
+    expect(omission(['x\u{FE0F}.png'], 'file')).toContain('"x\\ufe0f.png"');
+    expect(omission(['x\u{034F}.png'], 'file')).toContain('"x\\u034f.png"');
+    expect(formatSummary({ from: 'design/h.zip', dirs: [], files: ['a.html'], bytes: 1, omitted: [{ name: 'x\u{034F}.png', reason: 'r' }] })).toContain('"x\\u034f.png": r');
+  });
+
+  test('the omission reason names the allowed set', () => {
+    expect(omission(['a&b.png'], 'file')).toContain('name has a character outside the allowed set (letters, digits, combining marks, space and . _ ( ) + , @ -)');
   });
 
   test('a folder is omitted only for its name, not for a file type', () => {
     expect(omission(['assets'], 'dir')).toBeNull();
     expect(omission(['.git'], 'dir')).toMatch(/starts with a dot/);
     expect(omission(['CLAUDE.md'], 'dir')).toMatch(/agent instructions/);
+    expect(omission(['package.json'], 'dir')).toMatch(/tool configuration/);
   });
 
   test.each(FORMATS)('%s: each is reported, and only the design file is kept', (_format, build) => {
@@ -847,6 +913,17 @@ describe('archive shapes common tools write', () => {
     expect(summary.files).toEqual(['index.html', 'screens/home.html']);
     expect(summary.dirs).toEqual(['screens']);
     expect(summary.omitted).toEqual([]);
+  });
+
+  // Ruling 92: macOS names files in NFD, and its Archive Utility writes a zip without the UTF-8 flag.
+  test('zip: an NFD name, as macOS writes it, is admitted and written as it came', async () => {
+    const { cwd, design, bundle } = workspace();
+    const name = 'Cafe\u0301 menu.png';
+    writeFileSync(join(design, 'h.zip'), zip([{ name, data: 'x', utf8: false }]));
+    const summary = await ingest({ archive: 'design/h.zip' }, { cwd });
+    expect(summary.files).toEqual([name]);
+    expect(summary.omitted).toEqual([]);
+    expect(readdirSync(bundle)).toEqual([name]);
   });
 
   test('tar.gz: a root entry named "." is skipped too', () => {

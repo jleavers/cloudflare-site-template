@@ -43,22 +43,33 @@ export const HANDOFF_HOST = 'api.anthropic.com';
 
 /** Agent-instruction file names, compared lower-cased; so is the `.mdc` suffix. */
 const INSTRUCTIONS = new Set(['claude.md', 'claude.local.md', 'agents.md', 'agents.override.md', 'agent.md', 'skill.md', 'gemini.md', 'copilot-instructions.md']);
-/** The file types a design is made of, compared lower-cased. */
+/**
+ * Tool configurations, compared folded: an editor or build tool that looks upward from a file for
+ * its nearest config may load one of these, and a JavaScript config runs as code.
+ */
+const TOOL_CONFIG = /\.config\.[cm]?[jt]s$|^package\.json$|^tsconfig.*\.json$|^jsconfig\.json$/;
+/** The file types a design is made of, compared lower-cased (not folded: `.ＰＮＧ` is not `.png`). */
 const DESIGN_TYPES = new Set(['.html', '.htm', '.css', '.js', '.mjs', '.jsx', '.ts', '.tsx', '.json', '.md', '.txt', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.ico', '.woff', '.woff2', '.ttf', '.otf']);
 /** Device names Windows reserves in any folder, with any extension (superscript digits included). */
 const WINDOWS_DEVICE = /^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]) *(?:\..*)?$/i;
 /**
- * The only segments written: letters, digits, space and `. _ ( ) + , @ -`, starting with a letter,
- * a digit or `_`. Such a name is safe inside double quotes in a POSIX shell or PowerShell, so a
- * later step may use a path from design/bundle/ in a command (Ruling 89).
+ * The only segments written: letters, digits, combining marks, space and `. _ ( ) + , @ -`,
+ * starting with a letter, a digit or `_`. A combining mark (Mn, Mc) may follow any first character,
+ * as in an NFD name from macOS or an Indic or Thai name, but not one that is default-ignorable (a
+ * variation selector, the combining grapheme joiner), which renders as nothing. Such a name is safe
+ * inside double quotes in a POSIX shell or PowerShell, so a later step may use a path from
+ * design/bundle/ in a command (Rulings 89 and 92).
  */
-const SHELL_SAFE = /^[\p{L}\p{N}_][\p{L}\p{N} ._()+,@-]*$/u;
+const ALLOWED_NAME = /^[\p{L}\p{N}_](?:[\p{L}\p{N} ._()+,@-]|(?!\p{Default_Ignorable_Code_Point})[\p{Mn}\p{Mc}])*$/u;
+const ALLOWED_SET = 'letters, digits, combining marks, space and . _ ( ) + , @ -';
 /**
  * A name folded as case-insensitive and normalising filesystems fold it, or more strictly: NFKC,
- * then upper- and lower-cased, so `ſ` is `s`, `ﬆ` is `st`, the Kelvin sign is `k`, fullwidth
- * letters are ASCII and `ß` is `ss`. Used for agent-instruction names, file types and duplicates.
+ * then lower-, upper- and lower-cased, so `ſ` is `s`, `ﬆ` is `st`, the Kelvin sign is `k`,
+ * fullwidth letters are ASCII, and `ß` and `ẞ` are both `ss`. The first lower-casing takes `ẞ` to
+ * `ß`, which the upper-casing then takes to `SS`, so a folded name folds to itself. Used for
+ * agent-instruction and tool-configuration names, and duplicates.
  */
-const fold = (/** @type {string} */ name) => name.normalize('NFKC').toUpperCase().toLowerCase();
+export const fold = (/** @type {string} */ name) => name.normalize('NFKC').toLowerCase().toUpperCase().toLowerCase();
 /** A host name of letters, digits and hyphens, whose last label starts with a letter: no IP address, and nothing a shell reads specially. */
 const DNS_NAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -105,11 +116,15 @@ function refuse(reason) {
 /** @param {Partial<Limits>} [limits] @returns {Limits} */
 const withLimits = (limits) => ({ ...LIMITS, ...limits });
 
-/** What JSON.stringify leaves raw but a terminal may act on or render invisibly: DEL, C1 controls, format characters and separators. */
-const INVISIBLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+/**
+ * What JSON.stringify leaves raw but a terminal may act on or render invisibly: DEL, C1 controls,
+ * format characters, separators, and default-ignorable characters (a variation selector, the
+ * combining grapheme joiner), so two names that differ only by one never print alike.
+ */
+const INVISIBLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
 /** A code point as U+XXXX. */
 const codePoint = (/** @type {string} */ character) => `U+${(character.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}`;
-/** A name as JSON, every control, format or separator character escaped, so none reaches a terminal raw; a long one is cut short. */
+/** A name as JSON, every control, format, separator or default-ignorable character escaped, so none reaches a terminal raw; a long one is cut short. */
 const show = (/** @type {string} */ name) =>
   JSON.stringify(name.length > 120 ? `${name.slice(0, 120)}…` : name).replace(INVISIBLE, (character) => {
     const point = character.codePointAt(0) ?? 0;
@@ -759,8 +774,9 @@ export function checkPath(name, limits) {
 
 /**
  * Why an entry that passed checkPath is not written, or null to write it: a segment that starts
- * with a dot, a segment that names agent instructions (both compared folded), a segment with a
- * character a shell treats specially, or a file that is not a design file type.
+ * with a dot, a segment that names agent instructions or a tool configuration (all compared
+ * folded), a segment with a character outside the allowed set, or a file that is not a design file
+ * type (its extension compared lower-cased).
  *
  * @param {string[]} segments
  * @param {'file' | 'dir'} kind
@@ -773,24 +789,27 @@ export function omission(segments, kind) {
   for (const segment of segments) {
     const folded = fold(segment);
     if (INSTRUCTIONS.has(folded) || folded.endsWith('.mdc')) return `${show(segment)} names agent instructions, which are never written`;
+    if (TOOL_CONFIG.test(folded)) {
+      return `${show(segment)} is a tool configuration (*.config.js and the like, package.json, tsconfig*.json or jsconfig.json), which an editor tool looking upward from a file may load and run, so it is never written`;
+    }
   }
   for (const segment of segments) {
-    if (!SHELL_SAFE.test(segment)) {
-      return `name has a character a shell treats specially: ${show(segment)} (only letters, digits, spaces and . _ ( ) + , @ - are written, and a name starts with a letter, a digit or _)`;
+    if (!ALLOWED_NAME.test(segment)) {
+      return `name has a character outside the allowed set (${ALLOWED_SET}): ${show(segment)} (and a name starts with a letter, a digit or _)`;
     }
   }
   if (kind === 'dir') return null;
   const last = segments[segments.length - 1] ?? '';
   const dot = last.lastIndexOf('.');
   if (dot <= 0) return 'it has no file extension, so it is not a design file type';
-  const extension = fold(last.slice(dot));
+  const extension = last.slice(dot).toLowerCase();
   return DESIGN_TYPES.has(extension) ? null : `${show(extension)} is not a design file type`;
 }
 
 /**
  * Checks every entry, and decides what to write. One leading `./` on a name is stripped first, and
  * a `.` root folder is skipped. Refuses a bad path, two names that are equal once folded
- * (NFKC, then upper- and lower-cased), a name that is both a file and a folder, more files
+ * (NFKC, then lower-, upper- and lower-cased), a name that is both a file and a folder, more files
  * and folders (those a path implies included) than the cap, or nothing to write.
  *
  * @param {Entry[]} entries

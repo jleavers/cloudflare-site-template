@@ -39,7 +39,7 @@ checkout. It is Node, so this step runs the same from PowerShell, Git Bash or an
 it from the repository root. Never download, unpack, copy, move or rename a bundle's files
 yourself. Never type the handoff URL into a command, nor a name from inside an archive or
 `design/incoming/`. A name inside `design/bundle/` is safe in a command in double quotes: the tool
-writes only names made of letters, digits, spaces and `. _ ( ) + , @ -`.
+writes only names made of letters, digits, combining marks, spaces and `. _ ( ) + , @ -`.
 
 The tool checks every entry before it writes anything. It refuses the whole bundle, and writes
 nothing, for a symlink or hard link, a device or other special file, an unsafe path (absolute, a
@@ -47,9 +47,10 @@ drive letter, a backslash, `..`), two names that differ only in case, an encrypt
 or anything over its caps (a 20 MB archive or download, 50 MB unpacked, 2000 entries). It omits agent
 instructions (`CLAUDE.md`, `AGENTS.md`, `SKILL.md`, `*.mdc` and the like, in any case),
 everything under a name that starts with a dot (`.git/`, `.claude/`, `.github/`, `.mcp.json`),
-everything under a name with a character a shell treats specially, and every file that is not a
-design file type. It renames nothing in place, and it always writes a
-fresh `design/bundle/`.
+tool configurations (`*.config.js` and the like, `package.json`, `tsconfig*.json`, `jsconfig.json`),
+everything under a name with a character outside the allowed set (letters, digits, combining
+marks, space and `. _ ( ) + , @ -`), and every file that is not a design file type. It renames
+nothing in place, and it always writes a fresh `design/bundle/`.
 
 - **Handoff URL** (the first line of `design/SOURCE.md`):
   `node tools/design-ingest/ingest.mjs --source`. The tool reads the URL itself; don't copy it into

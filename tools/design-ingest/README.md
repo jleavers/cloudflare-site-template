@@ -24,8 +24,8 @@ refused, with a reason naming the entry, for:
 - an absolute path, a drive letter, a backslash, a `.`, `..` or empty segment, a control
   character, a format or line-separator character (a bidi override, a zero-width or tag
   character), invalid UTF-8, or a name Windows reserves or cannot hold;
-- two names equal once folded (NFKC, then upper- and lower-cased, so `ſ` is `s`, `ß` is `ss` and
-  fullwidth letters are ASCII), or a name that is both a file and a folder;
+- two names equal once folded (NFKC, then lower-, upper- and lower-cased, so `ſ` is `s`, `ß` and
+  `ẞ` are both `ss` and fullwidth letters are ASCII), or a name that is both a file and a folder;
 - in a zip: encryption, a method other than stored or deflate, zip64, more than one disk, a local
   header or data descriptor that disagrees with the central directory, overlapping entries, or a
   CRC or size mismatch (every name is read as strict UTF-8, whatever its UTF-8 flag says);
@@ -37,12 +37,15 @@ refused, with a reason naming the entry, for:
 
 These entries are **omitted**, and listed in the output with the reason: anything under a name that
 starts with a dot (`.git`, `.claude`, `.github`, `.mcp.json`, …); agent instructions (`CLAUDE.md`,
-`AGENTS.md`, `AGENTS.override.md`, `SKILL.md`, `*.mdc` and the like, compared folded); anything
-under a name with a character a shell treats specially (only letters, digits, spaces and
-`. _ ( ) + , @ -` are written, and a name starts with a letter, a digit or `_`, so a path inside
-`design/bundle/` is safe in a command in double quotes); and any file that is not one of
-`.html .htm .css .js .mjs .jsx .ts .tsx .json .md .txt .svg .png .jpg .jpeg .gif .webp .avif .ico
-.woff .woff2 .ttf .otf`.
+`AGENTS.md`, `AGENTS.override.md`, `SKILL.md`, `*.mdc` and the like, compared folded); tool
+configurations (`*.config.js`, `.mjs`, `.cjs`, `.ts`, `.mts` or `.cts`, `package.json`,
+`tsconfig*.json` and `jsconfig.json`, compared folded), which an editor tool looking upward from a
+file may load and run; anything under a name with a character outside the allowed set (letters,
+digits, combining marks, space and `. _ ( ) + , @ -`; a name starts with a letter, a digit or `_`,
+and a combining mark that is default-ignorable, such as a variation selector, is not allowed), so a
+path inside `design/bundle/` is safe in a command in double quotes; and any file whose extension,
+lower-cased, is not one of `.html .htm .css .js .mjs .jsx .ts .tsx .json .md .txt .svg .png .jpg
+.jpeg .gif .webp .avif .ico .woff .woff2 .ttf .otf`.
 
 **The output is always a fresh `design/bundle/`.** The tool refuses if it exists in any form, and
 writes files `0644` with nothing taken from the archive's modes or owners. A refusal exits 1 and

@@ -106,6 +106,10 @@ describe('agent-facing documents', () => {
     // The URL is never typed; names inside design/bundle/ are, in double quotes, which the tool's name rule makes safe (Ruling 89).
     expect(prose(step2)).toContain('Never type the handoff URL into a command');
     expect(prose(step2)).toContain('safe in a command in double quotes');
+    // The omission reason names the allowed set, combining marks included (Ruling 92), and the tool omits tool configurations.
+    expect(prose(step2)).toContain('a character outside the allowed set (letters, digits, combining marks, space and `. _ ( ) + , @ -`)');
+    expect(prose(step2)).toContain('`package.json`');
+    expect(step2).not.toContain('a shell treats specially');
     expect(prose(section(skill, '## 6.', '## 7.'))).toContain('in double quotes');
     expect(read('design/README.md')).toMatch(/50 MB/);
     expect(read('.gitignore').split(/\r?\n/)).toContain('design/incoming/');
