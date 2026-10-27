@@ -287,11 +287,22 @@ lockfile says, whatever its age). The setting needs npm 11.10 or later: Node 22'
 (10.x) doesn't know it and ignores it (silently: npm 10.9.9 printed no warning, and installed the newest versions), so on
 Node 22 run `npm install -g npm@11`, or use Node 24 (`.nvmrc`). Other npm 10 releases may warn
 about an unknown config key; the floor is still not applied. CI's token jobs apply the same floor
-to wrangler-action's install (design spec §10). `tests/unit/supply-chain.test.ts`, part of
-`npm run verify`, checks that every lockfile entry is the registry tarball for its own name and
-version with sha512 integrity, that only `esbuild`, `fsevents` and `workerd` run install scripts
-(a new one needs the owner's approval), that every pre-commit `rev` is a commit SHA, and that the
-`.npmrc` floor equals the Dependabot cooldown.
+to wrangler-action's install (design spec §10).
+
+**npm runs no install scripts in this repository.** `.npmrc` sets `ignore-scripts=true`, so no
+`npm ci` or `npm install`, in CI or on your machine, runs a package's lifecycle scripts, nor the
+`node-gyp` build npm infers from a package's `binding.gyp` (which the lockfile does not always
+flag). Nothing here needs them: esbuild, workerd and sharp take their binaries from per-platform
+packages, and fsevents (macOS only) ships its own, so no package is rebuilt with its scripts on.
+`npm run <script>` still runs that script, but never a `pre` or `post` hook of it.
+
+`tests/unit/supply-chain.test.ts`, part of `npm run verify`, checks that every lockfile entry is
+the registry tarball for its own name and version with sha512 integrity; that `.npmrc` keeps
+`ignore-scripts=true`, that no command in the workflows, `package.json`, this README, AGENTS.md or
+the skills turns install scripts back on, and that `package.json` has no hook script for npm to
+skip; that only `esbuild`, `fsevents` and `workerd` declare install scripts (an early warning: none
+of them runs, but a new one needs the owner's approval); that every pre-commit `rev` is a commit
+SHA; and that the `.npmrc` floor equals the Dependabot cooldown.
 `tests/unit/ci-workflow.test.ts` pins each job that holds the token whole, each action's commit SHA
 included, so Dependabot's monthly Actions update fails `verify` when it moves one of those actions:
 look at the new commit, then move its SHA in the test's `TOKEN_ACTIONS` in the same pull request.

@@ -57,6 +57,9 @@ change that needs one of those tests weakened is the wrong change.
 ## Rules
 
 - **No unapproved dependencies.** Ask before adding any package, and never one C3 forbids.
+- **npm runs no install scripts here.** `.npmrc` sets `ignore-scripts=true`. Never turn scripts
+  back on, with a flag or an environment variable, and add no `pre` or `post` hook script: npm
+  would skip it (`tests/unit/supply-chain.test.ts` checks all three).
 - **Read tokens and facts, don't restate them.** A colour in a component is a bug; so is the
   site name typed into a page.
 - **Enabling Cloudflare Web Analytics** means setting `site.analytics.cloudflareToken` *and*

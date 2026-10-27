@@ -1,8 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 
 const read = (path: string) => readFileSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)), 'utf8');
+const exists = (path: string) => existsSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)));
 
 // ---------------------------------------------------------------------------------------------
 // Admission: upstream code is installed or run only on an immutable pin that this file verifies,
@@ -148,8 +149,158 @@ describe('a. every lockfile entry is bound to its own registry tarball', () => {
   });
 });
 
-describe('b. install scripts are on an allow-list', () => {
-  // A new entry needs the owner's approval (AGENTS.md "No unapproved dependencies").
+describe('b. npm runs no install scripts in this repository', () => {
+  // .npmrc's `ignore-scripts=true` is the enforcement. With it, every `npm ci` and `npm install`
+  // this repository prescribes (CI's verify, e2e and preview-build, and the owner's machine) runs
+  // no package's lifecycle scripts, nor the `node-gyp rebuild` npm infers from a root binding.gyp.
+  // The lockfile cannot be the gate: npm writes no hasInstallScript for a package that ships a
+  // binding.gyp and declares "gypfile": false, and `npm ci` builds it anyway (sweep cluster 3).
+  // A command-line flag or an npm_config_ environment variable outranks .npmrc, so no command the
+  // repository prescribes may turn scripts back on.
+
+  /** Problems unless .npmrc's last `ignore-scripts` setting, outside any [section], is exactly `true`. */
+  function npmrcProblems(npmrc: string): string[] {
+    const lines = npmrc.split(/\r?\n/);
+    const problems: string[] = [];
+    if (lines.some((line) => /^\s*\[/.test(line))) problems.push('.npmrc has a [section], which would scope the settings under it');
+    const values = lines.flatMap((line) => /^\s*ignore-scripts\s*=\s*(.*?)\s*$/.exec(line)?.[1] ?? []);
+    if (values.length === 0) problems.push('.npmrc does not set ignore-scripts');
+    else if (values.at(-1) !== 'true') problems.push(`.npmrc sets ignore-scripts=${values.at(-1)}`);
+    return problems;
+  }
+
+  // A package that truly needs its install script would be rebuilt by name where it is installed,
+  // with scripts on for that package only, and named here with the owner's approval. None does.
+  const REBUILDS: string[] = [];
+
+  const unquote = (value: string) => value.replace(/^['"]+|['"]+$/g, '');
+
+  /** Problems with prescribed commands: anything that turns install scripts back on, or rebuilds every package. */
+  function overrideProblems(where: string, text: string, rebuilds: string[] = REBUILDS): string[] {
+    const problems: string[] = [];
+    text.split(/\r?\n/).forEach((line, i) => {
+      const at = `${where}:${i + 1}`;
+      let rebuildByName = false;
+      for (const match of line.matchAll(/\bnpm\s+(?:rebuild|rb)\b([^;&|`)]*)/g)) {
+        const names = match[1]!.trim().split(/\s+/).filter((word) => word && !word.startsWith('-'));
+        const others = names.filter((name) => !rebuilds.includes(name));
+        if (names.length === 0) problems.push(`${at}: a rebuild with no package list rebuilds every package`);
+        else if (others.length > 0) problems.push(`${at}: a rebuild of ${others.join(', ')}, which is not on the allow-list`);
+        else rebuildByName = true;
+      }
+      for (const match of line.matchAll(/--(no-)?ignore-scripts\b(?:=([^\s`;,)&|]*)|\s+(true|false)\b)?/g)) {
+        const value = match[1] ? 'false' : unquote(match[2] ?? match[3] ?? 'true');
+        if (value !== 'true' && !rebuildByName) problems.push(`${at}: ${match[0]}`);
+      }
+      for (const match of line.matchAll(/npm_config_ignore[-_]scripts\b['"]?\s*[:=]\s*([^\s`;,)&|]*)/gi)) {
+        if (unquote(match[1]!) !== 'true') problems.push(`${at}: ${match[0]}`);
+      }
+      for (const match of line.matchAll(/\bnpm\s+(?:config\s+)?set\b[^;&|`]*?\bignore-scripts(?:\s*=\s*|\s+)([^\s`;,)&|]*)/g)) {
+        if (unquote(match[1]!) !== 'true') problems.push(`${at}: ${match[0]}`);
+      }
+    });
+    return problems;
+  }
+
+  // npm's own events: a script named pre<event> or post<event> runs around one.
+  const EVENTS = ['install', 'uninstall', 'prepare', 'pack', 'publish', 'publishOnly', 'version', 'shrinkwrap', 'dependencies', 'test', 'start', 'stop', 'restart'];
+  // What npm runs of the project's own scripts when it installs the project.
+  const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall', 'prepublish', 'preprepare', 'prepare', 'postprepare', 'dependencies'];
+
+  /**
+   * Problems with package.json's scripts: a hook that ignore-scripts would silently skip, since
+   * `npm run x` still runs `x` but no `prex` or `postx`. `preview` and `preflight` are not hooks:
+   * there is no `view` or `flight`.
+   */
+  function hookProblems(scripts: Record<string, string>): string[] {
+    const problems: string[] = [];
+    for (const name of Object.keys(scripts)) {
+      const hook = /^(pre|post)(.+)$/.exec(name);
+      if (INSTALL_SCRIPTS.includes(name)) problems.push(`${name}: npm runs it on install, and ignore-scripts skips it`);
+      else if (hook && (Object.hasOwn(scripts, hook[2]!) || EVENTS.includes(hook[2]!))) problems.push(`${name}: a ${hook[1]} hook of ${hook[2]}, which ignore-scripts skips`);
+    }
+    return problems;
+  }
+
+  const workflows = readdirSync(fileURLToPath(new URL('../../.github/workflows/', import.meta.url))).filter((file) => /\.ya?ml$/.test(file));
+  const DOCS = ['README.md', 'AGENTS.md', '.claude/skills/new-site/SKILL.md', '.claude/skills/security-sweep/SKILL.md'];
+  const scripts = (JSON.parse(read('package.json')) as { scripts: Record<string, string> }).scripts;
+
+  test('.npmrc sets ignore-scripts=true', () => {
+    expect(npmrcProblems(read('.npmrc'))).toEqual([]);
+  });
+
+  test('no workflow, package.json script or doc turns install scripts back on, or rebuilds every package', () => {
+    expect(workflows).toContain('ci.yml');
+    const problems = [
+      ...workflows.flatMap((file) => overrideProblems(`.github/workflows/${file}`, read(`.github/workflows/${file}`))),
+      ...Object.entries(scripts).flatMap(([name, command]) => overrideProblems(`package.json scripts.${name}`, command)),
+      ...DOCS.filter(exists).flatMap((doc) => overrideProblems(doc, read(doc))),
+    ];
+    expect(problems).toEqual([]);
+  });
+
+  test('package.json has no install, pre or post script for ignore-scripts to skip', () => {
+    expect(hookProblems(scripts)).toEqual([]);
+  });
+
+  test('refuses an .npmrc without the setting, with it off, overridden later, commented out or under a section', () => {
+    expect(npmrcProblems('save-exact=true\nignore-scripts=true\n')).toEqual([]);
+    expect(npmrcProblems('save-exact=true\n')).toEqual(['.npmrc does not set ignore-scripts']);
+    expect(npmrcProblems('ignore-scripts=false\n')).toEqual(['.npmrc sets ignore-scripts=false']);
+    expect(npmrcProblems('ignore-scripts=true\nignore-scripts = false\n')).toEqual(['.npmrc sets ignore-scripts=false']);
+    expect(npmrcProblems('# ignore-scripts=true\n')).toEqual(['.npmrc does not set ignore-scripts']);
+    expect(npmrcProblems('[x]\nignore-scripts=true\n')).toHaveLength(1);
+  });
+
+  test('refuses every way a command turns install scripts back on', () => {
+    for (const ok of [
+      'npm ci',
+      'npm ci --ignore-scripts --userconfig <empty file>',
+      'npm ci --ignore-scripts=true',
+      "          npm_config_ignore_scripts: 'true'",
+      'turn them on with `npm_config_ignore_scripts`, and they run',
+      'npm config set save-exact true',
+    ]) {
+      expect(overrideProblems('x', ok), ok).toEqual([]);
+    }
+    for (const bad of [
+      'npm ci --ignore-scripts=false',
+      "npm install --ignore-scripts='false'",
+      'npm ci --ignore-scripts false',
+      'npm install --no-ignore-scripts',
+      "          npm_config_ignore_scripts: 'false'",
+      '          NPM_CONFIG_IGNORE_SCRIPTS: 0',
+      'npm_config_ignore_scripts= npm ci',
+      "$env:npm_config_ignore_scripts = 'false'",
+      'echo "npm_config_ignore-scripts=false" >> "$GITHUB_ENV"',
+      'npm config set ignore-scripts false',
+      'npm set ignore-scripts=false --location=project',
+      'npm rebuild',
+      'npm ci && npm rb && npm test',
+      'npm rebuild esbuild --ignore-scripts=false',
+    ]) {
+      expect(overrideProblems('x', bad), bad).not.toEqual([]);
+    }
+    // The one allowed shape: by name, for packages on the allow-list.
+    expect(overrideProblems('x', 'npm rebuild esbuild --ignore-scripts=false', ['esbuild'])).toEqual([]);
+    expect(overrideProblems('x', 'npm rebuild esbuild sharp --ignore-scripts=false', ['esbuild'])).not.toEqual([]);
+    expect(overrideProblems('x', 'npm ci --ignore-scripts=false', ['esbuild'])).toHaveLength(1);
+  });
+
+  test('refuses a pre or post hook of a script or an npm event, and a script npm runs on install', () => {
+    expect(hookProblems({ preview: 'x', preflight: 'x', verify: 'x', 'test:e2e': 'x' })).toEqual([]);
+    for (const name of ['preverify', 'postverify', 'pretest', 'postpack', 'prepublishOnly', 'preinstall', 'install', 'postinstall', 'prepare', 'dependencies']) {
+      expect(hookProblems({ verify: 'x', [name]: 'x' }), name).toHaveLength(1);
+    }
+  });
+});
+
+describe('b2. install scripts are on an allow-list (an early warning)', () => {
+  // Under ignore-scripts none of these runs. The list still flags a new package that declares
+  // install-time code, so a dependency update that adds one is looked at, and needs the owner's
+  // approval (AGENTS.md "No unapproved dependencies"). It cannot see a binding.gyp package whose
+  // manifest says "gypfile": false, which is why b, not this, is the gate.
   const ALLOWED = ['esbuild', 'fsevents', 'workerd'];
 
   /** Problems when the packages with install scripts are not exactly the allow-list. */
