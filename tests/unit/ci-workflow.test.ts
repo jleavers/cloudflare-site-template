@@ -249,6 +249,18 @@ const COPY_SITE = [
   'cp trusted/wrangler.jsonc "$RUNNER_TEMP/site/wrangler.jsonc"',
 ].join('\n');
 const COPY_CONFIG = ['mkdir -p "$RUNNER_TEMP/site"', 'cp trusted/wrangler.jsonc "$RUNNER_TEMP/site/wrangler.jsonc"'].join('\n');
+// The preview job copies no config: wrangler bundles the worker.js it is given unless its config
+// says no_bundle, and its bundler follows an import in that file to any file on the runner (sweep
+// 20261027T190359Z, cluster 1). trusted-config.mjs writes the config from the trusted one, and the
+// job stops unless the file is there, never falling back to a copy.
+const COPY_PREVIEW_SITE = [
+  'mkdir -p "$RUNNER_TEMP/site/bundle"',
+  'cp -R "$RUNNER_TEMP/artifact/dist" "$RUNNER_TEMP/site/dist"',
+  'cp "$RUNNER_TEMP/artifact/bundle/worker.js" "$RUNNER_TEMP/site/bundle/worker.js"',
+].join('\n');
+const PREVIEW_CONFIG_FILE = 'wrangler.json';
+const WRITE_PREVIEW_CONFIG = `node trusted/scripts/trusted-config.mjs --preview-config trusted "$RUNNER_TEMP/site/${PREVIEW_CONFIG_FILE}"`;
+const PREVIEW_CONFIG_CHECK = `test -f "$RUNNER_TEMP/site/${PREVIEW_CONFIG_FILE}" || { echo "::error::trusted-config.mjs wrote no preview config"; exit 1; }`;
 // An empty artifact-ids makes download-artifact take every artifact in the run, so the ID must be
 // one number: non-empty, with nothing left once its digits are removed.
 const ID_CHECK =
@@ -270,25 +282,32 @@ const STEP_ENV = ['WRANGLER_VERSION', 'ARTIFACT_ID', 'PREVIEW_URL', 'npm_config_
 const ARTIFACT_ID = '${{ steps.upload.outputs.artifact-id }}';
 
 // The jobs that hold the token: the environment each runs through, the ref it trusts, the job whose
-// artifact it deploys, and its one wrangler command.
+// artifact it deploys, its one wrangler command, the scripts of its own that put the site and its
+// config in place, and the files those scripts copy.
 const TOKEN_JOBS = {
   'ci.yml:deploy': {
     environment: 'production',
     ref: '${{ github.sha }}',
     builder: 'verify',
     command: 'deploy bundle/worker.js --no-bundle --config wrangler.jsonc',
+    scripts: [ID_CHECK, COPY_SITE],
+    copies: ['"$RUNNER_TEMP/artifact/bundle/worker.js"', '"$RUNNER_TEMP/artifact/dist"', 'trusted/wrangler.jsonc'],
   },
   'ci.yml:preview': {
     environment: 'preview',
     ref: 'refs/heads/${{ github.event.repository.default_branch }}',
     builder: 'preview-build',
-    command: 'preview bundle/worker.js --name pr-${{ github.event.pull_request.number }} --config wrangler.jsonc',
+    command: `preview bundle/worker.js --name pr-\${{ github.event.pull_request.number }} --config ${PREVIEW_CONFIG_FILE}`,
+    scripts: [ID_CHECK, COPY_PREVIEW_SITE, WRITE_PREVIEW_CONFIG, PREVIEW_CONFIG_CHECK],
+    copies: ['"$RUNNER_TEMP/artifact/bundle/worker.js"', '"$RUNNER_TEMP/artifact/dist"'],
   },
   'ci.yml:preview-cleanup': {
     environment: 'preview',
     ref: 'refs/heads/${{ github.event.repository.default_branch }}',
     builder: undefined,
     command: 'preview delete --name pr-${{ github.event.pull_request.number }} --config wrangler.jsonc',
+    scripts: [COPY_CONFIG],
+    copies: ['trusted/wrangler.jsonc'],
   },
 };
 
@@ -337,12 +356,12 @@ const trustedSteps = (ref: string) => [
   enabled({ env: { WRANGLER_VERSION: WRANGLER_VERSION_OUTPUT }, run: VERSION_CHECK }),
   enabled({ run: literal(FLOOR_CHECK) }),
 ];
-const siteSteps = (builder: string) => {
+const siteSteps = (builder: string, copy: string) => {
   const id = `\${{ needs.${builder}.outputs.site-artifact-id }}`;
   return [
     enabled({ env: { ARTIFACT_ID: id }, run: ID_CHECK }),
     enabled({ uses: TOKEN_ACTIONS.download, with: { 'artifact-ids': id, path: '${{ runner.temp }}/artifact' } }),
-    enabled({ run: literal(COPY_SITE) }),
+    enabled({ run: literal(copy) }),
   ];
 };
 const wranglerStep = (command: string, id?: string) =>
@@ -386,7 +405,7 @@ const TOKEN_JOB_SHAPES: Record<keyof typeof TOKEN_JOBS, { [key: string]: Yaml }>
     steps: [
       notice('Deploy', `Set the ${SECRETS_IN} production environment (or as repository secrets, on a private GitHub Free repository) to deploy from CI.`),
       ...trustedSteps(TOKEN_JOBS['ci.yml:deploy'].ref),
-      ...siteSteps('verify'),
+      ...siteSteps('verify', COPY_SITE),
       wranglerStep(TOKEN_JOBS['ci.yml:deploy'].command),
     ],
   },
@@ -400,7 +419,9 @@ const TOKEN_JOB_SHAPES: Record<keyof typeof TOKEN_JOBS, { [key: string]: Yaml }>
     steps: [
       notice('Preview', `Set the ${SECRETS_IN} preview environment, behind required reviewers, to get a preview per pull request. Repository secrets reach this job too, unreviewed.`),
       ...trustedSteps(TOKEN_JOBS['ci.yml:preview'].ref),
-      ...siteSteps('preview-build'),
+      ...siteSteps('preview-build', COPY_PREVIEW_SITE),
+      enabled({ run: WRITE_PREVIEW_CONFIG }),
+      enabled({ run: PREVIEW_CONFIG_CHECK }),
       wranglerStep(TOKEN_JOBS['ci.yml:preview'].command, 'preview'),
       enabled({ uses: TOKEN_ACTIONS.githubScript, env: { PREVIEW_URL: '${{ steps.preview.outputs.preview-url }}' }, with: { script: literal(PREVIEW_COMMENT) } }),
     ],
@@ -611,7 +632,7 @@ describe.each(Object.entries(TOKEN_JOBS))('the %s job, which holds the token', (
 
   test('installs, builds and tests nothing, and runs only the shell it must', () => {
     for (const command of ['npm ci', 'npm install', 'npm i ', 'npm run', 'npm test', 'npx ']) expect(block, command).not.toContain(command);
-    const allowed = [TRUSTED_CONFIG, VERSION_CHECK, FLOOR_CHECK, ...(expected.builder ? [ID_CHECK, COPY_SITE] : [COPY_CONFIG])];
+    const allowed = [TRUSTED_CONFIG, VERSION_CHECK, FLOOR_CHECK, ...expected.scripts];
     for (const script of runs) expect(allowed.includes(script) || NOTICE.test(script), script).toBe(true);
     for (const script of allowed) expect(runs, script).toContain(script);
   });
@@ -701,9 +722,7 @@ describe.each(Object.entries(TOKEN_JOBS))('the %s job, which holds the token', (
     const downloadPaths = downloads.map((step) => mapping(step, 'with', 8).get('path') ?? '');
     expect(downloadPaths.every((path) => path.startsWith('${{ runner.temp }}/'))).toBe(true);
     const sources = runs.flatMap((script) => [...script.matchAll(/^cp (?:-R )?(\S+) \S+$/gm)].map((match) => match[1]));
-    expect(sources.sort()).toEqual(
-      (expected.builder ? ['"$RUNNER_TEMP/artifact/bundle/worker.js"', '"$RUNNER_TEMP/artifact/dist"', 'trusted/wrangler.jsonc'] : ['trusted/wrangler.jsonc']).sort(),
-    );
+    expect(sources.sort()).toEqual([...expected.copies].sort());
     for (const step of wranglers) {
       const workingDirectory = mapping(step, 'with', 8).get('workingDirectory');
       expect(workingDirectory).toBe(SITE);
@@ -737,6 +756,36 @@ describe.each(Object.entries(TOKEN_JOBS))('the %s job, which holds the token', (
     // with no lockfile.
     expect(COOLDOWN_DAYS.length).toBeGreaterThan(0);
     for (const days of COOLDOWN_DAYS) expect(env.get('npm_config_min_release_age')).toBe(`'${days}'`);
+  });
+});
+
+// Sweep 20261027T190359Z, cluster 1. wrangler bundles the worker.js it is given unless its config
+// says no_bundle (its preview command has no --no-bundle flag), and esbuild then follows an import in
+// that file to any file on the runner. So the preview job hands wrangler only the config that
+// trusted-config.mjs writes from the trusted one (tests/unit/trusted-config.test.ts holds what it
+// writes, and tests/unit/preview-upload.test.ts what wrangler then uploads), and stops without it.
+describe('the preview job, which uploads worker.js byte for byte', () => {
+  const all = steps(job('ci.yml:preview'));
+  const runAt = (script: string) => all.findIndex((step) => scalar(step, 'run', 8) === script);
+  const wrangler = all.findIndex((step) => action(step) === 'cloudflare/wrangler-action');
+
+  test('copies the site in, writes the config, and stops unless it was written, all before wrangler runs', () => {
+    const order = [runAt(TRUSTED_CONFIG), runAt(COPY_PREVIEW_SITE), runAt(WRITE_PREVIEW_CONFIG), runAt(PREVIEW_CONFIG_CHECK), wrangler];
+    expect(order.every((index) => index >= 0), String(order)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(new Set(order).size).toBe(order.length);
+  });
+
+  test('names, with --config, the file it writes and checks, and copies no config into the site', () => {
+    const site = '"$RUNNER_TEMP/site/';
+    const written = / (\S+)$/.exec(scalar(all[runAt(WRITE_PREVIEW_CONFIG)]!, 'run', 8)!)![1];
+    const checked = /^test -f (\S+) /.exec(scalar(all[runAt(PREVIEW_CONFIG_CHECK)]!, 'run', 8)!)![1];
+    const named = / --config (\S+)$/.exec(mapping(all[wrangler]!, 'with', 8).get('command')!)![1];
+    expect(mapping(all[wrangler]!, 'with', 8).get('workingDirectory')).toBe(SITE);
+    expect(written).toBe(`${site}${named}"`);
+    expect(checked).toBe(written);
+    expect(named).toMatch(/^[\w.-]+\.json$/);
+    expect(job('ci.yml:preview')).not.toMatch(/\bcp\b[^\n]*wrangler\.json/);
   });
 });
 
@@ -863,7 +912,51 @@ describe('the token-job pin', () => {
       inJob(ci, 'preview', 'PREVIEW_URL: ${{ steps.preview.outputs.preview-url }}', 'PREVIEW_URL: ${{ secrets.CLOUDFLARE_API_TOKEN }}'),
       'ci.yml:preview',
     );
-    expect(secrets).toEqual(['step 11: env.PREVIEW_URL names secrets']);
+    expect(secrets).toEqual(['step 13: env.PREVIEW_URL names secrets']);
+    expect(shape.join('\n')).toContain('step 13: ');
+  });
+
+  // Sweep 20261027T190359Z, cluster 1: each way back to a preview that wrangler bundles.
+  const WRITE_STEP = `        run: ${WRITE_PREVIEW_CONFIG}\n`;
+  const STOP_STEP = `      - name: Stop unless the preview's config was written\n        if: ${ENABLED}\n        run: ${PREVIEW_CONFIG_CHECK}\n`;
+  const PREVIEW_COMMAND = `          command: ${TOKEN_JOBS['ci.yml:preview'].command}\n`;
+
+  test('refuses (d): a copy of the trusted wrangler.jsonc in place of the written config', () => {
+    const copied = inJob(ci, 'preview', WRITE_STEP, '        run: cp trusted/wrangler.jsonc "$RUNNER_TEMP/site/wrangler.json"\n');
+    expect(problemsOf(copied, 'ci.yml:preview').shape.join('\n')).toContain('step 10: ');
+    // A config copied in with the site again, and named with --config.
+    let before = inJob(ci, 'preview', COPY_PREVIEW_SITE.split('\n').at(-1)!, `${COPY_PREVIEW_SITE.split('\n').at(-1)!}\n          cp trusted/wrangler.jsonc "$RUNNER_TEMP/site/wrangler.jsonc"`);
+    before = inJob(before, 'preview', PREVIEW_COMMAND, PREVIEW_COMMAND.replace(`--config ${PREVIEW_CONFIG_FILE}`, '--config wrangler.jsonc'));
+    const { shape } = problemsOf(before, 'ci.yml:preview');
+    expect(shape.join('\n')).toContain('step 9: ');
+    expect(shape.join('\n')).toContain('step 12: ');
+  });
+
+  test('refuses (e): no stop before wrangler when the config is missing', () => {
+    expect(problemsOf(inJob(ci, 'preview', STOP_STEP, ''), 'ci.yml:preview').shape).toContain('12 steps, but the pin has 13');
+    // ... nor one that comes too late, after wrangler has run.
+    const moved = inJob(inJob(ci, 'preview', STOP_STEP, ''), 'preview', '      - name: Post or update the preview comment\n', `${STOP_STEP}      - name: Post or update the preview comment\n`);
+    const { shape } = problemsOf(moved, 'ci.yml:preview');
     expect(shape.join('\n')).toContain('step 11: ');
+    expect(shape.join('\n')).toContain('step 12: ');
+  });
+
+  test('refuses (f): a wrangler command that names another config', () => {
+    for (const config of ['wrangler.jsonc', 'trusted/wrangler.jsonc', `../site/${PREVIEW_CONFIG_FILE}`]) {
+      const mutated = inJob(ci, 'preview', PREVIEW_COMMAND, PREVIEW_COMMAND.replace(`--config ${PREVIEW_CONFIG_FILE}`, `--config ${config}`));
+      expect(problemsOf(mutated, 'ci.yml:preview').shape.join('\n'), config).toContain('step 12: ');
+    }
+    // A command with no --config at all lets wrangler look for a config beside the entry first.
+    const bare = inJob(ci, 'preview', PREVIEW_COMMAND, PREVIEW_COMMAND.replace(` --config ${PREVIEW_CONFIG_FILE}`, ''));
+    expect(problemsOf(bare, 'ci.yml:preview').shape.join('\n')).toContain('step 12: ');
+  });
+
+  test('refuses (g): a preview config written anywhere but the site directory, or without the mode', () => {
+    for (const run of [
+      WRITE_PREVIEW_CONFIG.replace('"$RUNNER_TEMP/site/', '"$RUNNER_TEMP/artifact/'),
+      WRITE_PREVIEW_CONFIG.replace('--preview-config ', ''),
+    ]) {
+      expect(problemsOf(inJob(ci, 'preview', WRITE_STEP, `        run: ${run}\n`), 'ci.yml:preview').shape.join('\n'), run).toContain('step 10: ');
+    }
   });
 });

@@ -22,7 +22,9 @@ within a few days.
   run; a default that ships Turnstile test keys or `log` delivery to a live site (a custom domain,
   or real delivery) past `npm run preflight`.
 - **The CI workflow**: a way for a pull request from a fork to obtain the Cloudflare token, write
-  to the repository, or run on a self-hosted runner.
+  to the repository, or run on a self-hosted runner; or a preview job that uploads anything but
+  the handed-over `worker.js` bytes, with the pull request's built `dist/` as its assets, such as
+  a file that a pull request's build makes wrangler read from the runner.
 - **The design tools**: a Claude Design bundle that gets past `tools/design-ingest/ingest.mjs`
   (a link, an unsafe path, agent instructions or another entry outside its allow-list written into
   `design/bundle/`); a design screen that, rendered through `tools/screenshots/design.mjs`, reaches

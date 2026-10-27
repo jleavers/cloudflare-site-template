@@ -214,7 +214,10 @@ runners, as does the `verify` run on each push to `main` that builds what deploy
 `rules` and `tsconfig` steer what wrangler reads and uploads, so review a change to it as you
 would a change to `.github/workflows/`. Only the bundle's `worker.js` ships: a Worker whose
 bundle has more modules (a `.wasm`, text or data import) fails to deploy until the copy step in
-`ci.yml`, and the test that pins it, take them too.
+`ci.yml`, and the test that pins it, take them too. Wrangler never bundles that file again, since
+its bundler would follow an import in it to any file on the runner, the token included: the deploy
+passes `--no-bundle`, and a preview runs with a config that `scripts/trusted-config.mjs` writes
+from `main`'s, with bundling, source maps and additional modules off.
 
 **Anyone who can merge into `main`, or push a workflow change, can read the token**: every push
 to `main` deploys, running that commit's `scripts/trusted-config.mjs` before wrangler. Where you
@@ -302,7 +305,10 @@ and delete `.dev.vars` afterwards.
 [Previews](https://developers.cloudflare.com/workers/previews/): each gets its own URL,
 Turnstile's test keys and `log` delivery, and is deleted when the pull request closes. On a Resend site, `wrangler preview` warns that
 `CONTACT_TO_EMAIL` and `CONTACT_FROM_EMAIL` are configured for production but not for Previews:
-that is intended, because a preview without the addresses cannot send. Leave it.
+that is intended, because a preview without the addresses cannot send. Leave it. A preview
+uploads the pull request's `worker.js` exactly as its build made it, never bundled again, so the
+`previews` block in `wrangler.jsonc` can hold bindings and `vars`, but not `define`, which only a
+bundle would apply, or `containers`: the preview job refuses both ([why](#cloudflare-api-token)).
 
 **Short of GitHub Actions minutes?** CI's checks can run on a self-hosted runner (set
 `CI_LINUX_RUNNER`, private repositories only). The deploy and preview jobs always run on
