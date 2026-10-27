@@ -47,7 +47,7 @@ drive letter, a backslash, `..`), two names that differ only in case, an encrypt
 or anything over its caps (a 20 MB archive or download, 50 MB unpacked, 2000 entries). It omits agent
 instructions (`CLAUDE.md`, `AGENTS.md`, `SKILL.md`, `*.mdc` and the like, in any case),
 everything under a name that starts with a dot (`.git/`, `.claude/`, `.github/`, `.mcp.json`),
-tool configurations (`*.config.js` and the like, `package.json`, `tsconfig*.json`, `jsconfig.json`),
+tool configurations (`*.config.js`, `package.json`, `tsconfig*.json`, `deno.json` and the like),
 everything under a name with a character outside the allowed set (letters, digits, combining
 marks, space and `. _ ( ) + , @ -`), and every file that is not a design file type. It renames
 nothing in place, and it always writes a fresh `design/bundle/`.

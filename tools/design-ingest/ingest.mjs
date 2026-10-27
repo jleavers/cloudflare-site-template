@@ -47,7 +47,7 @@ const INSTRUCTIONS = new Set(['claude.md', 'claude.local.md', 'agents.md', 'agen
  * Tool configurations, compared folded: an editor or build tool that looks upward from a file for
  * its nearest config may load one of these, and a JavaScript config runs as code.
  */
-const TOOL_CONFIG = /\.config\.[cm]?[jt]s$|^package\.json$|^tsconfig.*\.json$|^jsconfig\.json$/;
+const TOOL_CONFIG = /\.config\.[cm]?[jt]s$|^package\.json$|^tsconfig.*\.json$|^jsconfig\.json$|^babel\.config\.json$|^deno\.jsonc?$|^biome\.jsonc?$|^vitest\.workspace\.(?:[cm]?[jt]s|json)$/;
 /** The file types a design is made of, compared lower-cased (not folded: `.ＰＮＧ` is not `.png`). */
 const DESIGN_TYPES = new Set(['.html', '.htm', '.css', '.js', '.mjs', '.jsx', '.ts', '.tsx', '.json', '.md', '.txt', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.ico', '.woff', '.woff2', '.ttf', '.otf']);
 /** Device names Windows reserves in any folder, with any extension (superscript digits included). */
@@ -55,12 +55,12 @@ const WINDOWS_DEVICE = /^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]) *(?:\
 /**
  * The only segments written: letters, digits, combining marks, space and `. _ ( ) + , @ -`,
  * starting with a letter, a digit or `_`. A combining mark (Mn, Mc) may follow any first character,
- * as in an NFD name from macOS or an Indic or Thai name, but not one that is default-ignorable (a
- * variation selector, the combining grapheme joiner), which renders as nothing. Such a name is safe
- * inside double quotes in a POSIX shell or PowerShell, so a later step may use a path from
- * design/bundle/ in a command (Rulings 89 and 92).
+ * as in an NFD name from macOS or an Indic or Thai name. No character may be default-ignorable,
+ * since one renders as nothing: not a variation selector or the combining grapheme joiner (marks),
+ * nor a Hangul filler (a letter). Such a name is safe inside double quotes in a POSIX shell or
+ * PowerShell, so a later step may use a path from design/bundle/ in a command (Rulings 89 and 92).
  */
-const ALLOWED_NAME = /^[\p{L}\p{N}_](?:[\p{L}\p{N} ._()+,@-]|(?!\p{Default_Ignorable_Code_Point})[\p{Mn}\p{Mc}])*$/u;
+const ALLOWED_NAME = /^(?![^]*\p{Default_Ignorable_Code_Point})[\p{L}\p{N}_][\p{L}\p{N}\p{Mn}\p{Mc} ._()+,@-]*$/u;
 const ALLOWED_SET = 'letters, digits, combining marks, space and . _ ( ) + , @ -';
 /**
  * A name folded as case-insensitive and normalising filesystems fold it, or more strictly: NFKC,
@@ -790,7 +790,7 @@ export function omission(segments, kind) {
     const folded = fold(segment);
     if (INSTRUCTIONS.has(folded) || folded.endsWith('.mdc')) return `${show(segment)} names agent instructions, which are never written`;
     if (TOOL_CONFIG.test(folded)) {
-      return `${show(segment)} is a tool configuration (*.config.js and the like, package.json, tsconfig*.json or jsconfig.json), which an editor tool looking upward from a file may load and run, so it is never written`;
+      return `${show(segment)} is a tool configuration (*.config.js and the like, package.json, tsconfig*.json, jsconfig.json, babel.config.json, deno.json, biome.json or vitest.workspace.*), which an editor tool looking upward from a file may load and run, so it is never written`;
     }
   }
   for (const segment of segments) {

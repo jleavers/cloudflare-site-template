@@ -39,11 +39,13 @@ These entries are **omitted**, and listed in the output with the reason: anythin
 starts with a dot (`.git`, `.claude`, `.github`, `.mcp.json`, …); agent instructions (`CLAUDE.md`,
 `AGENTS.md`, `AGENTS.override.md`, `SKILL.md`, `*.mdc` and the like, compared folded); tool
 configurations (`*.config.js`, `.mjs`, `.cjs`, `.ts`, `.mts` or `.cts`, `package.json`,
-`tsconfig*.json` and `jsconfig.json`, compared folded), which an editor tool looking upward from a
-file may load and run; anything under a name with a character outside the allowed set (letters,
+`tsconfig*.json`, `jsconfig.json`, `babel.config.json`, `deno.json`, `deno.jsonc`, `biome.json`,
+`biome.jsonc` and `vitest.workspace.*`, compared folded), which an editor tool looking upward from
+a file may load and run; anything under a name with a character outside the allowed set (letters,
 digits, combining marks, space and `. _ ( ) + , @ -`; a name starts with a letter, a digit or `_`,
-and a combining mark that is default-ignorable, such as a variation selector, is not allowed), so a
-path inside `design/bundle/` is safe in a command in double quotes; and any file whose extension,
+and no character in it may be default-ignorable, such as a variation selector or a Hangul
+filler, which render as nothing), so a path inside `design/bundle/` is safe in a command in
+double quotes; and any file whose extension,
 lower-cased, is not one of `.html .htm .css .js .mjs .jsx .ts .tsx .json .md .txt .svg .png .jpg
 .jpeg .gif .webp .avif .ico .woff .woff2 .ttf .otf`.
 

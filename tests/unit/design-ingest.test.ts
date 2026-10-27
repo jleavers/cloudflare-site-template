@@ -664,6 +664,23 @@ describe('omitting, not writing', () => {
     ['cfg1/Package.JSON', /tool configuration/],
     ['cfg2/\uff36ite.CONFIG.JS', /tool configuration/],
     ['cfg3/TSCONFIG.Build.JSON', /tool configuration/],
+    ['babel.config.json', /tool configuration/],
+    ['deno.json', /tool configuration/],
+    ['deno.jsonc', /tool configuration/],
+    ['biome.json', /tool configuration/],
+    ['biome.jsonc', /tool configuration/],
+    ['vitest.workspace.js', /tool configuration/],
+    ['vitest.workspace.mjs', /tool configuration/],
+    ['vitest.workspace.cjs', /tool configuration/],
+    ['vitest.workspace.ts', /tool configuration/],
+    ['vitest.workspace.mts', /tool configuration/],
+    ['vitest.workspace.cts', /tool configuration/],
+    ['vitest.workspace.json', /tool configuration/],
+    ['cfg4/Deno.JSONC', /tool configuration/],
+    // Ruling 92, extended: no default-ignorable character anywhere, so no Hangul filler, a letter that renders blank.
+    ['\u{3164}.png', /name has a character outside the allowed set/],
+    ['x\u{115F}.png', /name has a character outside the allowed set/],
+    ['x\u{FFA0}.png', /name has a character outside the allowed set/],
   ];
 
   test.each(OMITTED)('omission(%s) gives a reason', (name, reason) => {
@@ -694,6 +711,10 @@ describe('omitting, not writing', () => {
     ['site.config.json'],
     ['packages.json'],
     ['my-tsconfig.json'],
+    ['babel.config.json.md'],
+    ['vitest.workspace.html'],
+    // An ordinary Hangul name (한글), whose letters are not fillers.
+    ['\u{D55C}\u{AE00}.png'],
   ])('keeps the allowed name %s', (name) => {
     expect(omission(['assets', name], 'file')).toBeNull();
   });
