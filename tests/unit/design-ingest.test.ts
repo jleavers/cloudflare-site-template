@@ -315,6 +315,13 @@ describe('a path', () => {
     ['an escape sequence', 'home\x1b[2J.html', /control character/],
     ['DEL', 'home\x7f.html', /control character/],
     ['a C1 control character', 'home\u0085.html', /control character/],
+    // Ruling 87: Unicode format characters (Cf) and line and paragraph separators (Zl, Zp).
+    ['a right-to-left override', 'invoice\u202Elmth.js', /format or line-separator character \(U\+202E\)/],
+    ['a zero-width space', 'index\u200B.html', /format or line-separator character \(U\+200B\)/],
+    ['a tag character', 'index\u{E0041}.html', /format or line-separator character \(U\+E0041\)/],
+    ['a line separator', 'index\u2028.html', /format or line-separator character \(U\+2028\)/],
+    ['a paragraph separator', 'index\u2029.html', /format or line-separator character \(U\+2029\)/],
+    ['a byte-order mark inside a name', 'index\uFEFF.html', /format or line-separator character \(U\+FEFF\)/],
     ['a Windows device name', 'CON', /Windows reserves/],
     ['a Windows device name with an extension', 'screens/nul.html', /Windows reserves/],
     ['a numbered device name in lower case', 'lpt9.txt', /Windows reserves/],
@@ -343,6 +350,12 @@ describe('a path', () => {
     expect(error.message).toContain('"a\\u001b]8;;evil\\u0007.html"');
     expect(error.message).not.toMatch(/[\x00-\x1f]/);
   });
+
+  test('a refusal escapes DEL, C1 controls, format characters and separators too, which JSON leaves raw', () => {
+    const error = caught(() => checkPath('a\x7f\u009b\u202E\u200B\u{E0041}\u2028.html')) as Error;
+    expect(error.message).toContain('"a\\u007f\\u009b\\u202e\\u200b\\u{e0041}\\u2028.html"');
+    expect(error.message).not.toMatch(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+  });
 });
 
 describe('refusing the whole bundle', () => {
@@ -353,10 +366,15 @@ describe('refusing the whole bundle', () => {
       ['a backslash', 'screens\\..\\..\\x.html', /backslash/],
       ['a .. segment', '../../outside.html', /"\.\." segment/],
       ['a folder that climbs out', '../', /"\.\." segment/],
-      ['a . segment', './index.html', /"\." segment/],
+      ['a second leading ./', '././index.html', /"\." segment/],
+      ['an interior . segment', 'screens/./home.html', /"\." segment/],
       ['an empty segment', 'screens//home.html', /empty segment/],
       ['a NUL', 'index.html\0.sh', /control character/],
       ['a control character', 'index\x1b.html', /control character/],
+      ['a right-to-left override', 'invoice\u202Elmth.js', /format or line-separator character \(U\+202E\)/],
+      ['a zero-width space', 'index\u200B.html', /format or line-separator character \(U\+200B\)/],
+      ['a tag character', 'index\u{E0041}.html', /format or line-separator character \(U\+E0041\)/],
+      ['a line separator', 'index\u2028.html', /format or line-separator character \(U\+2028\)/],
       ['a Windows-reserved name', 'screens/AUX.html', /Windows reserves/],
       ['a segment ending in a space', 'screens /home.html', /ends in a dot or a space/],
       ['a path deeper than 32 segments', `${'d/'.repeat(32)}x.html`, /deeper than 32/],
@@ -373,6 +391,7 @@ describe('refusing the whole bundle', () => {
       ['NFC and NFD forms of one name', ['\u00e9.html', 'e\u0301.html'], /differ only in case or Unicode normalisation/],
       ['folders that differ only in case', ['Screens/a.html', 'screens/b.html'], /differ only in case or Unicode normalisation/],
       ['the same name twice', ['a.html', 'a.html'], /appears twice/],
+      ['a name with and without a leading ./', ['./a.html', 'a.html'], /"a\.html" appears twice/],
       ['a name that is both a file and a folder', ['a.html', 'a.html/b.png'], /both a file and a folder/],
     ] as Array<[string, string[], RegExp]>),
   )('%s: %s', (format, _what, names, reason) => {
@@ -387,7 +406,8 @@ describe('refusing the whole bundle', () => {
     ['a block device', { type: '4' }, /block device/],
     ['a FIFO', { type: '6' }, /FIFO/],
     ['a contiguous file', { type: '7' }, /type "7".*not allowed/],
-    ['a pax global header', { type: 'g', data: '17 comment=hello\n' }, /type "g".*not allowed/],
+    ['a pax global header that sets a path', pax({ path: 'CLAUDE.md' }, 'g'), /pax global header \(type g\) at byte \d+ sets "path"/],
+    ['a pax global header with a comment and an mtime', pax({ comment: 'x', mtime: '1700000000' }, 'g'), /pax global header \(type g\) at byte \d+ sets "mtime"/],
     ['a GNU sparse file', { type: 'S' }, /type "S".*not allowed/],
     ['a GNU volume header', { type: 'V' }, /type "V".*not allowed/],
     ['a GNU dump directory', { type: 'D' }, /type "D".*not allowed/],
@@ -458,6 +478,10 @@ describe('refusing the whole bundle', () => {
 
   test('zip: refuses an archive with no end of central directory', () => {
     refuses(() => readZip(zip([{ name: 'index.html', data: 'x' }]).slice(0, 60)), /end of central directory/);
+  });
+
+  test('tar: refuses an empty pax global header', () => {
+    refuses(() => readTar(tar([{ name: 'pax_global_header', type: 'g', data: '' }, { name: 'index.html', data: 'x' }])), /pax global header \(type g\) at byte 0 is empty/);
   });
 
   test('tar: refuses a bad header checksum, a v7 header and a truncated entry', () => {
@@ -747,6 +771,49 @@ describe('writing design/bundle/', () => {
   });
 });
 
+// Ruling 87: what `tar -C dir -czf x.tar.gz .` and `git archive` write is admitted.
+describe('archive shapes common tools write', () => {
+  test.each(FORMATS)('%s: one leading ./ is stripped, and the ./ root is skipped silently', async (format, build) => {
+    const { cwd, design, bundle } = workspace();
+    writeFileSync(
+      join(design, `h.${format}`),
+      build([{ name: './' }, { name: './index.html', data: html('Home') }, { name: './screens/' }, { name: './screens/home.html', data: html('Screen') }]),
+    );
+    const summary = await ingest({ archive: `design/h.${format}` }, { cwd });
+    expect(tree(bundle)).toEqual(['index.html', 'screens/', 'screens/home.html']);
+    expect(readFileSync(join(bundle, 'index.html'), 'utf8')).toBe(html('Home'));
+    expect(summary.files).toEqual(['index.html', 'screens/home.html']);
+    expect(summary.dirs).toEqual(['screens']);
+    expect(summary.omitted).toEqual([]);
+  });
+
+  test('tar.gz: a root entry named "." is skipped too', () => {
+    const result = inMemory(tgz([{ name: '.', type: '5' }, { name: './a.html', data: 'x' }]));
+    expect(result.files.map((file) => file.path)).toEqual(['a.html']);
+    expect(result.omitted).toEqual([]);
+  });
+
+  test.each(FORMATS)('%s: the ./ root still counts toward the entry cap', (_format, build) => {
+    const items = [{ name: './' }, { name: './a.html', data: 'x' }, { name: './b.html', data: 'x' }];
+    expect(inMemory(build(items), { maxEntries: 3 }).files.map((file) => file.path)).toEqual(['a.html', 'b.html']);
+    refuses(() => inMemory(build(items), { maxEntries: 2 }), /more than 2 entries/);
+  });
+
+  test('a file named ./ is not a root folder', () => {
+    refuses(() => inMemory(tgz([{ name: './', type: '0', data: 'x' }])), /empty name/);
+    refuses(() => inMemory(tgz([{ name: './.', type: '5' }, { name: 'a.html', data: 'x' }])), /"\." segment/);
+  });
+
+  test('tar.gz: a git archive pax global header holding only a comment is admitted, and ignored', async () => {
+    const { cwd, design, bundle } = workspace();
+    const commit = 'a'.repeat(40);
+    writeFileSync(join(design, 'h.tar.gz'), tgz([pax({ comment: commit }, 'g'), { name: 'site/', type: '5' }, { name: 'site/index.html', data: html('Home') }]));
+    const summary = await ingest({ archive: 'design/h.tar.gz' }, { cwd });
+    expect(tree(bundle)).toEqual(['site/', 'site/index.html']);
+    expect(summary.omitted).toEqual([]);
+  });
+});
+
 describe('the sweep’s probes', () => {
   // design-ingest-1: a nested .git whose config runs a command on any git call inside it.
   test.each(FORMATS)('%s: a nested .git/ with core.fsmonitor is omitted, and none of it is written', async (format, build) => {
@@ -881,7 +948,7 @@ describe('the command line', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/wrote design\/bundle\/ .*1 file/);
     expect(result.stdout).toMatch(/^ {2}index\.html$/m);
-    expect(result.stdout).toMatch(/omitted 1 entry/);
+    expect(result.stdout).toMatch(/omitted 1 entry, which was not written:/);
     expect(result.stdout).toMatch(/"AGENTS\.md": .*agent instructions/);
     expect(exists(join(bundle, 'index.html'))).toBe(true);
   });

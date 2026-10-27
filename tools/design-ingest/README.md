@@ -15,19 +15,23 @@ accepts only `https:` with no credentials and no port but 443, on `api.anthropic
 `--host` the person confirmed. It downloads with `fetch`, following at most 5 redirects, each
 `https:`, into memory only, capped at 20 MB and 60 seconds.
 
-**Every entry is checked before anything is written.** The format is decided by magic bytes. The
-whole bundle is refused, with a reason naming the entry, for:
+**Every entry is checked before anything is written.** The format is decided by magic bytes. One
+leading `./` on an entry's name is stripped first, and a `./` root folder is skipped (it still
+counts toward the cap), so `tar -C dir -czf x.tar.gz .` output is admitted. The whole bundle is
+refused, with a reason naming the entry, for:
 
 - a link or special file of any kind;
 - an absolute path, a drive letter, a backslash, a `.`, `..` or empty segment, a control
-  character, invalid UTF-8, or a name Windows reserves or cannot hold;
+  character, a format or line-separator character (a bidi override, a zero-width or tag
+  character), invalid UTF-8, or a name Windows reserves or cannot hold;
 - two names equal after NFC normalisation and lower-casing, or a name that is both a file and a
   folder;
 - in a zip: encryption, a method other than stored or deflate, zip64, more than one disk, a local
   header that disagrees with the central directory, overlapping entries, a CRC or size mismatch,
   or a non-ASCII name without the UTF-8 flag;
 - in a tar: a bad checksum, or a type other than a file, a folder, a pax header (only its `path`
-  and `size` are used) or a GNU long name;
+  and `size` are used), a GNU long name, or a pax global header holding only a `comment` (as
+  `git archive` writes; it is ignored);
 - more than 2000 entries (folders included), more than 50 MB unpacked, or a path deeper than 32
   segments or longer than 1024 bytes.
 

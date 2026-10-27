@@ -180,8 +180,8 @@ export function tar(entries: TarEntry[], { end = true, trailing }: { end?: boole
 
 export const tgz = (entries: TarEntry[], options?: Parameters<typeof tar>[1]): Uint8Array<ArrayBuffer> => new Uint8Array(gzipSync(tar(entries, options)));
 
-/** A pax extended header ('x') carrying these records, for the entry that follows it. */
-export function pax(records: Record<string, string>): TarEntry {
+/** A pax extended header ('x') carrying these records for the entry that follows it, or a global one ('g'), named as git archive names it. */
+export function pax(records: Record<string, string>, type: 'x' | 'g' = 'x'): TarEntry {
   let text = '';
   for (const [key, value] of Object.entries(records)) {
     const body = Buffer.byteLength(` ${key}=${value}\n`);
@@ -189,7 +189,7 @@ export function pax(records: Record<string, string>): TarEntry {
     if (String(length).length + body !== length) length = body + String(length).length;
     text += `${length} ${key}=${value}\n`;
   }
-  return { name: 'PaxHeader/entry', type: 'x', data: text };
+  return { name: type === 'g' ? 'pax_global_header' : 'PaxHeader/entry', type, data: text };
 }
 
 /** A GNU long-name header ('L') naming the entry that follows it. */

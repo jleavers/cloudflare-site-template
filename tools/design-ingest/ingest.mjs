@@ -82,8 +82,16 @@ function refuse(reason) {
 /** @param {Partial<Limits>} [limits] @returns {Limits} */
 const withLimits = (limits) => ({ ...LIMITS, ...limits });
 
-/** A name as JSON, so a control character prints escaped and never reaches a terminal raw; a long one is cut short. */
-const show = (/** @type {string} */ name) => JSON.stringify(name.length > 120 ? `${name.slice(0, 120)}…` : name);
+/** What JSON.stringify leaves raw but a terminal may act on or render invisibly: DEL, C1 controls, format characters and separators. */
+const INVISIBLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+/** A code point as U+XXXX. */
+const codePoint = (/** @type {string} */ character) => `U+${(character.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}`;
+/** A name as JSON, every control, format or separator character escaped, so none reaches a terminal raw; a long one is cut short. */
+const show = (/** @type {string} */ name) =>
+  JSON.stringify(name.length > 120 ? `${name.slice(0, 120)}…` : name).replace(INVISIBLE, (character) => {
+    const point = character.codePointAt(0) ?? 0;
+    return point > 0xffff ? `\\u{${point.toString(16)}}` : `\\u${point.toString(16).padStart(4, '0')}`;
+  });
 const hex = (/** @type {Uint8Array} */ bytes) => `${Buffer.from(bytes.subarray(0, 32)).toString('hex').replace(/(..)(?!$)/g, '$1 ')}${bytes.length > 32 ? ' …' : ''}`;
 const bytesText = (/** @type {number} */ count) => (count % 1048576 === 0 ? `${count} bytes (${count / 1048576} MB)` : `${count} bytes`);
 const plural = (/** @type {number} */ count, /** @type {string} */ one, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
@@ -322,16 +330,16 @@ function checkChecksum(header, at) {
 }
 
 /**
- * A pax extended header's records. Only `path` and `size` are honoured; other keys are ignored.
+ * A pax header's records, as [key, value] pairs, in order.
  *
  * @param {Buffer} content
  * @param {number} at
- * @returns {{ path?: string, size?: number }}
+ * @returns {[string, string][]}
  */
-function parsePax(content, at) {
+function paxRecords(content, at) {
   const malformed = () => refuse(`the pax header at byte ${at} is malformed`);
-  /** @type {{ path?: string, size?: number }} */
-  const result = {};
+  /** @type {[string, string][]} */
+  const records = [];
   let position = 0;
   while (position < content.length) {
     const space = content.indexOf(0x20, position);
@@ -347,22 +355,37 @@ function parsePax(content, at) {
     }
     const equals = record.indexOf('=');
     if (equals <= 0) malformed();
-    const key = record.slice(0, equals);
-    const value = record.slice(equals + 1);
+    records.push([record.slice(0, equals), record.slice(equals + 1)]);
+    position = end;
+  }
+  return records;
+}
+
+/**
+ * A pax extended header ('x'). Only `path` and `size` are honoured; other keys are ignored.
+ *
+ * @param {Buffer} content
+ * @param {number} at
+ * @returns {{ path?: string, size?: number }}
+ */
+function parsePax(content, at) {
+  /** @type {{ path?: string, size?: number }} */
+  const result = {};
+  for (const [key, value] of paxRecords(content, at)) {
     if (key === 'path') result.path = value;
     if (key === 'size') {
-      if (!/^\d{1,15}$/.test(value)) malformed();
+      if (!/^\d{1,15}$/.test(value)) refuse(`the pax header at byte ${at} is malformed`);
       result.size = Number(value);
     }
-    position = end;
   }
   return result;
 }
 
 /**
  * Reads an uncompressed tar (POSIX ustar, or GNU). It admits regular files ('0' and NUL),
- * folders ('5'), pax extended headers ('x', for `path` and `size` only) and GNU long names
- * ('L'), and refuses every other type.
+ * folders ('5'), pax extended headers ('x', for `path` and `size` only), GNU long names ('L'),
+ * and a pax global header ('g') whose only key is `comment`, as `git archive` writes, which it
+ * ignores. It refuses every other type, and a global header with any other key.
  *
  * @param {Uint8Array} bytes
  * @param {Partial<Limits>} [limits]
@@ -407,6 +430,16 @@ export function readTar(bytes, limits) {
       continue;
     }
     if (type === 'K') refuse(`the tar header at byte ${offset} is a GNU long link name (type K), which only a link has`);
+    if (type === 'g') {
+      // git archive writes one, holding the commit id as a comment. Any other key would set something for every entry.
+      if (body + size > data.length) refuse(`the tar's pax global header (type g) at byte ${offset} runs past the end of the archive`);
+      const keys = paxRecords(data.subarray(body, body + size), offset).map(([key]) => key);
+      const other = keys.find((key) => key !== 'comment');
+      if (other !== undefined) refuse(`the tar's pax global header (type g) at byte ${offset} sets ${show(other)}: only a "comment" is allowed, as git archive writes`);
+      if (keys.length === 0) refuse(`the tar's pax global header (type g) at byte ${offset} is empty`);
+      offset = body + Math.ceil(size / 512) * 512;
+      continue;
+    }
 
     let nameBytes = cString(header, 0, 100);
     if (posix) {
@@ -671,8 +704,9 @@ export function readDir(path, limits) {
 
 /**
  * A relative path's segments, or a refusal: no absolute path, drive letter, backslash, `.` or
- * `..` or empty segment, control character, Windows device name, segment ending in a dot or a
- * space, character Windows forbids, or path over the depth and length caps.
+ * `..` or empty segment, control character, format or line-separator character (bidi overrides,
+ * zero-width and tag characters), Windows device name, segment ending in a dot or a space,
+ * character Windows forbids, or path over the depth and length caps.
  *
  * @param {string} name
  * @param {Partial<Limits>} [limits]
@@ -682,6 +716,10 @@ export function checkPath(name, limits) {
   const caps = withLimits(limits);
   if (name === '') refuse('an entry has an empty name');
   if (/\p{Cc}/u.test(name)) refuse(`${show(name)} has a NUL or other control character`);
+  const invisible = name.match(/[\p{Cf}\p{Zl}\p{Zp}]/u);
+  if (invisible) {
+    refuse(`${show(name)} has a format or line-separator character (${codePoint(invisible[0])}), which can hide or reorder what a name shows`);
+  }
   if (Buffer.byteLength(name) > caps.maxPathBytes) refuse(`${show(name)} is longer than ${caps.maxPathBytes} bytes`);
   if (name.includes('\\')) refuse(`${show(name)} has a backslash`);
   if (name.startsWith('/')) refuse(`${show(name)} is an absolute path`);
@@ -723,7 +761,8 @@ export function omission(segments, kind) {
 }
 
 /**
- * Checks every entry, and decides what to write. Refuses a bad path, two names that are equal
+ * Checks every entry, and decides what to write. One leading `./` on a name is stripped first, and
+ * a `.` root folder is skipped. Refuses a bad path, two names that are equal
  * after NFC normalisation and lower-casing, a name that is both a file and a folder, more files
  * and folders (those a path implies included) than the cap, or nothing to write.
  *
@@ -745,11 +784,15 @@ export function plan(entries, limits) {
     if (explicit && prior.explicit) refuse(`${show(path)} appears twice`);
     prior.explicit ||= explicit;
   };
-  const checked = entries.map((entry) => {
-    const segments = checkPath(entry.name, caps);
+  const checked = entries.flatMap((entry) => {
+    // `tar -C dir -czf x.tar.gz .` writes a "./" root and names every entry "./…": the root is
+    // skipped (the readers have counted it), and one leading "./" is stripped before any check.
+    if (entry.kind === 'dir' && entry.name === '.') return [];
+    const name = entry.name.startsWith('./') ? entry.name.slice(2) : entry.name;
+    const segments = checkPath(name, caps);
     for (let i = 1; i < segments.length; i++) claim(segments.slice(0, i).join('/'), 'dir', false);
-    claim(entry.name, entry.kind, true);
-    return { ...entry, segments };
+    claim(name, entry.kind, true);
+    return [{ ...entry, name, segments }];
   });
 
   /** @type {Plan['files']} */
@@ -894,7 +937,7 @@ export function formatSummary({ from, dirs, files, bytes, omitted }) {
   for (const file of files) lines.push(`  ${file}`);
   if (omitted.length === 0) lines.push('design-ingest: omitted nothing.');
   else {
-    lines.push(`design-ingest: omitted ${plural(omitted.length, 'entry', 'entries')}, which were not written:`);
+    lines.push(`design-ingest: omitted ${plural(omitted.length, 'entry', 'entries')}, which ${omitted.length === 1 ? 'was' : 'were'} not written:`);
     for (const { name, reason } of omitted) lines.push(`  ${show(name)}: ${reason}`);
   }
   return lines.join('\n');
