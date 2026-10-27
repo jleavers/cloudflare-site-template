@@ -20,24 +20,27 @@ leading `./` on an entry's name is stripped first, and a `./` root folder is ski
 counts toward the cap), so `tar -C dir -czf x.tar.gz .` output is admitted. The whole bundle is
 refused, with a reason naming the entry, for:
 
-- a link or special file of any kind;
+- a link or special file of any kind (in a `--dir` folder, a hard link too);
 - an absolute path, a drive letter, a backslash, a `.`, `..` or empty segment, a control
   character, a format or line-separator character (a bidi override, a zero-width or tag
   character), invalid UTF-8, or a name Windows reserves or cannot hold;
-- two names equal after NFC normalisation and lower-casing, or a name that is both a file and a
-  folder;
+- two names equal once folded (NFKC, then upper- and lower-cased, so `ſ` is `s`, `ß` is `ss` and
+  fullwidth letters are ASCII), or a name that is both a file and a folder;
 - in a zip: encryption, a method other than stored or deflate, zip64, more than one disk, a local
-  header that disagrees with the central directory, overlapping entries, a CRC or size mismatch,
-  or a non-ASCII name without the UTF-8 flag;
+  header or data descriptor that disagrees with the central directory, overlapping entries, or a
+  CRC or size mismatch (every name is read as strict UTF-8, whatever its UTF-8 flag says);
 - in a tar: a bad checksum, or a type other than a file, a folder, a pax header (only its `path`
   and `size` are used), a GNU long name, or a pax global header holding only a `comment` (as
-  `git archive` writes; it is ignored);
+  `git archive` writes; it is ignored), or a pax or long-name header over 64 KB;
 - more than 2000 entries (folders included), more than 50 MB unpacked, or a path deeper than 32
   segments or longer than 1024 bytes.
 
 These entries are **omitted**, and listed in the output with the reason: anything under a name that
 starts with a dot (`.git`, `.claude`, `.github`, `.mcp.json`, …); agent instructions (`CLAUDE.md`,
-`AGENTS.md`, `SKILL.md`, `*.mdc` and the like, in any case); and any file that is not one of
+`AGENTS.md`, `AGENTS.override.md`, `SKILL.md`, `*.mdc` and the like, compared folded); anything
+under a name with a character a shell treats specially (only letters, digits, spaces and
+`. _ ( ) + , @ -` are written, and a name starts with a letter, a digit or `_`, so a path inside
+`design/bundle/` is safe in a command in double quotes); and any file that is not one of
 `.html .htm .css .js .mjs .jsx .ts .tsx .json .md .txt .svg .png .jpg .jpeg .gif .webp .avif .ico
 .woff .woff2 .ttf .otf`.
 

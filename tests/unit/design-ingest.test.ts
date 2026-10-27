@@ -1,13 +1,14 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, describe, expect, test } from 'vitest';
 import {
   LIMITS,
   Refusal,
+  UsageError,
   checkHops,
   checkPath,
   download,
@@ -249,7 +250,7 @@ describe('the download', () => {
   });
 
   test('the default caps are the brief’s', () => {
-    expect(LIMITS).toMatchObject({ maxArchiveBytes: 20971520, maxBytes: 52428800, maxEntries: 2000, maxDepth: 32, maxPathBytes: 1024, maxRedirects: 5, timeoutMs: 60000 });
+    expect(LIMITS).toMatchObject({ maxArchiveBytes: 20971520, maxBytes: 52428800, maxEntries: 2000, maxDepth: 32, maxPathBytes: 1024, maxRedirects: 5, timeoutMs: 60000, maxHeaderBytes: 65536 });
   });
 });
 
@@ -269,7 +270,8 @@ describe('design-ingest-4: a hostile handoff URL never reaches a shell', () => {
     expect(tree(cwd)).toEqual(['design/', 'design/SOURCE.md', 'design/bundle/', 'design/bundle/index.html']);
   });
 
-  test('the tool has no way to run a shell', () => {
+  // A source grep, not a proof: it fails if the tool ever imports child_process or names a way to run code from a string.
+  test("the tool's source names no child_process, spawn, exec, eval or new Function", () => {
     const source = readFileSync(TOOL, 'utf8');
     expect(source).not.toMatch(/child_process|\bexecSync\b|\bexecFile|\bspawn|\beval\(|new Function/);
   });
@@ -327,6 +329,8 @@ describe('a path', () => {
     ['a numbered device name in lower case', 'lpt9.txt', /Windows reserves/],
     ['a device name with two extensions', 'Com1.min.js', /Windows reserves/],
     ['a superscript port name', 'COM\u00b9.txt', /Windows reserves/],
+    ['COM0', 'COM0.txt', /Windows reserves/],
+    ['LPT0 in lower case', 'lpt0.html', /Windows reserves/],
     ['a segment ending in a dot', 'screens./home.html', /ends in a dot or a space/],
     ['a name ending in a space', 'home.html ', /ends in a dot or a space/],
     ['an NTFS stream name', 'home.html:hidden', /Windows does not allow/],
@@ -391,6 +395,11 @@ describe('refusing the whole bundle', () => {
       ['NFC and NFD forms of one name', ['\u00e9.html', 'e\u0301.html'], /differ only in case or Unicode normalisation/],
       ['folders that differ only in case', ['Screens/a.html', 'screens/b.html'], /differ only in case or Unicode normalisation/],
       ['the same name twice', ['a.html', 'a.html'], /appears twice/],
+      // Ruling 89, C1: names fold as case-insensitive filesystems fold them.
+      ['a long s and an s', ['s.html', '\u017f.html'], /differ only in case or Unicode normalisation/],
+      ['the Kelvin sign and a K', ['K.html', '\u212a.html'], /differ only in case or Unicode normalisation/],
+      ['ß and ss', ['ss.html', '\u00df.html'], /differ only in case or Unicode normalisation/],
+      ['fullwidth and ASCII letters', ['a.html', '\uff41.html'], /differ only in case or Unicode normalisation/],
       ['a name with and without a leading ./', ['./a.html', 'a.html'], /"a\.html" appears twice/],
       ['a name that is both a file and a folder', ['a.html', 'a.html/b.png'], /both a file and a folder/],
     ] as Array<[string, string[], RegExp]>),
@@ -445,14 +454,23 @@ describe('refusing the whole bundle', () => {
     ['a compressed size that runs past the archive', { compressedSize: 100000 }, /past|outside/],
     ['a corrupt deflate stream', { method: 8, compressed: new Uint8Array([0xff, 0xff, 0xff, 0xff]) }, /deflate/],
     ['a deflate stream that inflates past its listed size', { method: 8, data: new Uint8Array(1 << 20), size: 100 }, /inflates past its listed size of 100 bytes/],
+    ['a deflate stream that inflates to less than its listed size', { method: 8, size: 100 }, /decompresses to 7 bytes, not its listed size of 100/],
+    ['a data descriptor that disagrees with the central directory', { method: 8, descriptor: true, descriptorCrc: 0x1234 }, /data descriptor disagrees with the central directory/],
+    ['a local header that disagrees on the method', { localMethod: 8 }, /local header disagrees with the central directory on its method or encryption/],
+    ['a local header that says encrypted', { localFlags: 0x1 }, /local header disagrees with the central directory on its method or encryption/],
+    ['the central-directory encryption bit', { flags: 0x2000 }, /"entry\.html" is encrypted/],
+    ['an unknown Unix file type', { unixMode: 0o070644 }, /unknown Unix file type \(mode 70644\)/],
   ] as Array<[string, Partial<ZipEntry>, RegExp]>)('zip: refuses %s', (_what, fields, reason) => {
     refuses(() => readZip(zip([{ name: 'index.html', data: html('Home') }, { name: 'entry.html', data: 'content', ...fields }])), reason);
   });
 
-  test('zip: refuses a name with non-ASCII bytes but no UTF-8 flag, and a UTF-8 name that is not valid UTF-8', () => {
-    refuses(() => readZip(zip([{ name: 'caf\u00e9.html', data: 'x', utf8: false }])), /non-ASCII.*UTF-8 flag/);
-    refuses(() => readZip(zip([{ name: new Uint8Array([0x61, 0xff, 0x2e, 0x68, 0x74, 0x6d, 0x6c]), data: 'x', utf8: true }])), /not valid UTF-8/);
+  // Ruling 89: macOS Archive Utility writes UTF-8 names without bit 11, so every name is read as strict UTF-8.
+  test('zip: reads every name as strict UTF-8, whatever the UTF-8 flag says', () => {
+    expect(readZip(zip([{ name: 'caf\u00e9.html', data: 'x', utf8: false }])).map((entry) => entry.name)).toEqual(['caf\u00e9.html']);
     expect(readZip(zip([{ name: 'caf\u00e9.html', data: 'x' }])).map((entry) => entry.name)).toEqual(['caf\u00e9.html']);
+    const invalid = new Uint8Array([0x61, 0xff, 0x2e, 0x68, 0x74, 0x6d, 0x6c]);
+    refuses(() => readZip(zip([{ name: invalid, data: 'x', utf8: false }])), /not valid UTF-8/);
+    refuses(() => readZip(zip([{ name: invalid, data: 'x', utf8: true }])), /not valid UTF-8/);
   });
 
   test('tar: refuses a name that is not valid UTF-8', () => {
@@ -495,6 +513,20 @@ describe('refusing the whole bundle', () => {
     refuses(() => readTar(tar([{ name: 'PaxHeader', type: 'x', data: '14 pathx.html\n' }, { name: 'x.html' }])), /pax/);
     refuses(() => readTar(tar([pax({ path: 'x.html' })])), /no entry after it/);
     refuses(() => readTar(tar([longName('x.html')])), /no entry after it/);
+  });
+
+  test('tar: refuses a pax record that is not valid UTF-8', () => {
+    const record = Buffer.concat([Buffer.from('11 path=a'), Buffer.from([0xff]), Buffer.from('\n')]);
+    refuses(() => readTar(tar([{ name: 'PaxHeader', type: 'x', data: record }, { name: 'x.html', data: 'x' }])), /pax header at byte 0 is not valid UTF-8/);
+  });
+
+  test('tar: refuses a pax, global or long-name header over 65536 bytes, before parsing it', () => {
+    const big = 'c'.repeat(65536);
+    refuses(() => readTar(tar([pax({ comment: big }), { name: 'x.html', data: 'x' }])), /pax header at byte 0 is 655\d\d bytes, more than 65536/);
+    refuses(() => readTar(tar([pax({ comment: big }, 'g'), { name: 'x.html', data: 'x' }])), /pax global header \(type g\) at byte 0 is 655\d\d bytes, more than 65536/);
+    refuses(() => readTar(tar([longName('a'.repeat(65536)), { name: 'x', data: 'x' }])), /GNU long-name header at byte 0 is 65537 bytes, more than 65536/);
+    expect(readTar(tar([pax({ comment: 'c'.repeat(65000) }), { name: 'x.html', data: 'x' }])).map((entry) => entry.name)).toEqual(['x.html']);
+    refuses(() => readTar(tar([pax({ comment: 'c'.repeat(100) }), { name: 'x.html', data: 'x' }]), { maxHeaderBytes: 50 }), /more than 50/);
   });
 
   test('tar: refuses data after the end-of-archive marker', () => {
@@ -582,6 +614,19 @@ describe('omitting, not writing', () => {
     ['lib.wasm', /"\.wasm" is not a design file type/],
     ['index.html.sh', /"\.sh" is not a design file type/],
     ['Makefile', /no file extension/],
+    // Ruling 89, C1: instruction names fold as filesystems fold them.
+    ['fold1/AGENT\u017f.md', /agent instructions/],
+    ['fold2/\u017fKILL.md', /agent instructions/],
+    ['fold3/copilot-in\ufb06ructions.md', /agent instructions/],
+    ['fold4/\uff21\uff27\uff25\uff2e\uff34\uff33.md', /agent instructions/],
+    ['AGENTS.override.md', /agent instructions/],
+    // Ruling 89, I1: only names safe in a double-quoted shell word are written.
+    ['hero`id`.png', /name has a character a shell treats specially/],
+    ['assets/hero$(touch${IFS}pwned).png', /name has a character a shell treats specially/],
+    ["it's;id;'.png", /name has a character a shell treats specially/],
+    ['a&b!c.png', /name has a character a shell treats specially/],
+    ['-rf.png', /name has a character a shell treats specially/],
+    ['assets-$HOME/logo.png', /name has a character a shell treats specially/],
   ];
 
   test.each(OMITTED)('omission(%s) gives a reason', (name, reason) => {
@@ -594,6 +639,15 @@ describe('omitting, not writing', () => {
       [`FILE${ext.toUpperCase()}`],
     ]),
   )('keeps %s', (name) => expect(omission(['assets', name], 'file')).toBeNull());
+
+  test.each([['hero (1).png'], ['Caf\u00e9 menu.png'], ['a+b,c@2x.png'], ['under_score.png'], ['2x.png'], ['_draft.html']])('keeps the shell-safe name %s', (name) => {
+    expect(omission(['assets', name], 'file')).toBeNull();
+  });
+
+  test('a folder with a character a shell treats specially omits everything under it', () => {
+    expect(omission(['a&b'], 'dir')).toMatch(/name has a character a shell treats specially/);
+    expect(omission(['a&b', 'logo.png'], 'file')).toMatch(/name has a character a shell treats specially/);
+  });
 
   test('a folder is omitted only for its name, not for a file type', () => {
     expect(omission(['assets'], 'dir')).toBeNull();
@@ -679,13 +733,16 @@ describe('writing design/bundle/', () => {
     expect(summary.files).toHaveLength(6);
   });
 
-  test.skipIf(process.platform === 'win32')('files are 0644, whatever mode the archive gives them', async () => {
+  // Run under umask 0, in a child process so the test process keeps its own umask: a file written
+  // with no explicit mode would then be 0666, so this proves the tool itself sets 0644.
+  test.skipIf(process.platform === 'win32')('files are 0644 and folders 0755, whatever the archive says, even under umask 0', () => {
     const { cwd, design, bundle } = workspace();
     writeFileSync(join(design, 'a.tar.gz'), tgz([{ name: 'run.html', data: 'x', mode: 0o4777 }, { name: 'b/', type: '5', mode: 0o777 }, { name: 'b/c.js', data: 'x', mode: 0o755 }]));
-    await ingest({ archive: 'design/a.tar.gz' }, { cwd });
-    const umask = process.umask();
-    for (const file of ['run.html', 'b/c.js']) expect((lstatSync(join(bundle, file)).mode & 0o7777).toString(8), file).toBe((0o644 & ~umask).toString(8));
-    expect(lstatSync(join(bundle, 'b')).mode & 0o7000).toBe(0);
+    const script = `process.umask(0); const { ingest } = await import(${JSON.stringify(pathToFileURL(TOOL).href)}); await ingest({ archive: 'design/a.tar.gz' });`;
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], { cwd, encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    for (const file of ['run.html', 'b/c.js']) expect((lstatSync(join(bundle, file)).mode & 0o7777).toString(8), file).toBe('644');
+    for (const dir of ['.', 'b']) expect((lstatSync(join(bundle, dir)).mode & 0o7777).toString(8), dir).toBe('755');
   });
 
   test.each(FORMATS)('%s: a refusal writes nothing at all', async (format, build) => {
@@ -763,11 +820,16 @@ describe('writing design/bundle/', () => {
     await refusesAsync(() => ingest({ archive: 'design/big.zip' }, { cwd, limits: { maxArchiveBytes: 10 } }), /larger than 10 bytes/);
   });
 
-  test('takes exactly one input', async () => {
+  test('takes exactly one input, or throws a UsageError', async () => {
     const { cwd } = workspace();
-    await refusesAsync(() => ingest({}, { cwd }), /exactly one/);
-    await refusesAsync(() => ingest({ archive: 'a.zip', dir: 'design/incoming' }, { cwd }), /exactly one/);
-    await refusesAsync(() => ingest({ archive: 'a.zip', host: 'designs.example.net' }, { cwd }), /--host goes with --source/);
+    for (const [input, reason] of [
+      [{}, /exactly one/],
+      [{ archive: 'a.zip', dir: 'design/incoming' }, /exactly one/],
+      [{ archive: 'a.zip', host: 'designs.example.net' }, /--host goes with --source/],
+    ] as const) {
+      await expect(ingest(input, { cwd })).rejects.toBeInstanceOf(UsageError);
+      await expect(ingest(input, { cwd })).rejects.toThrow(reason);
+    }
   });
 });
 
@@ -906,6 +968,18 @@ describe('--dir, a folder the person supplies', () => {
       throw error;
     }
     await refusesAsync(() => ingest({ dir: 'design/linked' }, { cwd }), /not a real folder/);
+    expect(exists(bundle)).toBe(false);
+  });
+
+  test('refuses a hard link inside the folder', async (context) => {
+    const { cwd, root, bundle } = incoming();
+    try {
+      linkSync(join(root, 'screens', 'home.html'), join(root, 'screens', 'copy.html'));
+    } catch (error) {
+      if (['EPERM', 'ENOTSUP', 'EXDEV'].includes((error as NodeJS.ErrnoException).code ?? '')) return context.skip();
+      throw error;
+    }
+    await refusesAsync(() => ingest({ dir: 'design/incoming' }, { cwd }), /"screens\/copy\.html" is a hard link \(it has 2 names\)/);
     expect(exists(bundle)).toBe(false);
   });
 

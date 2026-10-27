@@ -28,6 +28,12 @@ export interface ZipEntry {
   compressed?: Uint8Array;
   /** A local-header name that differs from the central directory's. */
   localName?: string;
+  /** A local-header method that differs from the central directory's. */
+  localMethod?: number;
+  /** Local-header general-purpose bits that differ from the central directory's. */
+  localFlags?: number;
+  /** Written in the data descriptor instead of the CRC the headers carry. */
+  descriptorCrc?: number;
   /** The central record points at this offset, and no local header is written for the entry. */
   at?: number;
   /** Bit 3: the local header carries no CRC or sizes; a signed data descriptor follows the data. */
@@ -66,8 +72,8 @@ export function zip(entries: ZipEntry[], options: ZipOptions = {}): Uint8Array<A
       const local = Buffer.alloc(30);
       local.writeUInt32LE(0x04034b50, 0);
       local.writeUInt16LE(20, 4);
-      local.writeUInt16LE(flags, 6);
-      local.writeUInt16LE(method, 8);
+      local.writeUInt16LE(entry.localFlags ?? flags, 6);
+      local.writeUInt16LE(entry.localMethod ?? method, 8);
       if (!entry.descriptor) {
         local.writeUInt32LE(crc, 14);
         local.writeUInt32LE(compressedSize, 18);
@@ -78,7 +84,7 @@ export function zip(entries: ZipEntry[], options: ZipOptions = {}): Uint8Array<A
       if (entry.descriptor) {
         const descriptor = Buffer.alloc(16);
         descriptor.writeUInt32LE(0x08074b50, 0);
-        descriptor.writeUInt32LE(crc, 4);
+        descriptor.writeUInt32LE((entry.descriptorCrc ?? crc) >>> 0, 4);
         descriptor.writeUInt32LE(compressedSize, 8);
         descriptor.writeUInt32LE(size, 12);
         parts.push(descriptor);

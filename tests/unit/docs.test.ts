@@ -100,7 +100,13 @@ describe('agent-facing documents', () => {
     for (const call of ['--source', '--archive design/', '--dir design/incoming']) expect(skill).toContain(`node tools/design-ingest/ingest.mjs ${call}`);
     const step2 = section(skill, '## 2.', '## 3.');
     expect(step2).toContain('tools/design-ingest/ingest.mjs');
-    for (const command of ['curl ', 'tar -', 'unzip ', 'find design', 'mv ']) expect(step2, command).not.toContain(command);
+    for (const command of ['curl ', 'wget ', 'Invoke-WebRequest', 'tar -', 'unzip ', 'Expand-Archive', '7z ', 'find design', 'mv ', 'cp -']) {
+      expect(step2, command).not.toContain(command);
+    }
+    // The URL is never typed; names inside design/bundle/ are, in double quotes, which the tool's name rule makes safe (Ruling 89).
+    expect(prose(step2)).toContain('Never type the handoff URL into a command');
+    expect(prose(step2)).toContain('safe in a command in double quotes');
+    expect(prose(section(skill, '## 6.', '## 7.'))).toContain('in double quotes');
     expect(read('design/README.md')).toMatch(/50 MB/);
     expect(read('.gitignore').split(/\r?\n/)).toContain('design/incoming/');
   });

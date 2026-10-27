@@ -18,7 +18,7 @@ import { crc32, gunzipSync, inflateRawSync } from 'node:zlib';
 // tests/unit/design-ingest.test.ts holds the hostile shapes it refuses.
 
 /**
- * @typedef {{ maxArchiveBytes: number, maxBytes: number, maxEntries: number, maxDepth: number, maxPathBytes: number, maxRedirects: number, timeoutMs: number }} Limits
+ * @typedef {{ maxArchiveBytes: number, maxBytes: number, maxEntries: number, maxDepth: number, maxPathBytes: number, maxRedirects: number, timeoutMs: number, maxHeaderBytes: number }} Limits
  */
 
 /** The caps. Every reader takes them as a parameter, so a test can use small ones. @type {Readonly<Limits>} */
@@ -34,17 +34,31 @@ export const LIMITS = Object.freeze({
   maxRedirects: 5,
   /** The whole download, every hop and the body. */
   timeoutMs: 60000,
+  /** A tar pax ('x', 'g') or GNU long-name ('L') header's body, checked before it is parsed. */
+  maxHeaderBytes: 65536,
 });
 
 /** Claude Design's handoff host. Any other needs --host, after the person confirms it. */
 export const HANDOFF_HOST = 'api.anthropic.com';
 
 /** Agent-instruction file names, compared lower-cased; so is the `.mdc` suffix. */
-const INSTRUCTIONS = new Set(['claude.md', 'claude.local.md', 'agents.md', 'agent.md', 'skill.md', 'gemini.md', 'copilot-instructions.md']);
+const INSTRUCTIONS = new Set(['claude.md', 'claude.local.md', 'agents.md', 'agents.override.md', 'agent.md', 'skill.md', 'gemini.md', 'copilot-instructions.md']);
 /** The file types a design is made of, compared lower-cased. */
 const DESIGN_TYPES = new Set(['.html', '.htm', '.css', '.js', '.mjs', '.jsx', '.ts', '.tsx', '.json', '.md', '.txt', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.ico', '.woff', '.woff2', '.ttf', '.otf']);
 /** Device names Windows reserves in any folder, with any extension (superscript digits included). */
-const WINDOWS_DEVICE = /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]) *(?:\..*)?$/i;
+const WINDOWS_DEVICE = /^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]) *(?:\..*)?$/i;
+/**
+ * The only segments written: letters, digits, space and `. _ ( ) + , @ -`, starting with a letter,
+ * a digit or `_`. Such a name is safe inside double quotes in a POSIX shell or PowerShell, so a
+ * later step may use a path from design/bundle/ in a command (Ruling 89).
+ */
+const SHELL_SAFE = /^[\p{L}\p{N}_][\p{L}\p{N} ._()+,@-]*$/u;
+/**
+ * A name folded as case-insensitive and normalising filesystems fold it, or more strictly: NFKC,
+ * then upper- and lower-cased, so `ſ` is `s`, `ﬆ` is `st`, the Kelvin sign is `k`, fullwidth
+ * letters are ASCII and `ß` is `ss`. Used for agent-instruction names, file types and duplicates.
+ */
+const fold = (/** @type {string} */ name) => name.normalize('NFKC').toUpperCase().toLowerCase();
 /** A host name of letters, digits and hyphens, whose last label starts with a letter: no IP address, and nothing a shell reads specially. */
 const DNS_NAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -66,6 +80,15 @@ export class Refusal extends Error {
   constructor(message) {
     super(message);
     this.name = 'Refusal';
+  }
+}
+
+/** A command line that gives no input, more than one, or --host without --source. */
+export class UsageError extends Error {
+  /** @param {string} message */
+  constructor(message) {
+    super(message);
+    this.name = 'UsageError';
   }
 }
 
@@ -417,6 +440,7 @@ export function readTar(bytes, limits) {
     const body = offset + 512;
 
     if (type === 'x' || type === 'L') {
+      if (size > caps.maxHeaderBytes) refuse(`the tar's ${type === 'x' ? 'pax' : 'GNU long-name'} header at byte ${offset} is ${size} bytes, more than ${caps.maxHeaderBytes}`);
       if (body + size > data.length) refuse(`the tar's ${type === 'x' ? 'pax' : 'GNU long-name'} header at byte ${offset} runs past the end of the archive`);
       const content = data.subarray(body, body + size);
       if (type === 'x') {
@@ -432,6 +456,7 @@ export function readTar(bytes, limits) {
     if (type === 'K') refuse(`the tar header at byte ${offset} is a GNU long link name (type K), which only a link has`);
     if (type === 'g') {
       // git archive writes one, holding the commit id as a comment. Any other key would set something for every entry.
+      if (size > caps.maxHeaderBytes) refuse(`the tar's pax global header (type g) at byte ${offset} is ${size} bytes, more than ${caps.maxHeaderBytes}`);
       if (body + size > data.length) refuse(`the tar's pax global header (type g) at byte ${offset} runs past the end of the archive`);
       const keys = paxRecords(data.subarray(body, body + size), offset).map(([key]) => key);
       const other = keys.find((key) => key !== 'comment');
@@ -484,13 +509,6 @@ function findEnd(zip) {
   return refuse('the zip has no end of central directory record at its end');
 }
 
-/** @param {Buffer} nameBytes @param {number} flags */
-function zipName(nameBytes, flags) {
-  if (flags & 0x800) return decodeName(nameBytes);
-  if (nameBytes.some((byte) => byte > 0x7f)) refuse(`an entry's name has non-ASCII bytes but no UTF-8 flag (bit 11), so its encoding is unknown (bytes ${hex(nameBytes)})`);
-  return nameBytes.toString('latin1');
-}
-
 /**
  * Reads a zip by its central directory, checking each local header against it. It admits
  * stored and deflate entries that are regular files or folders, and refuses zip64, more than one
@@ -536,7 +554,9 @@ export function readZip(bytes, limits) {
     const local = zip.readUInt32LE(position + 42);
     if (next > end) refuse("the zip's central directory is malformed");
     const nameBytes = zip.subarray(position + 46, position + 46 + nameLength);
-    const rawName = zipName(nameBytes, flags);
+    // Every name is read as strict UTF-8, whatever bit 11 says: macOS Archive Utility writes UTF-8
+    // without it, and this tool is the only reader, so no other tool sees a different name (Ruling 89).
+    const rawName = decodeName(nameBytes);
     position = next;
 
     if (compressed === 0xffffffff || size === 0xffffffff || local === 0xffffffff || diskStart === 0xffff) refuse(`${show(rawName)} is a zip64 entry (a 0xFFFF or 0xFFFFFFFF field)`);
@@ -687,6 +707,7 @@ export function readDir(path, limits) {
         entries.push({ name: relative, kind: 'dir' });
         walk(full, relative);
       } else if (stat.isFile()) {
+        if (stat.nlink > 1) refuse(`${show(relative)} is a hard link (it has ${stat.nlink} names)`);
         total += stat.size;
         if (total > caps.maxBytes) refuse(`the folder holds more than ${bytesText(caps.maxBytes)}`);
         entries.push({ name: relative, kind: 'file', data: readOpened(full, constants.O_NOFOLLOW ?? 0, stat.size, relative) });
@@ -738,7 +759,8 @@ export function checkPath(name, limits) {
 
 /**
  * Why an entry that passed checkPath is not written, or null to write it: a segment that starts
- * with a dot, a segment that names agent instructions, or a file that is not a design file type.
+ * with a dot, a segment that names agent instructions (both compared folded), a segment with a
+ * character a shell treats specially, or a file that is not a design file type.
  *
  * @param {string[]} segments
  * @param {'file' | 'dir'} kind
@@ -746,24 +768,29 @@ export function checkPath(name, limits) {
  */
 export function omission(segments, kind) {
   for (const segment of segments) {
-    if (segment.startsWith('.')) return `${show(segment)} starts with a dot: dotfiles and dot-folders (.git, .claude, .github and the like) are never written`;
+    if (fold(segment).startsWith('.')) return `${show(segment)} starts with a dot: dotfiles and dot-folders (.git, .claude, .github and the like) are never written`;
   }
   for (const segment of segments) {
-    const lower = segment.toLowerCase();
-    if (INSTRUCTIONS.has(lower) || lower.endsWith('.mdc')) return `${show(segment)} names agent instructions, which are never written`;
+    const folded = fold(segment);
+    if (INSTRUCTIONS.has(folded) || folded.endsWith('.mdc')) return `${show(segment)} names agent instructions, which are never written`;
+  }
+  for (const segment of segments) {
+    if (!SHELL_SAFE.test(segment)) {
+      return `name has a character a shell treats specially: ${show(segment)} (only letters, digits, spaces and . _ ( ) + , @ - are written, and a name starts with a letter, a digit or _)`;
+    }
   }
   if (kind === 'dir') return null;
   const last = segments[segments.length - 1] ?? '';
   const dot = last.lastIndexOf('.');
   if (dot <= 0) return 'it has no file extension, so it is not a design file type';
-  const extension = last.slice(dot).toLowerCase();
+  const extension = fold(last.slice(dot));
   return DESIGN_TYPES.has(extension) ? null : `${show(extension)} is not a design file type`;
 }
 
 /**
  * Checks every entry, and decides what to write. One leading `./` on a name is stripped first, and
- * a `.` root folder is skipped. Refuses a bad path, two names that are equal
- * after NFC normalisation and lower-casing, a name that is both a file and a folder, more files
+ * a `.` root folder is skipped. Refuses a bad path, two names that are equal once folded
+ * (NFKC, then upper- and lower-cased), a name that is both a file and a folder, more files
  * and folders (those a path implies included) than the cap, or nothing to write.
  *
  * @param {Entry[]} entries
@@ -776,7 +803,7 @@ export function plan(entries, limits) {
   const claimed = new Map();
   /** @param {string} path @param {'file' | 'dir'} kind @param {boolean} explicit */
   const claim = (path, kind, explicit) => {
-    const key = path.normalize('NFC').toLowerCase();
+    const key = fold(path);
     const prior = claimed.get(key);
     if (!prior) return void claimed.set(key, { path, kind, explicit });
     if (prior.path !== path) refuse(`${show(prior.path)} and ${show(path)} differ only in case or Unicode normalisation`);
@@ -888,8 +915,8 @@ export function writeBundle(design, bundle) {
 export async function ingest(input, deps = {}) {
   const caps = withLimits(deps.limits);
   const given = [input.source === true, input.archive !== undefined, input.dir !== undefined].filter(Boolean).length;
-  if (given !== 1) refuse('give exactly one of --source, --archive <path> or --dir <path>');
-  if (input.host !== undefined && input.source !== true) refuse('--host goes with --source');
+  if (given !== 1) throw new UsageError('give exactly one of --source, --archive <path> or --dir <path>');
+  if (input.host !== undefined && input.source !== true) throw new UsageError('--host goes with --source');
   const cwd = deps.cwd ?? process.cwd();
   const design = resolve(cwd, 'design');
   checkDesign(design);
@@ -948,7 +975,6 @@ export function formatSummary({ from, dirs, files, bytes, omitted }) {
 
 const USAGE = 'usage: node tools/design-ingest/ingest.mjs --source [--host <name>] | --archive <path> | --dir <path>';
 
-class UsageError extends Error {}
 
 /** @param {string[]} argv */
 async function main(argv) {
@@ -964,9 +990,7 @@ async function main(argv) {
   } catch (error) {
     throw new UsageError(errorText(error));
   }
-  const given = [values.source === true, values.archive !== undefined, values.dir !== undefined].filter(Boolean).length;
-  if (given !== 1) throw new UsageError('give exactly one of --source, --archive <path> or --dir <path>');
-  if (values.host !== undefined && values.source !== true) throw new UsageError('--host goes with --source');
+  // ingest() checks that exactly one input is given, and throws a UsageError if not.
   console.log(formatSummary(await ingest({ source: values.source, host: values.host, archive: values.archive, dir: values.dir })));
 }
 
