@@ -261,6 +261,11 @@ const COPY_PREVIEW_SITE = [
 const PREVIEW_CONFIG_FILE = 'wrangler.json';
 const WRITE_PREVIEW_CONFIG = `node trusted/scripts/trusted-config.mjs --preview-config trusted "$RUNNER_TEMP/site/${PREVIEW_CONFIG_FILE}"`;
 const PREVIEW_CONFIG_CHECK = `test -f "$RUNNER_TEMP/site/${PREVIEW_CONFIG_FILE}" || { echo "::error::trusted-config.mjs wrote no preview config"; exit 1; }`;
+// After the copy, in both jobs that take an artifact: wrangler follows a link it finds among the
+// assets (it stat()s each one), so the job stops if the site directory holds one. The search runs as
+// an assignment, so a find that fails stops the job too, where `test -z "$(find ...)"` would pass.
+const SYMLINK_CHECK =
+  'links="$(find "$RUNNER_TEMP/site" -type l)" && test -z "$links" || { echo "::error::the site directory holds a symlink, or find could not search it"; exit 1; }';
 // An empty artifact-ids makes download-artifact take every artifact in the run, so the ID must be
 // one number: non-empty, with nothing left once its digits are removed.
 const ID_CHECK =
@@ -289,8 +294,9 @@ const TOKEN_JOBS = {
     environment: 'production',
     ref: '${{ github.sha }}',
     builder: 'verify',
-    command: 'deploy bundle/worker.js --no-bundle --config wrangler.jsonc',
-    scripts: [ID_CHECK, COPY_SITE],
+    // --upload-source-maps=false: a sourceMappingURL in worker.js could name any file on the runner (Ruling 96).
+    command: 'deploy bundle/worker.js --no-bundle --upload-source-maps=false --config wrangler.jsonc',
+    scripts: [ID_CHECK, COPY_SITE, SYMLINK_CHECK],
     copies: ['"$RUNNER_TEMP/artifact/bundle/worker.js"', '"$RUNNER_TEMP/artifact/dist"', 'trusted/wrangler.jsonc'],
   },
   'ci.yml:preview': {
@@ -298,7 +304,7 @@ const TOKEN_JOBS = {
     ref: 'refs/heads/${{ github.event.repository.default_branch }}',
     builder: 'preview-build',
     command: `preview bundle/worker.js --name pr-\${{ github.event.pull_request.number }} --config ${PREVIEW_CONFIG_FILE}`,
-    scripts: [ID_CHECK, COPY_PREVIEW_SITE, WRITE_PREVIEW_CONFIG, PREVIEW_CONFIG_CHECK],
+    scripts: [ID_CHECK, COPY_PREVIEW_SITE, SYMLINK_CHECK, WRITE_PREVIEW_CONFIG, PREVIEW_CONFIG_CHECK],
     copies: ['"$RUNNER_TEMP/artifact/bundle/worker.js"', '"$RUNNER_TEMP/artifact/dist"'],
   },
   'ci.yml:preview-cleanup': {
@@ -362,6 +368,7 @@ const siteSteps = (builder: string, copy: string) => {
     enabled({ env: { ARTIFACT_ID: id }, run: ID_CHECK }),
     enabled({ uses: TOKEN_ACTIONS.download, with: { 'artifact-ids': id, path: '${{ runner.temp }}/artifact' } }),
     enabled({ run: literal(copy) }),
+    enabled({ run: SYMLINK_CHECK }),
   ];
 };
 const wranglerStep = (command: string, id?: string) =>
@@ -733,6 +740,17 @@ describe.each(Object.entries(TOKEN_JOBS))('the %s job, which holds the token', (
     }
   });
 
+  test('stops if the site directory holds a symlink, after the copy and before wrangler runs', () => {
+    const check = at((step) => scalar(step, 'run', 8) === SYMLINK_CHECK);
+    if (!expected.builder) return void expect(check).toBe(-1);
+    const copy = at((step) => /^cp (?:-R )?"\$RUNNER_TEMP\/artifact\//m.test(scalar(step, 'run', 8) ?? ''));
+    expect(copy).toBeGreaterThan(-1);
+    expect(check).toBeGreaterThan(copy);
+    expect(all.indexOf(wranglers[0]!)).toBeGreaterThan(check);
+    // A copy that follows links would hide one from the check.
+    for (const script of runs) expect(script, script).not.toMatch(/\bcp\b[^\n]* -[A-Za-z]*L/);
+  });
+
   test('stops unless the artifact ID is one number, before it downloads with a download-artifact that fails on a digest mismatch', () => {
     const check = at((step) => scalar(step, 'run', 8) === ID_CHECK);
     for (const download of find('actions/download-artifact')) {
@@ -769,8 +787,8 @@ describe('the preview job, which uploads worker.js byte for byte', () => {
   const runAt = (script: string) => all.findIndex((step) => scalar(step, 'run', 8) === script);
   const wrangler = all.findIndex((step) => action(step) === 'cloudflare/wrangler-action');
 
-  test('copies the site in, writes the config, and stops unless it was written, all before wrangler runs', () => {
-    const order = [runAt(TRUSTED_CONFIG), runAt(COPY_PREVIEW_SITE), runAt(WRITE_PREVIEW_CONFIG), runAt(PREVIEW_CONFIG_CHECK), wrangler];
+  test('copies the site in, checks it for links, writes the config, and stops unless it was written, all before wrangler runs', () => {
+    const order = [runAt(TRUSTED_CONFIG), runAt(COPY_PREVIEW_SITE), runAt(SYMLINK_CHECK), runAt(WRITE_PREVIEW_CONFIG), runAt(PREVIEW_CONFIG_CHECK), wrangler];
     expect(order.every((index) => index >= 0), String(order)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(new Set(order).size).toBe(order.length);
@@ -903,8 +921,8 @@ describe('the token-job pin', () => {
       '',
     ].join('\n');
     const { secrets, shape } = problemsOf(inJob(ci, 'deploy', WRANGLER, step + WRANGLER), 'ci.yml:deploy');
-    expect(secrets).toEqual(['step 10: with.script names secrets']);
-    expect(shape).toContain('11 steps, but the pin has 10');
+    expect(secrets).toEqual(['step 11: with.script names secrets']);
+    expect(shape).toContain('12 steps, but the pin has 11');
   });
 
   test('refuses (c): PREVIEW_URL set to the token, which the comment step would post on the pull request', () => {
@@ -912,8 +930,8 @@ describe('the token-job pin', () => {
       inJob(ci, 'preview', 'PREVIEW_URL: ${{ steps.preview.outputs.preview-url }}', 'PREVIEW_URL: ${{ secrets.CLOUDFLARE_API_TOKEN }}'),
       'ci.yml:preview',
     );
-    expect(secrets).toEqual(['step 13: env.PREVIEW_URL names secrets']);
-    expect(shape.join('\n')).toContain('step 13: ');
+    expect(secrets).toEqual(['step 14: env.PREVIEW_URL names secrets']);
+    expect(shape.join('\n')).toContain('step 14: ');
   });
 
   // Sweep 20261027T190359Z, cluster 1: each way back to a preview that wrangler bundles.
@@ -923,32 +941,32 @@ describe('the token-job pin', () => {
 
   test('refuses (d): a copy of the trusted wrangler.jsonc in place of the written config', () => {
     const copied = inJob(ci, 'preview', WRITE_STEP, '        run: cp trusted/wrangler.jsonc "$RUNNER_TEMP/site/wrangler.json"\n');
-    expect(problemsOf(copied, 'ci.yml:preview').shape.join('\n')).toContain('step 10: ');
+    expect(problemsOf(copied, 'ci.yml:preview').shape.join('\n')).toContain('step 11: ');
     // A config copied in with the site again, and named with --config.
     let before = inJob(ci, 'preview', COPY_PREVIEW_SITE.split('\n').at(-1)!, `${COPY_PREVIEW_SITE.split('\n').at(-1)!}\n          cp trusted/wrangler.jsonc "$RUNNER_TEMP/site/wrangler.jsonc"`);
     before = inJob(before, 'preview', PREVIEW_COMMAND, PREVIEW_COMMAND.replace(`--config ${PREVIEW_CONFIG_FILE}`, '--config wrangler.jsonc'));
     const { shape } = problemsOf(before, 'ci.yml:preview');
     expect(shape.join('\n')).toContain('step 9: ');
-    expect(shape.join('\n')).toContain('step 12: ');
+    expect(shape.join('\n')).toContain('step 13: ');
   });
 
   test('refuses (e): no stop before wrangler when the config is missing', () => {
-    expect(problemsOf(inJob(ci, 'preview', STOP_STEP, ''), 'ci.yml:preview').shape).toContain('12 steps, but the pin has 13');
+    expect(problemsOf(inJob(ci, 'preview', STOP_STEP, ''), 'ci.yml:preview').shape).toContain('13 steps, but the pin has 14');
     // ... nor one that comes too late, after wrangler has run.
     const moved = inJob(inJob(ci, 'preview', STOP_STEP, ''), 'preview', '      - name: Post or update the preview comment\n', `${STOP_STEP}      - name: Post or update the preview comment\n`);
     const { shape } = problemsOf(moved, 'ci.yml:preview');
-    expect(shape.join('\n')).toContain('step 11: ');
     expect(shape.join('\n')).toContain('step 12: ');
+    expect(shape.join('\n')).toContain('step 13: ');
   });
 
   test('refuses (f): a wrangler command that names another config', () => {
     for (const config of ['wrangler.jsonc', 'trusted/wrangler.jsonc', `../site/${PREVIEW_CONFIG_FILE}`]) {
       const mutated = inJob(ci, 'preview', PREVIEW_COMMAND, PREVIEW_COMMAND.replace(`--config ${PREVIEW_CONFIG_FILE}`, `--config ${config}`));
-      expect(problemsOf(mutated, 'ci.yml:preview').shape.join('\n'), config).toContain('step 12: ');
+      expect(problemsOf(mutated, 'ci.yml:preview').shape.join('\n'), config).toContain('step 13: ');
     }
     // A command with no --config at all lets wrangler look for a config beside the entry first.
     const bare = inJob(ci, 'preview', PREVIEW_COMMAND, PREVIEW_COMMAND.replace(` --config ${PREVIEW_CONFIG_FILE}`, ''));
-    expect(problemsOf(bare, 'ci.yml:preview').shape.join('\n')).toContain('step 12: ');
+    expect(problemsOf(bare, 'ci.yml:preview').shape.join('\n')).toContain('step 13: ');
   });
 
   test('refuses (g): a preview config written anywhere but the site directory, or without the mode', () => {
@@ -956,7 +974,37 @@ describe('the token-job pin', () => {
       WRITE_PREVIEW_CONFIG.replace('"$RUNNER_TEMP/site/', '"$RUNNER_TEMP/artifact/'),
       WRITE_PREVIEW_CONFIG.replace('--preview-config ', ''),
     ]) {
-      expect(problemsOf(inJob(ci, 'preview', WRITE_STEP, `        run: ${run}\n`), 'ci.yml:preview').shape.join('\n'), run).toContain('step 10: ');
+      expect(problemsOf(inJob(ci, 'preview', WRITE_STEP, `        run: ${run}\n`), 'ci.yml:preview').shape.join('\n'), run).toContain('step 11: ');
+    }
+  });
+
+  // Fix round 1: the symlink check in both jobs that take an artifact, and deploy's source maps (Ruling 96).
+  const SYMLINK_STEP = `      - name: Stop if the site directory holds a symlink\n        if: ${ENABLED}\n        run: ${SYMLINK_CHECK}\n`;
+  const SYMLINK_RUN = `        run: ${SYMLINK_CHECK}\n`;
+
+  test.each([
+    ['ci.yml:deploy', 'deploy', '10 steps, but the pin has 11', 'step 10: '],
+    ['ci.yml:preview', 'preview', '13 steps, but the pin has 14', 'step 10: '],
+  ] as const)('refuses (h): %s without the symlink check, or with one that can pass over a link', (name, jobName, fewer, checkStep) => {
+    expect(problemsOf(inJob(ci, jobName, SYMLINK_STEP, ''), name).shape).toContain(fewer);
+    for (const run of [
+      // A search for something else.
+      SYMLINK_CHECK.replace('-type l', '-type f'),
+      // The form that passes when find itself fails: its output is empty, and test -z is true.
+      'test -z "$(find "$RUNNER_TEMP/site" -type l)" || { echo "::error::the site directory holds a symlink"; exit 1; }',
+    ]) {
+      expect(problemsOf(inJob(ci, jobName, SYMLINK_RUN, `        run: ${run}\n`), name).shape.join('\n'), run).toContain(checkStep);
+    }
+    // A copy that follows links (cp -L) would hide one from the check, and upload its target.
+    const followed = inJob(ci, jobName, '          cp -R "$RUNNER_TEMP/artifact/dist"', '          cp -RL "$RUNNER_TEMP/artifact/dist"');
+    expect(problemsOf(followed, name).shape.join('\n')).toContain('step 9: ');
+  });
+
+  test('refuses (i): a deploy command that leaves wrangler free to upload a source map', () => {
+    const DEPLOY_COMMAND = `          command: ${TOKEN_JOBS['ci.yml:deploy'].command}\n`;
+    for (const flags of ['', ' --upload-source-maps', ' --upload-source-maps=true']) {
+      const mutated = inJob(ci, 'deploy', DEPLOY_COMMAND, DEPLOY_COMMAND.replace(' --upload-source-maps=false', flags));
+      expect(problemsOf(mutated, 'ci.yml:deploy').shape.join('\n'), flags).toContain('step 11: ');
     }
   });
 });

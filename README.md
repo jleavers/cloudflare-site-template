@@ -214,10 +214,12 @@ runners, as does the `verify` run on each push to `main` that builds what deploy
 `rules` and `tsconfig` steer what wrangler reads and uploads, so review a change to it as you
 would a change to `.github/workflows/`. Only the bundle's `worker.js` ships: a Worker whose
 bundle has more modules (a `.wasm`, text or data import) fails to deploy until the copy step in
-`ci.yml`, and the test that pins it, take them too. Wrangler never bundles that file again, since
-its bundler would follow an import in it to any file on the runner, the token included: the deploy
-passes `--no-bundle`, and a preview runs with a config that `scripts/trusted-config.mjs` writes
-from `main`'s, with bundling, source maps and additional modules off.
+`ci.yml`, and the test that pins it, take them too. Wrangler never bundles that file again, nor
+uploads a source map for it: its bundler would follow an import in the file to any file on the
+runner, the token included, and a source-map comment could name any file there too. The deploy
+passes `--no-bundle` and `--upload-source-maps=false`, and a preview runs with a config that
+`scripts/trusted-config.mjs` writes from `main`'s, with bundling, source maps and additional
+modules off. Both jobs also stop if the directory they upload from holds a symlink.
 
 **Anyone who can merge into `main`, or push a workflow change, can read the token**: every push
 to `main` deploys, running that commit's `scripts/trusted-config.mjs` before wrangler. Where you
@@ -308,7 +310,8 @@ Turnstile's test keys and `log` delivery, and is deleted when the pull request c
 that is intended, because a preview without the addresses cannot send. Leave it. A preview
 uploads the pull request's `worker.js` exactly as its build made it, never bundled again, so the
 `previews` block in `wrangler.jsonc` can hold bindings and `vars`, but not `define`, which only a
-bundle would apply, or `containers`: the preview job refuses both ([why](#cloudflare-api-token)).
+bundle would apply, or `containers`, whose image path could name a file in the directory that holds
+the pull request's `dist/`: the preview job refuses both ([why](#cloudflare-api-token)).
 
 **Short of GitHub Actions minutes?** CI's checks can run on a self-hosted runner (set
 `CI_LINUX_RUNNER`, private repositories only). The deploy and preview jobs always run on

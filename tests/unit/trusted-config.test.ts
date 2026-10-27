@@ -251,7 +251,8 @@ describe('the command line, as the preview job runs it: --preview-config <truste
       '  staging: settings({ config, env: "staging" }),',
       '}))));',
     ].join('\n');
-    const result = spawnSync(process.execPath, ['-e', script, WRANGLER_API, ...files], { encoding: 'utf8', env: sandboxEnv(home) });
+    // It starts no process of its own, so a timeout on this one is enough to end a hang.
+    const result = spawnSync(process.execPath, ['-e', script, WRANGLER_API, ...files], { encoding: 'utf8', env: sandboxEnv(home), timeout: 30_000, killSignal: 'SIGKILL' });
     expect(result.status, result.stderr).toBe(0);
     return JSON.parse(result.stdout) as ReturnType<typeof wranglerReads>;
   }

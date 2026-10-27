@@ -1,15 +1,16 @@
-// Loaded with `node --require` into each process of a wrangler run in preview-upload.test.ts (the
-// wrangler CLI passes its own --require on to the process it starts). It writes one JSON line for
-// every socket connection and DNS lookup the process attempts to $PREVIEW_UPLOAD_NET_LOG, and
-// throws for any destination but 127.0.0.1, so that the run can reach nothing off this machine
-// and the test can show that it tried nothing else.
-const dns = require('node:dns');
-const fs = require('node:fs');
-const net = require('node:net');
+// Preloaded with `node --import` into each process of a wrangler run in preview-upload.test.ts (the
+// wrangler CLI spreads its own execArgv into the process it starts, so that one gets it too). It
+// writes one JSON line for every socket connection and DNS lookup the process attempts to
+// $PREVIEW_UPLOAD_NET_LOG, and throws for any destination but 127.0.0.1, so that the run can reach
+// nothing off this machine. A request wrangler sends through its proxy variables lands on the
+// test's loopback proxy, which refuses it and records the host it asked for.
+import dns from 'node:dns';
+import { appendFileSync } from 'node:fs';
+import net from 'node:net';
 
 const log = process.env.PREVIEW_UPLOAD_NET_LOG;
 if (!log) throw new Error('preview-upload-guard: PREVIEW_UPLOAD_NET_LOG is not set');
-const record = (entry) => fs.appendFileSync(log, `${JSON.stringify(entry)}\n`);
+const record = (entry) => appendFileSync(log, `${JSON.stringify(entry)}\n`);
 
 // net.connect, tls.connect and every HTTP client in Node, undici's included, end here.
 const connect = net.Socket.prototype.connect;
