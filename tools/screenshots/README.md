@@ -44,9 +44,11 @@ bundle's root when the screen uses files in a sibling folder (`../assets/`).
 A design screen is untrusted. `--only screen` and `--only design` render it with JavaScript on,
 in a browser of its own (`design.mjs`), where it may load only files inside `--bundle`, judged by
 resolved path with symlinks followed, and reaches no network at all: no `https:` or `http:` URL,
-no WebSocket, no WebRTC, behind a proxy that goes nowhere. A screen that loads React or Babel from
-a CDN renders without them. `tests/e2e/design-fence.spec.ts` attacks the renderer with a hostile
-screen.
+no WebSocket, WebTransport or WebRTC, no speculative prefetch. Its browser resolves no host name
+or address and has only a proxy that goes nowhere, and it refuses to run if
+`PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK` is set. A screen that loads React or Babel
+from a CDN renders without them. `tests/e2e/design-fence.spec.ts` attacks the renderer with a
+hostile screen, behind that proxy and behind a live one.
 
 **The social preview is uploaded by hand**: GitHub takes it only through the web interface, under
 Settings → General → Social preview.
@@ -55,5 +57,6 @@ Settings → General → Social preview.
 
 `npx playwright install chromium` downloads browser builds that Playwright names by revision but
 does not verify against a hash. The pinned `@playwright/test` version fixes *which* builds are
-requested, not what arrives. Only TLS to Playwright's CDN stands behind them. They are needed
-only to regenerate these images or to run the browser tests.
+requested, not what arrives. Only TLS to Playwright's CDN stands behind them. They are needed to
+regenerate these images, to render a design screen with `--only screen` (the new-site skill does,
+in steps 2 and 8), and to run the browser tests.

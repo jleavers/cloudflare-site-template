@@ -44,7 +44,8 @@ describe('the design screenshot request fence', () => {
     ['ws', 'ws://example.org/'],
     ['wss', 'wss://example.org/'],
     ['ftp', 'ftp://example.org/a.txt'],
-    // Chromium never asks route() about these (tests/e2e/design-fence.spec.ts); refused anyway.
+    // Chromium never asks route() about these: they never leave the renderer, and carry only bytes
+    // the page already has, so this answer is not what stops them. Refused anyway.
     ['a data: URL', 'data:text/html,<p>hi</p>'],
     ['a blob: URL', 'blob:null/0b6a33a2-6a51-4b5e-9a3e-2b1c3f0c9d11'],
     ['javascript:', 'javascript:alert(1)'],
@@ -61,43 +62,47 @@ mkdirSync(outside);
 writeFileSync(join(bundle, 'project', 'screen.html'), '<p>screen</p>');
 writeFileSync(join(outside, 'secret.txt'), 'fake-probe-value');
 
-const canLink = (() => {
+/** Makes one link, and says whether this host allowed it. */
+function link(target: string, path: string, type: 'file' | 'junction') {
   try {
-    symlinkSync(join(outside, 'secret.txt'), join(bundle, 'file-link'), 'file');
-    symlinkSync(outside, join(bundle, 'dir-link'), 'junction');
-    symlinkSync(join(outside, 'gone.txt'), join(bundle, 'dangling-link'), 'file');
-    symlinkSync(bundle, join(root, 'bundle-link'), 'junction');
+    symlinkSync(target, path, type);
     return true;
   } catch {
     return false;
   }
-})();
+}
+// Probed apart: a stock Windows host makes junctions without privilege, but not file symlinks.
+const fileLinks = link(join(outside, 'secret.txt'), join(bundle, 'file-link'), 'file');
+const dirLinks = [
+  link(outside, join(bundle, 'dir-link'), 'junction'),
+  link(join(outside, 'gone'), join(bundle, 'dangling-link'), 'junction'),
+  link(bundle, join(root, 'bundle-link'), 'junction'),
+].every(Boolean);
 const fileUrl = (...parts: string[]) => pathToFileURL(join(...parts)).href;
 
-// Removes exactly what this file made: the links themselves, never what they point to.
+// Removes exactly what this file made, the links themselves and never what they point to. Each
+// removal stands alone, so one that fails cannot strand the rest.
 afterAll(() => {
-  for (const link of [join(bundle, 'file-link'), join(bundle, 'dir-link'), join(bundle, 'dangling-link'), join(root, 'bundle-link')]) {
-    try {
-      unlinkSync(link);
-    } catch {
-      rmdirSyncQuietly(link); // a Windows junction
-    }
-  }
-  unlinkSync(join(bundle, 'project', 'screen.html'));
-  unlinkSync(join(outside, 'secret.txt'));
-  for (const dir of [join(bundle, 'project'), bundle, outside, root]) rmdirSync(dir);
+  const links = [join(bundle, 'file-link'), join(bundle, 'dir-link'), join(bundle, 'dangling-link'), join(root, 'bundle-link')];
+  const files = [join(bundle, 'project', 'screen.html'), join(outside, 'secret.txt')];
+  for (const path of [...links, ...files]) attempt(() => unlinkSync(path)) || attempt(() => rmdirSync(path)); // rmdir: a Windows junction
+  for (const dir of [join(bundle, 'project'), bundle, outside, root]) attempt(() => rmdirSync(dir));
 });
-function rmdirSyncQuietly(path: string) {
+function attempt(remove: () => void) {
   try {
-    rmdirSync(path);
+    remove();
+    return true;
   } catch {
-    // never made
+    return false; // never made, or already gone
   }
 }
 
-describe.skipIf(!canLink)('the fence resolves symlinks', () => {
+test.skipIf(!fileLinks)('the fence refuses a file link to a file outside', () => {
+  expect(allowedForDesign(fileUrl(bundle, 'file-link'), bundle)).toBe(false);
+});
+
+describe.skipIf(!dirLinks)('the fence resolves directory links', () => {
   test.each([
-    ['a file link to a file outside', fileUrl(bundle, 'file-link')],
     ['a file under a directory link to outside', fileUrl(bundle, 'dir-link', 'secret.txt')],
     ['a missing file under a directory link to outside', fileUrl(bundle, 'dir-link', 'not-yet.txt')],
     ['a link that points nowhere', fileUrl(bundle, 'dangling-link')],
