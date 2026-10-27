@@ -88,7 +88,8 @@ describe('readConfig', () => {
         expect(error).toBeInstanceOf(ConfigError);
         message = (error as Error).message;
       }
-      expect(message).toContain('npx wrangler secret put TURNSTILE_SECRET_KEY');
+      expect(message).toContain('Variables and Secrets, type Secret, name TURNSTILE_SECRET_KEY');
+      expect(message).not.toMatch(/wrangler secret/);
       expect(message).not.toContain(TEST_SECRET);
     });
 

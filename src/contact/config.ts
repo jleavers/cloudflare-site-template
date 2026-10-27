@@ -65,7 +65,8 @@ export function readConfig(env: ContactEnv): ContactConfig {
     throw new ConfigError(
       [],
       'TURNSTILE_SECRET_KEY is a Turnstile test secret, which accepts every submission: delivery through ' +
-        `"${provider}" needs a real one. Set it with \`npx wrangler secret put TURNSTILE_SECRET_KEY\`.`,
+        `"${provider}" needs a real one. Add it as a secret in the Cloudflare dashboard: the Worker → Settings → ` +
+        'Variables and Secrets, type Secret, name TURNSTILE_SECRET_KEY.',
     );
   }
   if (config.webhookUrl !== undefined && !config.webhookUrl.startsWith('https://')) {

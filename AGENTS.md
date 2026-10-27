@@ -50,8 +50,8 @@ change that needs one of those tests weakened is the wrong change.
 - **C7 — Example values never reach a live site.** `npm run preflight` allows the template's
   example values, and a design's `[bracketed]` placeholders left in the built pages, on a
   workers.dev demo that delivers only to `log`. It refuses them once `wrangler.jsonc` has a custom
-  domain or sets `DELIVERY_PROVIDER` to `resend`, `slack` or `teams`. `npm run deploy` and CI run
-  it, after building. The handler backs it up: it refuses a Turnstile test secret with any
+  domain or sets `DELIVERY_PROVIDER` to `resend`, `slack` or `teams`. CI runs it, after building,
+  before every deploy. The handler backs it up: it refuses a Turnstile test secret with any
   provider but `log`, and a form posted from a cleartext origin that is not loopback.
 
 ## Rules
@@ -65,9 +65,15 @@ change that needs one of those tests weakened is the wrong change.
 - **Enabling Cloudflare Web Analytics** means setting `site.analytics.cloudflareToken` *and*
   adding `https://static.cloudflareinsights.com` to `script-src` and
   `https://cloudflareinsights.com` to `connect-src` in `public/_headers`.
-- **Never commit a secret.** `TURNSTILE_SECRET_KEY`, `RESEND_API_KEY` and `WEBHOOK_URL` are set
-  with `npx wrangler secret put`; local experiments use a gitignored `.dev.vars`. The Turnstile
-  test keys in the template are public and pass every check, which is why they are allowed.
+- **Never commit a secret.** `TURNSTILE_SECRET_KEY`, `RESEND_API_KEY` and `WEBHOOK_URL` are Worker
+  secrets the owner adds in the Cloudflare dashboard (the Worker → Settings → Variables and
+  Secrets); local experiments use a gitignored `.dev.vars`. The Turnstile test keys in the template
+  are public and pass every check, which is why they are allowed.
+- **Every deploy goes through CI**, a site's first included: its build never holds the Cloudflare
+  token, and its token job runs no code from the lockfile. Add no Deploy to Cloudflare button, no
+  Workers Builds and no local deploy, and never put a Cloudflare login or API token on a machine
+  that runs the site's build or dev server: each would run the lockfile's code beside a
+  credential that can change every Worker on the account (README "Cloudflare API token").
 - **Never call the live site's `/api/contact`, Resend, Slack, Teams or the Cloudflare API** to
   test something. `npm run preview` and the e2e tests use `log` delivery and test keys.
 

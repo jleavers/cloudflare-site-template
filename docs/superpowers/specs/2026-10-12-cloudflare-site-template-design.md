@@ -29,7 +29,7 @@ The output is a working site. Once the template is working and tested, the repos
 - **Delivery providers for v1:** Resend, and Slack or Teams webhooks.
 - **Licence:** Apache-2.0, matching the owner's other public repos (`codervis`, `issuebot`).
 - **CI runners:** the `jleavers/ci-runners` conventions. Browser tests run in CI on the self-hosted Linux VM, after Chromium's system libraries are added to it.
-- **A live demo is part of v1** (§14). The template's example site, with fabricated content, deploys from this repo to workers.dev. A new user can get the same site live on their own account straight away, using a "Deploy to Cloudflare" button, "Use this template" plus two secrets, or `npm run deploy`.
+- **A live demo is part of v1** (§14). The template's example site, with fabricated content, deploys from this repo to workers.dev. A new user can get the same site live on their own account straight away, with "Use this template" plus CI's two secrets. Every deploy goes through CI: there is no "Deploy to Cloudflare" button and no local deploy (D22, §10).
 - **A security sweep runs before the repository goes public** (§18). It is the Claude Code workflow from `jleavers/codervis`, ported with lanes for this repository, as was done for codervis and issuebot before they went public.
 - **Dependabot** keeps the SHA-pinned actions and hooks and the exact npm versions current (§10).
 - **The demo runs on a separate, free Cloudflare account** used for nothing else. The token this public repo holds can then reach only the demo, never the owner's real sites.
@@ -40,7 +40,7 @@ The output is a working site. Once the template is working and tested, the repos
 2. That site's contact form delivers a real message in production, and on a PR preview delivers nothing while still showing success.
 3. The template's own CI is green on GitHub-hosted runners once the repository is public, and every push to `main` redeploys the live demo.
 4. Lighthouse scores the example site at 100 for performance when run locally.
-5. A new user who clicks the README's "Deploy to Cloudflare" button gets a live copy of the demo with no secrets to enter.
+5. A new user who uses this template, stores CI's token and account ID, and pushes gets a live copy of the demo from CI, with no Worker secrets to enter.
 
 ## 2. Differences from the PRD
 
@@ -61,13 +61,13 @@ The output is a working site. Once the template is working and tested, the repos
 | D13 | Alpine.js optional | No Alpine.js. The mobile menu is `<details>`, and the form script is plain JS. | One dependency fewer, and no client runtime. |
 | D14 | `deploy.yml` | `ci.yml`, with jobs `verify`, `e2e`, `deploy`, `preview-build`, `preview`, `preview-cleanup` | It does more than deploy (§10). |
 | D15 | Org-level GitHub secrets | Per-repo secrets set with `gh secret set` | `jleavers/` is a personal account, which has no account-level Actions secrets. |
-| D16 | API token: Workers Scripts:Edit plus Account Settings:Read | The same token is enough for CI. Each site's first deploy runs locally with `wrangler login`. | This token is enough to create and deploy a workers.dev Worker and to deploy previews (shown by the demo deploy). Only attaching a custom domain needs more (Zone → Workers Routes → Write). Doing that once locally keeps the CI token narrow. |
+| D16 | API token: Workers Scripts:Edit plus Account Settings:Read | The same token, held by CI, makes every deploy, a site's first included. A custom-domain site's token adds Zone → Workers Routes → Write (the dashboard's Edit), scoped to that site's zone only. | This token is enough to create and deploy a workers.dev Worker and to deploy previews (shown by the demo deploy). A deploy that adds, changes or removes a custom domain needs Workers Routes Write on each affected zone (Cloudflare, "Workers roles and permissions"). A first deploy from the owner's machine would run the lockfile's code beside a login or token, so there is none (§10). |
 | D17 | `public/robots.txt` | `src/pages/robots.txt.ts`, generated from `site.url` | Removes a per-site edit, because the `Sitemap:` line needs the absolute URL. |
 | D18 | Google-hosted fonts are implied | Astro Fonts API, self-hosted at build time | Better performance, and no third-party requests. |
 | D19 | "Lighthouse 100" with Turnstile on the page | Turnstile loads only when the form nears the viewport | Third-party JS on first load would cost the score. |
 | D20 | (absent) | Claude Design ingestion: `design/`, `SITE_BRIEF.md`, the `new-site` skill | This is the owner's actual workflow. |
 | D21 | (absent) | Unit, contract and browser tests, plus Lighthouse assertions | A public template needs them, and option A makes them the only guardrail. |
-| D22 | (absent) | A live demo of the example site on workers.dev, plus a "Deploy to Cloudflare" button | Lets a new user go from repo to live site at once, and gives the README something to link to and capture. |
+| D22 | (absent) | A live demo of the example site on workers.dev, deployed by CI. No "Deploy to Cloudflare" button. | The demo shows a new user the site at once, and gives the README something to link to and capture. The button is gone because its build runs the lockfile's code beside an account token (§10). |
 | D23 | (absent) | README screenshots and GIF, social preview and LinkedIn header, made by `tools/screenshots/` | Matches the owner's other public repos. |
 
 ## 3. Architecture
@@ -168,7 +168,7 @@ Every stamped-out site must satisfy these, whatever its design. AGENTS.md states
 | C4 | Every page renders through `BaseLayout`. | dist: every HTML page has `<title>`, meta description, canonical, `og:title`, `og:description`, an absolute `og:image` URL and `lang` |
 | C5 | `ContactForm` markup may be restyled, but its contract is fixed: `form[data-contact-form]`, `action="/api/contact"`, `method="post"`, fields `name`, `email`, `message`, `_gotcha` (hidden), a `[data-turnstile]` container, a `[data-status]` live region, and the bundled submit script. | dist checks the structure; e2e checks the behaviour |
 | C6 | The worker stays portable: `src/contact/**` uses only Web-standard APIs, and no KV, D1, Durable Objects or other proprietary bindings are added unless explicitly instructed. | unit tests on Node; a test asserts no `cloudflare:` imports in `src/contact` |
-| C7 | The template's example values, and a design's `[bracketed]` placeholders, may be deployed to a workers.dev demo that delivers only to `log`, which is how the demo works, but never to a live site: one whose `wrangler.jsonc` has a custom domain or sets `DELIVERY_PROVIDER` to `resend`, `slack` or `teams`. The handler adds two refusals: a Turnstile test secret with any provider but `log`, and a form posted from a cleartext origin that is not loopback. | `npm run preflight` (§11.3), run by `npm run deploy` and by the `deploy` job; unit tests on `readConfig` and `handleContact` |
+| C7 | The template's example values, and a design's `[bracketed]` placeholders, may be deployed to a workers.dev demo that delivers only to `log`, which is how the demo works, but never to a live site: one whose `wrangler.jsonc` has a custom domain or sets `DELIVERY_PROVIDER` to `resend`, `slack` or `teams`. The handler adds two refusals: a Turnstile test secret with any provider but `log`, and a form posted from a cleartext origin that is not loopback. | `npm run preflight` (§11.3), run by CI's `verify` job, which the `deploy` job needs; unit tests on `readConfig` and `handleContact` |
 
 ## 6. Site configuration and inputs
 
@@ -307,7 +307,7 @@ Each provider exports `send(submission, config, fetch): Promise<void>` and throw
 
 ### 7.5 Config sources
 
-**The template's top-level vars** make the example site deployable with no secrets at all, which is what the live demo and the Deploy button rely on:
+**The template's top-level vars** make the example site deployable with no secrets at all, which is what the live demo and a new user's first CI deploy (§14.2) rely on:
 
 ```jsonc
 "vars": {
@@ -323,9 +323,11 @@ Each provider exports `send(submission, config, fetch): Promise<void>` and throw
 - set `DELIVERY_PROVIDER`, `CONTACT_TO_EMAIL` and `CONTACT_FROM_EMAIL` to real values;
 - **delete** `TURNSTILE_SECRET_KEY` from `vars`, because a var and a secret cannot share a name.
 
-The owner then sets these with `wrangler secret put`:
+Once CI's first deploy has created the Worker, the owner adds these in the Cloudflare dashboard (the Worker → Settings → Variables and Secrets), each as type Secret, never from a machine that runs the build (§10):
 - `TURNSTILE_SECRET_KEY`;
 - `RESEND_API_KEY` or `WEBHOOK_URL`, depending on the provider.
+
+Type Secret matters: a later `wrangler deploy` keeps secrets, but replaces variables set in the dashboard with `wrangler.jsonc`'s. Until the secrets are there, the handler refuses every post, because `readConfig` finds them missing; that is expected.
 
 Preflight (§11.3) refuses a live site (a custom domain, or real delivery) while the test secret is still in `vars`.
 
@@ -347,7 +349,7 @@ PR builds set `PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA`, the always-p
 - `npm run preview`, Playwright's `webServer` and the screenshot tool all use this one script.
 - A local run never sends a real message, whatever the site's production config says.
 - Anyone who wants to try real delivery locally writes their own `.dev.vars`, with a real Turnstile secret from a widget whose hostnames include `localhost`, because the handler refuses a test secret with any provider but `log`. The README covers this.
-- There is deliberately **no `.dev.vars.example`**. The Deploy button treats every name in that file as a secret to prompt for, which would clash with the vars above.
+- There is deliberately **no `.dev.vars.example`**. `npm run preview` needs no `.dev.vars` (it forces `log` delivery and the test secret), and the one reason to write one, trying real delivery locally, takes real secrets the template should not suggest a file for.
 
 ## 8. Styling, fonts, images and headers
 
@@ -399,7 +401,7 @@ PR builds set `PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA`, the always-p
 
 **Triggers:** `push` to `main`, and `pull_request` (`opened`, `synchronize`, `reopened`, `closed`).
 
-**Runners:** every job installs Node itself with `actions/setup-node` and `.nvmrc`. `e2e` and `preview-build` use `runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}`. `verify` uses `runs-on: ${{ github.event_name == 'push' && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}`: a push (only ever to `main`) builds the artifact that deploys, so it runs on a GitHub-hosted runner, while pull requests and dispatches keep the self-hosted one. The jobs that hold the token (`deploy`, `preview`, `preview-cleanup`) always use `runs-on: ubuntu-latest`. A persistent self-hosted runner keeps its workspaces, tool cache and home directory between jobs, and the other jobs run branch and lockfile code there as the same user. That code could replace `node` or `npx` in `$RUNNER_TOOL_CACHE`, or write `~/.npmrc`, for a token job to run, or for the next `main` build, which would ship its `worker.js` to production beside the Worker's own secrets. Each push to `main` therefore spends hosted minutes on `verify` as well as `deploy`, and a private repository with no hosted minutes left can't deploy from CI that month, and the owner deploys with `npm run deploy` from their own machine instead. That follows the `jleavers/ci-runners` rules: install every toolchain in the job, write only inside the workspace or `$RUNNER_TEMP`, publish no fixed host ports, and remove nothing you didn't create.
+**Runners:** every job installs Node itself with `actions/setup-node` and `.nvmrc`. `e2e` and `preview-build` use `runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}`. `verify` uses `runs-on: ${{ github.event_name == 'push' && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}`: a push (only ever to `main`) builds the artifact that deploys, so it runs on a GitHub-hosted runner, while pull requests and dispatches keep the self-hosted one. The jobs that hold the token (`deploy`, `preview`, `preview-cleanup`) always use `runs-on: ubuntu-latest`. A persistent self-hosted runner keeps its workspaces, tool cache and home directory between jobs, and the other jobs run branch and lockfile code there as the same user. That code could replace `node` or `npx` in `$RUNNER_TOOL_CACHE`, or write `~/.npmrc`, for a token job to run, or for the next `main` build, which would ship its `worker.js` to production beside the Worker's own secrets. Each push to `main` therefore spends hosted minutes on `verify` as well as `deploy`, and a private repository with no hosted minutes left can't deploy that month: its deploys wait until the minutes return. A public repository's hosted minutes are free. That follows the `jleavers/ci-runners` rules: install every toolchain in the job, write only inside the workspace or `$RUNNER_TEMP`, publish no fixed host ports, and remove nothing you didn't create.
 
 **Concurrency** is grouped per workflow and ref. In-progress runs are cancelled for PRs, never for `main`.
 
@@ -418,6 +420,7 @@ PR builds set `PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA`, the always-p
 - **Every job that holds the token runs through an environment** (`production` or `preview`), so that, where the plan allows, the token is an environment secret behind a deployment-branch rule or required reviewers (below).
 - No workflow uses `pull_request_target`.
 - These rules protect every stamped-out site as well, because each one holds a token that can edit every Worker on its account.
+- **They hold on every route, because CI is the only route.** Every deploy of every site goes through this split, a site's first included (store CI's token, push, and `deploy` creates the Worker). There is no "Deploy to Cloudflare" button, no Workers Builds and no `deploy` script: each runs the lockfile's code (npm's install, `astro build`, vite, the lockfile's wrangler) in the build that holds an account token (sweep cluster 3). Worker secrets are set in the dashboard, and the README tells the owner never to keep a Cloudflare login or API token on a machine that runs the site's build or dev server, whose code could read it.
 - `tests/unit/ci-workflow.test.ts` holds every workflow file to these rules. It reads them without a YAML parser, so first it requires each file to be in a **canonical block-YAML subset**, naming `file:line` for any line outside it. A workflow holds only printable ASCII and LF, everywhere, comments and block scalars included: no CR (so no CRLF), tab, BOM or NBSP, and none of the other characters at which YAML also breaks a line (NEL, LS, PS), since a line one of them starts would be invisible to a reading that splits on LF. `.gitattributes` (`* text=auto eol=lf`) checks workflows out with LF, even under `core.autocrlf=true`. Indentation is spaces only. Outside block scalars, a line is blank, a comment, `key:` or `key: value` with a bare key, or `- ` followed by one of those or a value. Each nested block sits exactly two spaces under its key, and no mapping repeats a key. The subset refuses quoted keys, a space before the colon, tags, anchors, aliases, complex keys, flow collections, and any backslash in a double-quoted value. `env`, `with`, `secrets`, `outputs`, `services`, `container`, `strategy`, `defaults`, `inputs` and `permissions` must be a bare `key:` with their mapping on the lines below, never a value on the same line, such as an expression (`env: ${{ fromJSON(...) }}`) or `secrets: inherit`, whose entries no line-based check could see. The token jobs have no `container`, `services` or `strategy` at all. Any `secrets` reference in a job, in any form, block-scalar comments included, but `secrets.GITHUB_TOKEN`, makes it a token holder. Top-level keys are limited to `name`, `run-name`, `on`, `permissions`, `concurrency` and `jobs`: no workflow-level `env`, which would reach every job, the token jobs included.
 - **The token jobs are pinned whole.** For `deploy`, `preview` and `preview-cleanup`, the test holds the exact job: its keys (an allow-list: `name`, `if`, `needs`, `runs-on`, `environment`, `permissions`, `env` and `steps`); its steps, in order, each by its action at its commit SHA or by its exact script, so none can be added, removed or reordered; every `if`, `id`, `with` and `env` value as written, `github-script`'s script and `PREVIEW_URL` included; and step keys from `name`, `id`, `if`, `uses`, `with`, `env` and `run` only, so no `background`, `continue-on-error` or `timeout-minutes`. Only the names are free. `secrets` may appear in an expression only on the `HAS_CLOUDFLARE` line and in wrangler-action's `apiToken` and `accountId`. Any change to a token job therefore changes the test too, and so does Dependabot's monthly Actions update when it moves the SHA of an action a token job uses: that pull request fails `verify` until the SHA in the test's `TOKEN_ACTIONS` moves with it, after a look at the new commit.
 
@@ -439,7 +442,7 @@ PR builds set `PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA`, the always-p
 - **`preview`:** the token as an environment secret behind required reviewers, so on a public repository or on Enterprise only. A pull request's run uses that PR's own workflow file, so the reviewer is the gate. Each preview waits for an approval, and so does each deletion of one when its PR closes.
 - **The `CI_PREVIEWS` gate:** `preview-build`, `preview` and `preview-cleanup` run only when the repository variable `CI_PREVIEWS` is `'true'`, whatever the visibility, because an environment that does not exist yet would be created unprotected. They also run only for a PR into the default branch, whose tip, by name, is the ref the token jobs trust. Previews are off by default; a private site previews locally with `npm run preview`.
 
-- **Secrets:** `CLOUDFLARE_API_TOKEN` (Account → Workers Scripts → Edit, and Account → Account Settings → Read; preview permissions are verified in §16) and `CLOUDFLARE_ACCOUNT_ID`. Where they go:
+- **Secrets:** `CLOUDFLARE_API_TOKEN` (Account → Workers Scripts → Edit, and Account → Account Settings → Read; preview permissions are verified in §16; a custom-domain site's token adds Zone → Workers Routes → Write on that site's zone only, D16) and `CLOUDFLARE_ACCOUNT_ID`. Where they go:
   - public repository (any plan), or private on Enterprise: environment secrets in `production` (deployment branches: `main`) and, for previews, in `preview` (required reviewers), with no repository-level copies;
   - private on Pro or Team: environment secrets in `production`; previews stay off;
   - private on Free: repository secrets.
@@ -493,7 +496,6 @@ Pin each version to the current release at implementation time, with an exact en
 | `verify` | `check` → `test` → `build` → `test:dist` |
 | `preflight` | vitest `preflight` project |
 | `lighthouse` / `lighthouse:ci` | Lighthouse 13 driven by `scripts/lighthouse.mjs` against `wrangler dev` with Playwright's Chromium; budgets in `lighthouse-budgets.json`, median of three runs per path, reports in `.lighthouse/`. The local run asserts performance = 1. The CI run asserts deterministic audits only (§11.4). |
-| `deploy` | `astro build && npm run preflight && wrangler deploy`. Used for a site's first deploy from the owner's machine, for a local demo deploy, and as the Deploy button's deploy command. |
 | `screenshots` | `node tools/screenshots/capture.mjs`: README media (§14.3). Local only, never run in CI. |
 
 All helper scripts are Node (`.mjs`) or TypeScript, so they behave the same on Windows and Linux.
@@ -504,7 +506,7 @@ All helper scripts are Node (`.mjs`) or TypeScript, so they behave the same on W
 
 **Demo mode** applies only when there is no `route` and `routes` is absent or empty, at the top level **and** in every `env.*` block, so the deploy goes to workers.dev only, and `vars.DELIVERY_PROVIDER` is not `resend`, `slack` or `teams`, so nothing reaches a real recipient.
 - It passes, and prints which example values and `[bracketed]` placeholders are still present, so a demo deploy is never blocked.
-- This is how the live demo, the Deploy button and a new user's first experiment work.
+- This is how the live demo and a new user's first deploy (§14.2) work.
 - It fails only if `workers_dev` is `false`, because then the deploy would have no URL at all.
 - It **warns** (never fails) when `site.url` is still on `example.com` but `site.name` is not `Example Co.` or the Worker `name` is not the template's: the site has been customised but still advertises the template's address (canonical and OpenGraph URLs, sitemap).
 
@@ -569,7 +571,7 @@ It only warns when `design/SOURCE.md` and `design/bundle/` are both absent.
   7. Write the privacy page from the brief.
   8. Verify: `verify`, `test:e2e`, `lighthouse`, and a visual comparison of the design screens against the built pages. If a browser tool is available, use screenshots. Otherwise list the URLs for the human to check. Iterate until they match.
   9. Run `npm run preflight`.
-  10. Make the repository the site's own (a site README and SECURITY.md; remove `repository`, `bugs` and `homepage` from `package.json`), then hand back the one-off setup checklist and the first-deploy commands.
+  10. Make the repository the site's own (a site README and SECURITY.md; remove `repository`, `bugs` and `homepage` from `package.json`), then hand back the one-off setup checklist and the first deploy's steps (CI's token, a push, the dashboard secrets).
 
 ## 13. Stamp-out runbook (README)
 
@@ -581,19 +583,17 @@ New users who only want to see the template working start with §14.2 instead. T
 4. **One-off setup** for each account or domain, with commands in the README:
    - Create a Turnstile widget, through the dashboard or `POST /accounts/{id}/challenges/widgets`. Its hostnames are the production domain and `<subdomain>.workers.dev`, which covers previews. Free widgets allow up to 10 hostnames.
    - Verify the sending domain in Resend, or create a Slack or Teams webhook.
-5. **First deploy, from your machine:**
-   1. `npx wrangler login`
-   2. `npx wrangler secret put TURNSTILE_SECRET_KEY`, and `RESEND_API_KEY` or `WEBHOOK_URL`
-   3. `npm run deploy`. This creates the Worker and attaches the custom domain from `routes`, which provisions DNS and TLS.
-   4. Turn on **Always Use HTTPS** for the domain's zone (SSL/TLS → Edge Certificates). Preflight can't check it, and without it the pages can be fetched over http.
-6. **Hand over to CI:**
+5. **First deploy, through CI,** like every deploy after it (§10):
    1. Unless the repository is private on GitHub Free: open the `production` environment that CI's first run made (Settings → Environments), or create it, and limit its deployment branches to `main`. On a repository with no runs yet, `gh secret set --env production` fails with a 404 until the environment exists.
-   2. `gh secret set CLOUDFLARE_API_TOKEN --env production`, or a repository secret on a private Free repository (§10, "Secrets")
+   2. `gh secret set CLOUDFLARE_API_TOKEN --env production`, or a repository secret on a private Free repository (§10, "Secrets"). A custom-domain site's token also has Zone → Workers Routes → Write on that site's zone only (D16).
    3. `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`, likewise
-   4. Optionally, `gh variable set CI_LINUX_RUNNER` plus a runner registration (see ci-runners), and `CI_PREVIEWS` once a `preview` environment with required reviewers holds the token (§10).
-   5. Push. CI deploys `main`; pull-request previews are opt-in.
+   4. Push. CI's `deploy` job creates the Worker and, with a custom domain, attaches it from `routes`, which provisions DNS and TLS. In CI, wrangler asks nothing: it takes over an existing DNS record for the hostname, or the hostname from another Worker.
+   5. Add `TURNSTILE_SECRET_KEY`, and `RESEND_API_KEY` or `WEBHOOK_URL`, as type Secret in the dashboard (the Worker → Settings → Variables and Secrets, §7.5). Until then the handler refuses every post, which is expected.
+   6. Turn on **Always Use HTTPS** for the domain's zone (SSL/TLS → Edge Certificates). Preflight can't check it, and without it the pages can be fetched over http.
+   7. Send a test message from the live site.
+6. **Optionally**, `gh variable set CI_LINUX_RUNNER` plus a runner registration (see ci-runners), and `CI_PREVIEWS` once a `preview` environment with required reviewers holds the token (§10). Pull-request previews are opt-in.
 
-The "under 5 minutes" target covers steps 1, 5 and 6 for an account where step 4 has already been done once. Step 3 depends on the design.
+The "under 5 minutes" target covers steps 1 and 5 for an account where step 4 has already been done once. Step 3 depends on the design.
 
 ## 14. Live demo and README media
 
@@ -605,7 +605,7 @@ The "under 5 minutes" target covers steps 1, 5 and 6 for an account where step 4
 - **Where it runs:** a **dedicated free Cloudflare account** that holds nothing but the demo.
   - This repo's `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` belong to that account.
   - The token is scoped to Workers Scripts:Edit and Account Settings:Read on it.
-  - Until the repo is public and the `deploy` job runs, the owner deploys the demo locally with that account's credentials. For example, a terminal with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` exported for the demo account, then `npm run deploy`. A `wrangler login` session belongs to whichever account is logged in, so a mix-up would put the demo on the main account.
+  - The demo deploys from CI only, through the `deploy` job, like every site (§10): never from the owner's machine.
 - **It is honest about being a demo:**
   - A `DemoNotice` strip renders whenever `site.url` is on `example.com`. It says the site is a demo of cloudflare-site-template, that the content is fictional and that the form sends nothing, and links to the repo.
   - Any site that sets its own URL loses the strip automatically, and the `new-site` skill deletes the component.
@@ -617,15 +617,9 @@ The "under 5 minutes" target covers steps 1, 5 and 6 for an account where step 4
 
 ### 14.2 Try it yourself (README "Quick start")
 
-There are three routes. Each puts the example site live on the user's own workers.dev with no secrets and no inputs.
+One route puts the example site live on the user's own workers.dev with no Worker secrets and no inputs: **"Use this template"**, then `gh secret set CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (in a `production` environment where the plan has environment secrets, or repository secrets, §10), then push. The `deploy` job does the rest. `npm run preview` tries the site locally with no account at all.
 
-1. **Deploy to Cloudflare button**
-   - Markup: `[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/jleavers/cloudflare-site-template)`
-   - Cloudflare clones the repo into the user's GitHub account and creates the Worker under a name they choose. It builds and deploys with Workers Builds, using the `build` and `deploy` scripts.
-   - The copy's own GitHub Actions run `verify` and `e2e` only, because the copy has no Cloudflare secrets.
-   - It requires the repo to be public.
-2. **"Use this template"**, then `gh secret set CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (repository secrets, or in a `production` environment where the plan has environment secrets, §10), then push. The `deploy` job does the rest.
-3. **Locally:** `npm ci`, then `npx wrangler login`, then `npm run deploy`.
+There is no "Deploy to Cloudflare" button and no local deploy. The button builds and deploys with Workers Builds, which installs the lockfile and runs its code (install scripts, `astro build`, vite, the lockfile's wrangler) in the build that holds an account token, and a local deploy runs the same code beside a login or token. Either way one malicious package version could change every Worker on the account, where CI's split (§10) keeps the token away from that code.
 
 ### 14.3 README media: `tools/screenshots/`
 
@@ -649,7 +643,7 @@ The capture tools are Node scripts using Playwright (already a dev dependency), 
   1. the title, with CI and licence badges;
   2. a bold one-line pitch;
   3. `hero.png`;
-  4. a live-demo link and the Deploy button;
+  4. a live-demo link;
   5. Contents;
   6. How it works, with `design-to-site.png` and `contact-form.gif`;
   7. Quick start (§14.2);
@@ -675,7 +669,6 @@ The capture tools are Node scripts using Playwright (already a dev dependency), 
 5. Set "Template repository" (`gh api -X PATCH repos/jleavers/cloudflare-site-template -F is_template=true`), and make the repo public.
 6. Confirm, after the first public push, that CI is green on GitHub-hosted runners and that the `deploy` job redeployed the live demo.
 7. Upload `social-preview.png` under Settings → General → Social preview.
-8. Test the Deploy button from the public README. Confirm the copy goes live with no secrets prompted. Then the owner deletes the copy's repo and Worker.
 
 ## 16. To verify during implementation
 
@@ -692,12 +685,8 @@ These are facts the design depends on that could not be fully confirmed from doc
 4. **`astro check`:** that it runs cleanly with TypeScript 6 on Astro 7.3.
 5. **Chromium on jl-dev-02:** the package list from `playwright install-deps --dry-run chromium`, and that Playwright's Chromium starts there without sudo.
 6. **Lighthouse:** that Lighthouse 13 (via `chrome-launcher`) runs against Playwright's Chromium through `chromePath`.
-7. **First deploy:** that a first `wrangler deploy` with `routes: [{ pattern, custom_domain: true }]` succeeds under `wrangler login` (OAuth).
-8. **Deploy button.** This can only be checked once the repo is public (§15.8). Check:
-   - that Workers Builds accepts the `build` and `deploy` scripts, `run_worker_first` and the `previews` block;
-   - that, with no `.dev.vars.example` or `.env.example`, it prompts for nothing;
-   - how it applies the user's chosen Worker name to `wrangler.jsonc`.
-9. **Media capture:** that `sharp` and `gifenc` together produce a form GIF under 500 KB at a readable width, and that the Turnstile test widget renders under headless Chromium (the e2e tests rely on this too).
+7. **First deploy:** that CI's first `deploy` job, with `routes: [{ pattern, custom_domain: true }]`, creates the Worker and attaches the domain with the token D16 describes (Workers Scripts Edit and Account Settings Read, plus Workers Routes Write on that zone only).
+8. **Media capture:** that `sharp` and `gifenc` together produce a form GIF under 500 KB at a readable width, and that the Turnstile test widget renders under headless Chromium (the e2e tests rely on this too).
 
 ## 17. Out of scope for v1
 
@@ -705,7 +694,7 @@ These are facts the design depends on that could not be fully confirmed from doc
 - Rate limiting and HTTP 429.
 - Alpine.js, or any client framework.
 - Blog, CMS or content collections, and multiple languages.
-- Workers Builds as the CI for stamped-out sites. The Deploy button uses it for a visitor's copy, and the README mentions it in one paragraph as an alternative for anyone short of Actions minutes, but `ci.yml` remains the supported pipeline.
+- Workers Builds, for any site: it runs the lockfile's code in the build that holds the account token (§10). `ci.yml` is the only pipeline.
 - A Windows CI job.
 - A custom domain for the live demo. Preflight's production mode would rightly reject the example values there.
 

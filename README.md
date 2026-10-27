@@ -10,7 +10,7 @@ that emails you or posts to Slack or Teams, and optional previews of pull reques
 
 ![The example site, a fictional garden-design studio called Example Co., shown in a desktop browser window with a cream background, a large serif headline reading "Small gardens, designed to be lived in" and an illustration of green hills under a yellow sun; beside it, the same page on a phone. The content shown is fabricated.](docs/images/hero.png)
 
-**[Open the live demo](https://cloudflare-site-template.84cde4841472e658.workers.dev)** · [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/jleavers/cloudflare-site-template)
+**[Open the live demo](https://cloudflare-site-template.84cde4841472e658.workers.dev)**
 
 ## Contents
 
@@ -67,17 +67,19 @@ strip disappears by itself once a site sets its own URL in `src/config/site.ts`;
 
 ## Quick start
 
-Three ways to put the example site live on **your own** Cloudflare account, each needing no
-Worker secrets (nothing for Turnstile or email delivery). The form works and sends nothing until you configure delivery.
+Put the example site live on **your own** Cloudflare account, with no Worker secrets (nothing
+for Turnstile or email delivery). The form works and sends nothing until you configure delivery.
 
-1. **One click:** the **Deploy to Cloudflare** button above. Cloudflare copies this repository
-   into your GitHub account, builds it and deploys it.
-2. **Use this template** on GitHub. Open the `production` environment that CI's first run made
-   (Settings → Environments), or create it, and limit it to `main`. Then store the CI token and
-   account ID in it and push: `gh secret set CLOUDFLARE_API_TOKEN --env production` and the same
-   for `CLOUDFLARE_ACCOUNT_ID`. On a private Free repository, use repository secrets instead
+1. **Use this template** on GitHub.
+2. Open the `production` environment that CI's first run made (Settings → Environments), or
+   create it, and limit it to `main`. Store the [CI token](#cloudflare-api-token) and account ID
+   in it: `gh secret set CLOUDFLARE_API_TOKEN --env production` and the same for
+   `CLOUDFLARE_ACCOUNT_ID`. On a private Free repository, use repository secrets instead
    ([which token, and where, by plan](#cloudflare-api-token)).
-3. **From your machine:** `npm ci`, `npx wrangler login`, `npm run deploy`.
+3. Push. CI's `deploy` job creates the Worker and puts the site on your workers.dev subdomain.
+
+To try it without deploying, `npm ci` and `npm run preview` run the whole site and Worker locally,
+with no Cloudflare account at all. Every deploy goes through CI ([why](#cloudflare-api-token)).
 
 ## Stamp out a site
 
@@ -86,33 +88,41 @@ You need: a Claude Design handoff (or an archive or artifact link), the facts in
 
 1. `gh repo create <site> --template jleavers/cloudflare-site-template --private --clone`
    The new repository's first CI run starts straight away. With Actions minutes it passes:
-   preflight runs in demo mode, and the deploy skips with a notice until step 6. Dependabot is on
+   preflight runs in demo mode, and the deploy skips with a notice until step 5. Dependabot is on
    for the new repository too. On a private repository with no hosted minutes left, the run is
    red, which is harmless: the checks on pull requests can use a self-hosted runner
    (see [Short of GitHub Actions minutes?](#development)), but every push to `main` builds and
-   deploys on GitHub-hosted minutes, so until they return, deploy with `npm run deploy` from your
-   machine.
+   deploys on GitHub-hosted minutes, so until they return, deploys wait.
 2. Brief Claude Design with [`design/BRIEFING.md`](design/BRIEFING.md), put its design in
    `design/` ([how](design/README.md)) and fill in `SITE_BRIEF.md`.
 3. In Claude Code, run `/new-site`. It rebuilds the pages to match the design, then runs every
    check. Review it with `npm run preview`.
 4. [One-off setup](#one-off-setup) for the account and domain, if you haven't done it before.
-5. First deploy, from your machine: sign in to Cloudflare ([no browser?](#deploying-from-a-machine-without-a-browser)),
-   then `npx wrangler secret put TURNSTILE_SECRET_KEY` and `RESEND_API_KEY` (or `WEBHOOK_URL`),
-   then `npm run deploy`. Before the first deploy, `secret put` asks whether to create the Worker:
-   answer yes, and `npm run deploy` fills it. The deploy attaches your domain, DNS and
-   certificate included. Then turn on **Always Use HTTPS** for the domain's zone (dashboard → SSL/TLS →
-   Edge Certificates). Preflight can't check that setting, and without it the pages can be fetched
-   over http. (The form refuses a cleartext post either way.)
-6. Store the CI token and account ID ([where, by plan](#cloudflare-api-token)). First open the
-   `production` environment that CI's first run made (Settings → Environments), or create it, and
-   limit it to `main`; then `gh secret set CLOUDFLARE_API_TOKEN --env production` and the same for
-   `CLOUDFLARE_ACCOUNT_ID`. On a private Free repository, use repository secrets. Then push. From
-   now on every push to `main` deploys, so anyone who can merge into `main` can read the token: give
-   a coding agent its own GitHub identity ([how](#cloudflare-api-token)). Pull-request previews are
-   [opt-in](#cloudflare-api-token).
+5. First deploy, through CI, like every deploy after it:
+   1. Store the CI token and account ID ([which token, and where, by plan](#cloudflare-api-token);
+      a custom domain needs one more permission on its zone). First open the `production`
+      environment that CI's first run made (Settings → Environments), or create it, and limit it
+      to `main`; then `gh secret set CLOUDFLARE_API_TOKEN --env production` and the same for
+      `CLOUDFLARE_ACCOUNT_ID`. On a private Free repository, use repository secrets.
+   2. Push. CI's `deploy` job creates the Worker. With a custom domain, it also attaches the
+      domain, DNS record and certificate included. Wrangler asks nothing in CI: it takes over a DNS
+      record that already exists for that hostname, or the hostname from another Worker, so check
+      first that nothing else uses it.
+   3. Add the Worker's secrets in the Cloudflare dashboard: the Worker → Settings → Variables and
+      Secrets → Add, type **Secret**, for `TURNSTILE_SECRET_KEY` and `RESEND_API_KEY` (or
+      `WEBHOOK_URL`), then Deploy. Use type Secret, not Text: the next deploy from CI keeps
+      secrets, but replaces every other variable with `wrangler.jsonc`'s. Until this step the form
+      refuses every message, because the handler finds its secrets missing. That is expected.
+   4. Turn on **Always Use HTTPS** for the domain's zone (dashboard → SSL/TLS → Edge
+      Certificates). Preflight can't check that setting, and without it the pages can be fetched
+      over http. (The form refuses a cleartext post either way.)
+   5. Send yourself a test message from the live site.
 
-Steps 1, 5 and 6 take under five minutes once step 4 is done. Step 3 depends on the design.
+   From now on every push to `main` deploys, so anyone who can merge into `main` can read the
+   token: give a coding agent its own GitHub identity ([how](#cloudflare-api-token)). Pull-request
+   previews are [opt-in](#cloudflare-api-token).
+
+Steps 1 and 5 take under five minutes once step 4 is done. Step 3 depends on the design.
 
 ## One-off setup
 
@@ -129,7 +139,9 @@ time and is slow to undo. Only a preloaded domain is protected on a visitor's ve
 Create a widget in the Cloudflare dashboard (Turnstile → Add widget, managed mode), or with
 the API. Its hostnames are your domain and `<your-subdomain>.workers.dev`, which covers every
 preview. A free widget takes up to ten hostnames. Put the **site key** in
-`src/config/site.ts` and the **secret** in `npx wrangler secret put TURNSTILE_SECRET_KEY`.
+`src/config/site.ts`. Keep the **secret** for the Worker's `TURNSTILE_SECRET_KEY`, which you add
+in the dashboard once CI's first deploy has made the Worker (step 5 of
+[Stamp out a site](#stamp-out-a-site)).
 
 ### Delivery
 
@@ -144,10 +156,22 @@ preview. A free widget takes up to ten hostnames. Put the **site key** in
 
 For CI: My Profile → API Tokens → Create Custom Token with **Account → Workers Scripts → Edit**
 and **Account → Account Settings → Read**, limited to one account. That is enough to create and
-deploy a workers.dev Worker and to deploy previews. Only **attaching a custom domain** needs more
-(Zone → Workers Routes → Write), which is why that first deploy runs from your machine with
-`wrangler login` (or a token that has it). A token with Workers Scripts → Edit can change **every** Worker on its account,
-so keep the repositories that hold one to yourself.
+deploy a workers.dev Worker and to deploy previews. A site with a **custom domain** adds
+**Zone → Workers Routes → Edit** (Cloudflare's permissions page calls it Write), with the token's
+zone resources limited to that site's zone alone: Cloudflare requires it, on each affected zone,
+for a deploy that adds, changes or removes a custom domain
+([Workers roles and permissions](https://developers.cloudflare.com/workers/authorization/workers/)).
+A token with Workers Scripts → Edit can change **every** Worker on its account, so keep the
+repositories that hold one to yourself.
+
+**Every deploy goes through CI, a site's first included.** There is no Deploy to Cloudflare
+button, no Workers Builds and no deploy from your own machine, because each of them runs the
+lockfile's code (npm's install, `astro build`, vite, the lockfile's own wrangler) beside a
+credential that can change every Worker on the account: one bad package version would get that
+credential. CI builds without the token, and deploys with no code from the lockfile. The same
+goes for your machines: **no Cloudflare login or API token on a machine that runs the site's build
+or dev server**, since any package the build runs could read it. That is also why Worker secrets
+are set in the dashboard.
 
 CI hands the token only to jobs that run no code from the branch or the lockfile. They take
 `wrangler.jsonc` and the wrangler version from `main` (for a pull request, from the default
@@ -179,7 +203,8 @@ store the token decides who else can reach it:
 
 The jobs that hold the token, and `verify` on each push to `main`, need GitHub-hosted minutes, so
 each push to `main` spends them twice. A private repository that has used up its minutes can't
-deploy from CI that month: deploy with `npm run deploy` from your machine instead.
+deploy that month: its deploys wait until the minutes return. A public repository's hosted
+minutes are free.
 
 **Previews** are off unless you set the repository variable `CI_PREVIEWS` to `true`
 (`gh variable set CI_PREVIEWS --body true`). Do that only once the `preview` environment has
@@ -201,36 +226,6 @@ plan), require one approval on `main` in a ruleset (Settings → Rules → Rules
 approvals when new commits are pushed, and keep the agent's identity off its bypass list. On a
 private Free repository there are no rulesets, so the agent's Contents write can push to `main`.
 
-### Deploying from a machine without a browser
-
-`npx wrangler login` prints an OAuth link, but the browser then redirects to
-`http://localhost:8976/oauth/callback`, which lands on the browser's machine, not on an SSH
-dev box or VM. Two ways round it:
-
-- **Use an API token instead of `wrangler login`.** The [CI token](#cloudflare-api-token) works
-  from your terminal for a workers.dev site. Attaching a custom domain also needs
-  **Zone → Workers Routes → Write**. `read -s` and `-MaskInput` keep the token off the screen
-  and out of shell history. `Read-Host -MaskInput` needs PowerShell 7.1 or later; Windows
-  PowerShell 5.1 doesn't have it.
-
-  bash:
-
-  ```bash
-  read -rsp 'Cloudflare API token: ' CLOUDFLARE_API_TOKEN && echo && export CLOUDFLARE_API_TOKEN
-  export CLOUDFLARE_ACCOUNT_ID=<account id>
-  ```
-
-  PowerShell:
-
-  ```powershell
-  $env:CLOUDFLARE_API_TOKEN = Read-Host -MaskInput 'Cloudflare API token'
-  $env:CLOUDFLARE_ACCOUNT_ID = '<account id>'
-  ```
-
-- **Forward wrangler's callback port** from the machine with the browser:
-  `ssh -L 8976:localhost:8976 <host>`, then run `npx wrangler login` in that session and open its
-  link locally.
-
 ## Configuration reference
 
 | Where | Name | What |
@@ -241,7 +236,7 @@ dev box or VM. Two ways round it:
 | `wrangler.jsonc` vars | `DELIVERY_PROVIDER` | `resend`, `slack`, `teams` or `log` |
 | | `CONTACT_TO_EMAIL`, `CONTACT_FROM_EMAIL` | Resend's recipient and sender |
 | | `TURNSTILE_FAIL_OPEN` | `true` lets messages through when Turnstile is unreachable (default `false`) |
-| Worker secrets | `TURNSTILE_SECRET_KEY` | always |
+| Worker secrets, set in the dashboard | `TURNSTILE_SECRET_KEY` | always |
 | | `RESEND_API_KEY` or `WEBHOOK_URL` | for the provider |
 | GitHub secrets | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | for CI deploys and previews: in the `production` and `preview` environments, or repository secrets on a private Free repository ([where](#cloudflare-api-token)) |
 | GitHub variables | `CI_LINUX_RUNNER` | optional: a self-hosted runner label (private repositories only) for `e2e`, `preview-build`, and the pull-request and dispatch runs of `verify` |
@@ -256,8 +251,7 @@ dev box or VM. Two ways round it:
 | `npm run verify` | type check, unit tests, build, contract tests on the build |
 | `npm run test:e2e` | the browser tests (Playwright, Chromium) |
 | `npm run lighthouse` | the Lighthouse budgets; performance must score 100 |
-| `npm run preflight` | is this checkout still the template, or does a built page still have a `[bracketed]` design placeholder? Example values are refused once the site is live: a custom domain, or `DELIVERY_PROVIDER` set to `resend`, `slack` or `teams` (decides whether a deploy may go ahead; build first) |
-| `npm run deploy` | build, preflight, deploy |
+| `npm run preflight` | is this checkout still the template, or does a built page still have a `[bracketed]` design placeholder? Example values are refused once the site is live: a custom domain, or `DELIVERY_PROVIDER` set to `resend`, `slack` or `teams` (CI runs it to decide whether a deploy may go ahead; build first) |
 
 `npm run build` downloads the site's fonts from Google Fonts at build time, through the Astro
 Fonts API, so building needs network access, while visitors never contact Google.
@@ -274,12 +268,11 @@ Turnstile's test keys and `log` delivery, and is deleted when the pull request c
 that is intended, because a preview without the addresses cannot send. Leave it.
 
 **Short of GitHub Actions minutes?** CI's checks can run on a self-hosted runner (set
-`CI_LINUX_RUNNER`, private repositories only), or you can connect the repository to Cloudflare's
-[Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/) instead, which builds
-on Cloudflare's own minutes. The deploy and preview jobs always run on GitHub-hosted runners,
-because they hold the Cloudflare token, and so does `verify` on a push to `main`, because it
-builds what deploys: each push to `main` spends hosted minutes twice. With none left, a private
-repository can't deploy from CI that month, so deploy with `npm run deploy` from your machine.
+`CI_LINUX_RUNNER`, private repositories only). The deploy and preview jobs always run on
+GitHub-hosted runners, because they hold the Cloudflare token, and so does `verify` on a push to
+`main`, because it builds what deploys: each push to `main` spends hosted minutes twice. With none
+left, a private repository's deploys wait until the minutes return; a public repository's hosted
+minutes are free. There is no other way to deploy ([why](#cloudflare-api-token)).
 
 **Supply chain.** `.npmrc` sets `min-release-age=7`, the same seven days as the Dependabot
 cooldown, so a hand `npm install` takes no release younger than a week (`npm ci` installs what the

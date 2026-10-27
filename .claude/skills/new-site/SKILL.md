@@ -112,8 +112,9 @@ Write the inventory to `design/INVENTORY.md`, and commit it with the site:
   - `"name"` = the brief's slug.
   - `"vars"`: set `DELIVERY_PROVIDER` and, for Resend, `CONTACT_TO_EMAIL` and
     `CONTACT_FROM_EMAIL`, written as `Site Name <address@domain>`: use the site name as the display name
-    unless the brief gives one. **Delete `TURNSTILE_SECRET_KEY` from `"vars"`**: it becomes a secret
-    at first deploy, and a var and a secret cannot share a name.
+    unless the brief gives one. **Delete `TURNSTILE_SECRET_KEY` from `"vars"`**: it becomes a Worker
+    secret, which the person adds in the dashboard after the first deploy, and a var and a secret
+    cannot share a name.
   - Leave `"previews"` exactly as it is.
   - If the brief has a production domain, add
     `"routes": [{ "pattern": "<domain>", "custom_domain": true }]`, and set `site.url` to
@@ -214,32 +215,17 @@ with `file:line`, and say that production preflight (a custom domain, or `DELIVE
 
 1. **Turnstile widget:** Cloudflare dashboard → Turnstile → Add widget, managed mode, hostnames
    `<production domain>` and `<their-subdomain>.workers.dev`. Send me the site key (I'll put it in
-   `site.ts`) and keep the secret for step 3.
+   `site.ts`) and keep the secret for step 4.
 2. **Delivery:** Resend → verify the sending domain (DNS records) and create an API key; or
    create the Slack or Teams incoming webhook.
-3. **First deploy, from your machine:** sign in, then
-   `npx wrangler secret put TURNSTILE_SECRET_KEY` →
-   `npx wrangler secret put RESEND_API_KEY` (or `WEBHOOK_URL`) → `npm run deploy`.
-   - Then turn on **Always Use HTTPS** for the domain's zone (SSL/TLS → Edge Certificates). Preflight
-     can't check it, and without it the pages can be fetched over http.
-   - Before the first deploy, `secret put` asks whether to create the Worker: answer yes; it
-     creates an empty Worker and `npm run deploy` fills it.
-   - Signing in: `npx wrangler login` where there is a browser. On a workers.dev site (no custom
-     domain) you can skip it and use the CI token from your terminal (Workers Scripts → Edit,
-     Account Settings → Read): bash,
-     `read -rsp 'Cloudflare API token: ' CLOUDFLARE_API_TOKEN && echo && export CLOUDFLARE_API_TOKEN`
-     and `export CLOUDFLARE_ACCOUNT_ID=<account id>`; PowerShell,
-     `$env:CLOUDFLARE_API_TOKEN = Read-Host -MaskInput 'Cloudflare API token'` (PowerShell 7.1 or
-     later) and `$env:CLOUDFLARE_ACCOUNT_ID = '<account id>'`.
-   - On a machine without a browser (SSH, a dev VM), `wrangler login` redirects to
-     `http://localhost:8976/oauth/callback` on the browser's machine. Use the token (a custom
-     domain also needs Zone → Workers Routes → Write), or forward the port from the machine with
-     the browser: `ssh -L 8976:localhost:8976 <host>`, run `npx wrangler login` in that session
-     and open its link locally.
-4. **CI:** store the CI token (Workers Scripts → Edit, Account Settings → Read) and the account
-   ID, then push. Every push to `main` builds and deploys on GitHub-hosted runners: with no
-   hosted minutes left, deploy with `npm run deploy` from your machine. Anyone who can merge into
-   `main`, or push a workflow change, can read the token.
+3. **First deploy, through CI:** every deploy goes through CI, the first included. There is no
+   deploy from your machine: keep no Cloudflare login or API token on a machine that runs this
+   site's build or dev server, because any package the build runs could read it (template README,
+   https://github.com/jleavers/cloudflare-site-template#cloudflare-api-token).
+   - Create the CI token: Account → Workers Scripts → Edit and Account → Account Settings → Read,
+     limited to one account. With a custom domain, add Zone → Workers Routes → Edit (Cloudflare's
+     permissions page calls it Write), with the token's zone resources limited to
+     `<production domain>`'s zone alone: a deploy that attaches a custom domain needs it.
    - On a public repository, or a private one on a paid plan: Settings → Environments → open the
      `production` environment that CI's first run made, or create it, and limit it to the `main`
      branch, then `gh secret set CLOUDFLARE_API_TOKEN --env production` and
@@ -248,6 +234,14 @@ with `file:line`, and say that production preflight (a custom domain, or `DELIVE
    - On a private repository on GitHub Free, which has no environment secrets:
      `gh secret set CLOUDFLARE_API_TOKEN` and `gh secret set CLOUDFLARE_ACCOUNT_ID`. It has no
      rulesets either, so any identity with Contents write can push to `main`.
+   - Then, once the site key from step 1 is in `site.ts` (CI's preflight refuses the test key on a
+     live site), push. CI's `deploy` job creates the Worker, and with a custom domain attaches it, DNS
+     record and certificate included. Wrangler asks nothing in CI: it takes over a DNS record that
+     already exists for that hostname, or the hostname from another Worker, so check first that
+     nothing else uses it.
+   - From then on every push to `main` builds and deploys on GitHub-hosted runners: with no hosted
+     minutes left, deploys wait until they return. Anyone who can merge into `main`, or push a
+     workflow change, can read the token.
    - Pull-request previews are off until the repository variable `CI_PREVIEWS` is `true`. Turn
      them on only as the template's README describes
      (https://github.com/jleavers/cloudflare-site-template#cloudflare-api-token): they need a
@@ -256,4 +250,12 @@ with `file:line`, and say that production preflight (a custom domain, or `DELIVE
      user or a GitHub App installation), never your own credential or SSH key, with an HTTPS
      token without workflow permission. Where the plan has rulesets, require one approval on
      `main` and keep that identity off the bypass list (same README section).
+4. **Secrets and HTTPS, once the Worker exists:**
+   - Cloudflare dashboard → the Worker → Settings → Variables and Secrets → Add, type **Secret**:
+     `TURNSTILE_SECRET_KEY` (from step 1) and `RESEND_API_KEY` (or `WEBHOOK_URL`), then Deploy.
+     Type Secret, not Text: CI's next deploy keeps secrets but replaces every other variable with
+     `wrangler.jsonc`'s. Until they are there the form refuses every message, because the handler
+     finds its secrets missing. That is expected.
+   - Turn on **Always Use HTTPS** for the domain's zone (SSL/TLS → Edge Certificates). Preflight
+     can't check it, and without it the pages can be fetched over http.
 5. **Check the live form:** send yourself a message from the production site.

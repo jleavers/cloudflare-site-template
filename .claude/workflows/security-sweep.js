@@ -945,8 +945,8 @@ zizmor's audit list for the current rules. Read the workflow; do not run it.`,
     title: 'what the dependencies, and the history GitHub serves, can carry',
     web: true,
     brief: `The template pins exact versions (\`.npmrc\`, \`package-lock.json\`), and every stamped-out
-site installs the same tree: on the owner's machine, in CI with the Cloudflare token present, and in
-Cloudflare's own build when the Deploy button is used.
+site installs the same tree: on the owner's machine, and in CI's tokenless jobs. Every deploy goes
+through CI, whose token job runs none of it; there is no Deploy button, Workers Builds or local deploy.
 
 Cover: the lockfile -- every \`resolved\` URL is the npm registry and every package has an
 \`integrity\` hash; packages with install scripts (\`hasInstallScript\`) and what each runs; known
@@ -1028,7 +1028,7 @@ ${DISCLOSURE_READ_BOUND}`,
     title: 'what any GitHub account can do once the repository is public',
     web: true,
     brief: `Once public, any GitHub account can fork this repository, open issues and pull requests,
-comment, use it as a template, and click its Deploy to Cloudflare button. Your question is what each
+comment, and use it as a template, with CI on the copy. Your question is what each
 of those reaches, given the repository's settings as they are now.
 
 Cover: Actions settings -- approval for fork pull requests, the default \`GITHUB_TOKEN\` permissions,
@@ -1036,7 +1036,7 @@ whether workflows can approve pull requests; self-hosted runners still registere
 (there must be none -- jleavers/ci-runners "Trust"); secret and variable *names* (never values),
 environments and their protection; branch protection or rulesets on \`main\`; collaborators and
 deploy keys; webhooks; private vulnerability reporting and \`SECURITY.md\`; issue and pull-request
-templates; what "Use this template" and the Deploy button give a stranger, and whether their copy can
+templates; what "Use this template", and CI on the copy, give a stranger, and whether their copy can
 reach this repository or the demo's Cloudflare account; and which agents (this sweep, an agent a
 stranger points at an issue) read text an outsider can write.
 

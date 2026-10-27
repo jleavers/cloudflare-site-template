@@ -83,7 +83,7 @@ export function checkPreflight({ wrangler, site, designPresent, placeholders }: 
     [wrangler.name === TEMPLATE_WORKER_NAME, `wrangler.jsonc "name" is still "${TEMPLATE_WORKER_NAME}"`],
     [isExampleHost(siteHost), `site.url is still on example.com (${site.url})`],
     [TURNSTILE_TEST_KEY.test(site.contact.turnstileSiteKey), 'site.contact.turnstileSiteKey is a Turnstile test key'],
-    ['TURNSTILE_SECRET_KEY' in vars, 'TURNSTILE_SECRET_KEY is in wrangler.jsonc "vars": delete it there and run `npx wrangler secret put TURNSTILE_SECRET_KEY`'],
+    ['TURNSTILE_SECRET_KEY' in vars, 'TURNSTILE_SECRET_KEY is in wrangler.jsonc "vars": delete it there, and once CI has deployed, add it as a secret in the Cloudflare dashboard (the Worker → Settings → Variables and Secrets)'],
     [!provider || provider === 'log', `DELIVERY_PROVIDER is ${provider ? `"${provider}"` : 'missing'}: set resend, slack or teams`],
     [
       provider === 'resend' && [vars.CONTACT_TO_EMAIL, vars.CONTACT_FROM_EMAIL].some((email) => !email || isExampleHost(domainOf(email))),

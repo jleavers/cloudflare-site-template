@@ -213,9 +213,45 @@ describe('agent-facing documents', () => {
     test('the README links design/BRIEFING.md', () => expect(read('README.md')).toContain('design/BRIEFING.md'));
   });
 
-  eachDoc('%s covers a first deploy without a browser', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
-    const text = read(doc);
-    for (const fragment of ['8976', 'CLOUDFLARE_API_TOKEN', 'Read-Host -MaskInput']) expect(text, `${doc}: ${fragment}`).toContain(fragment);
+  // Every deploy goes through CI, a site's first included, and the Worker's secrets are set in the
+  // dashboard: a local deploy, a login or a token on a machine that runs the build would sit beside
+  // the lockfile's code (sweep cluster 3, Ruling 84).
+  eachDoc('%s sends the first deploy through CI, and the secrets through the dashboard', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
+    const text = read(doc).replace(/\s+/g, ' '); // as rendered: line breaks are spaces
+    for (const fragment of ['CLOUDFLARE_API_TOKEN', 'Variables and Secrets', 'type **Secret**', 'Workers Routes', 'Always Use HTTPS', 'finds its secrets missing']) {
+      expect(text, `${doc}: ${fragment}`).toContain(fragment);
+    }
+  });
+
+  // A doc may say what not to do, but never tells the reader to sign in, set a secret or deploy from their machine.
+  test.each(['README.md', 'AGENTS.md', '.claude/skills/new-site/SKILL.md', 'SECURITY.md'].filter(exists))('%s prescribes no local deploy, login or secret put', (doc) => {
+    const text = read(doc).replace(/\s+/g, ' ');
+    for (const command of ['wrangler login', 'wrangler secret put', 'npm run deploy', 'wrangler deploy']) {
+      expect(text.replaceAll('wrangler deploy --dry-run', ''), `${doc}: ${command}`).not.toContain(command);
+    }
+  });
+
+  test('no package.json script deploys, signs in or sets a secret', () => {
+    const commands = Object.values(JSON.parse(read('package.json')).scripts as Record<string, string>);
+    for (const command of commands) expect(command.replaceAll('deploy --dry-run', '')).not.toMatch(/wrangler\b.*\b(deploy|login|secret|versions)\b/);
+    expect(scripts).not.toContain('deploy');
+  });
+
+  test('AGENTS.md tells an agent why every deploy goes through CI', () => {
+    const agents = read('AGENTS.md').replace(/\s+/g, ' ');
+    for (const fragment of ['**Every deploy goes through CI**', 'no Deploy to Cloudflare button', 'Workers Builds', 'never put a Cloudflare login or API token on a machine that runs the site\'s build']) {
+      expect(agents, fragment).toContain(fragment);
+    }
+  });
+
+  describe.skipIf(!templateReadme)('template README only', () => {
+    test('the README has no Deploy to Cloudflare button, and says why every deploy goes through CI', () => {
+      const readme = read('README.md').replace(/\s+/g, ' ');
+      expect(readme).not.toContain('deploy.workers.cloudflare.com');
+      expect(readme).toContain('**Every deploy goes through CI, a site\'s first included.**');
+      expect(readme).toContain('**no Cloudflare login or API token on a machine that runs the site\'s build or dev server**');
+      expect(readme).toContain('beside a credential that can change every Worker on the account');
+    });
   });
 
   test('the new-site skill says CONTACT_FROM_EMAIL may carry a display name', () => {
@@ -261,9 +297,9 @@ describe('agent-facing documents', () => {
 
   // A pull-request rule alone requires no approval, so an agent holding the owner's credential, or
   // any Contents-and-Pull-requests token, can open a pull request and merge it.
-  eachDoc('%s keeps agents out of main with their own identity and a required approval, and deploys by hand without hosted minutes', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
+  eachDoc('%s keeps agents out of main with their own identity and a required approval, and says deploys wait without hosted minutes', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
     const text = read(doc).replace(/\s+/g, ' '); // as rendered: line breaks are spaces
-    for (const fragment of ['merge into `main`', 'separate GitHub identity', 'own credential', 'one approval', 'bypass list', 'GitHub-hosted', 'npm run deploy']) {
+    for (const fragment of ['merge into `main`', 'separate GitHub identity', 'own credential', 'one approval', 'bypass list', 'GitHub-hosted', 'deploys wait']) {
       expect(text, `${doc}: ${fragment}`).toContain(fragment);
     }
     expect(text).not.toMatch(/ruleset that requires a pull request|unless a ruleset requires a pull request/);
@@ -328,8 +364,8 @@ describe('agent-facing documents', () => {
   eachDoc("%s (%s) opens or creates the production environment before setting its secrets", [
     ['README.md', '## Quick start', '## Stamp out a site'],
     ['README.md', '## Stamp out a site', '## One-off setup'],
-    ['README.md', '### Cloudflare API token', '### Deploying from a machine'],
-    ['.claude/skills/new-site/SKILL.md', '4. **CI:**', '## '],
+    ['README.md', '### Cloudflare API token', '## Configuration reference'],
+    ['.claude/skills/new-site/SKILL.md', '3. **First deploy, through CI:**', '## '],
     [SPEC, '## 13.', '## 14.'],
   ], (doc: string, from: string, to: string) => {
     expect(section(prose(read(doc)), from, to)).toContain("CI's first run");
@@ -340,10 +376,6 @@ describe('agent-facing documents', () => {
     for (const fragment of ['deployment branches', 'gh secret set CLOUDFLARE_API_TOKEN --env production', 'gh secret delete CLOUDFLARE_API_TOKEN', 'gh secret delete CLOUDFLARE_ACCOUNT_ID', '`CI_PREVIEWS` unset', 'ruleset', 'queued forever']) {
       expect(release, fragment).toContain(fragment);
     }
-  });
-
-  describe.skipIf(!templateReadme)('template README only', () => {
-    test('the README says Read-Host -MaskInput needs PowerShell 7.1', () => expect(read('README.md')).toContain('PowerShell 7.1'));
   });
 
   // In this repository nothing above may skip; a renamed title or a reworded marker would hide it.

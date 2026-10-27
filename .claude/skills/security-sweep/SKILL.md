@@ -443,8 +443,9 @@ repository's AGENTS.md forbids agents from deleting a directory tree.
 **Keep the run directory.** It is the comparison the next sweep needs.
 
 **Give back what phase 0 took away,** once the clusters are filed or held: unset the read-only `GH_TOKEN`, then log back in to `gh`
-(`gh auth login`, unless phase 7 already did), reload the SSH keys you want (`ssh-add`), log back in to Wrangler if you want it
-(`npx wrangler login`), and move `~/.npmrc` back.
+(`gh auth login`, unless phase 7 already did), reload the SSH keys you want (`ssh-add`), and move `~/.npmrc` back.
+Leave Wrangler logged out: this repository keeps no Cloudflare login or API token on a machine that
+runs its build, and every deploy goes through CI (README, "Cloudflare API token").
 
 ## Growing the lanes
 
