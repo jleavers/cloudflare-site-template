@@ -180,23 +180,27 @@ describe('b. npm runs no install scripts in this repository', () => {
     const problems: string[] = [];
     text.split(/\r?\n/).forEach((line, i) => {
       const at = `${where}:${i + 1}`;
-      let rebuildByName = false;
-      for (const match of line.matchAll(/\bnpm\s+(?:rebuild|rb)\b([^;&|`)]*)/g)) {
-        const names = match[1]!.trim().split(/\s+/).filter((word) => word && !word.startsWith('-'));
-        const others = names.filter((name) => !rebuilds.includes(name));
-        if (names.length === 0) problems.push(`${at}: a rebuild with no package list rebuilds every package`);
-        else if (others.length > 0) problems.push(`${at}: a rebuild of ${others.join(', ')}, which is not on the allow-list`);
-        else rebuildByName = true;
-      }
-      for (const match of line.matchAll(/--(no-)?ignore-scripts\b(?:=([^\s`;,)&|]*)|\s+(true|false)\b)?/g)) {
-        const value = match[1] ? 'false' : unquote(match[2] ?? match[3] ?? 'true');
-        if (value !== 'true' && !rebuildByName) problems.push(`${at}: ${match[0]}`);
-      }
-      for (const match of line.matchAll(/npm_config_ignore[-_]scripts\b['"]?\s*[:=]\s*([^\s`;,)&|]*)/gi)) {
-        if (unquote(match[1]!) !== 'true') problems.push(`${at}: ${match[0]}`);
-      }
-      for (const match of line.matchAll(/\bnpm\s+(?:config\s+)?set\b[^;&|`]*?\bignore-scripts(?:\s*=\s*|\s+)([^\s`;,)&|]*)/g)) {
-        if (unquote(match[1]!) !== 'true') problems.push(`${at}: ${match[0]}`);
+      // One command at a time: an allow-listed rebuild excuses its own flag, never the next command's.
+      for (const segment of line.split(/&&|\|\||;|\|/)) {
+        const command = `\`${segment.trim()}\``;
+        let rebuildByName = false;
+        for (const match of segment.matchAll(/\bnpm\s+(?:rebuild|rb)\b([^`)]*)/g)) {
+          const names = match[1]!.trim().split(/\s+/).filter((word) => word && !word.startsWith('-'));
+          const others = names.filter((name) => !rebuilds.includes(name));
+          if (names.length === 0) problems.push(`${at}: a rebuild with no package list rebuilds every package, in ${command}`);
+          else if (others.length > 0) problems.push(`${at}: a rebuild of ${others.join(', ')}, which is not on the allow-list, in ${command}`);
+          else rebuildByName = true;
+        }
+        for (const match of segment.matchAll(/--(no-)?ignore-scripts\b(?:=([^\s`,)]*)|\s+(true|false)\b)?/g)) {
+          const value = match[1] ? 'false' : unquote(match[2] ?? match[3] ?? 'true');
+          if (value !== 'true' && !rebuildByName) problems.push(`${at}: ${match[0]} in ${command}`);
+        }
+        for (const match of segment.matchAll(/npm_config_ignore[-_]scripts\b['"]?\s*[:=]\s*([^\s`,)]*)/gi)) {
+          if (unquote(match[1]!) !== 'true') problems.push(`${at}: ${match[0]} in ${command}`);
+        }
+        for (const match of segment.matchAll(/\bnpm\s+(?:config\s+)?set\b[^`]*?\bignore-scripts(?:\s*=\s*|\s+)([^\s`,)]*)/g)) {
+          if (unquote(match[1]!) !== 'true') problems.push(`${at}: ${match[0]} in ${command}`);
+        }
       }
     });
     return problems;
@@ -286,6 +290,13 @@ describe('b. npm runs no install scripts in this repository', () => {
     expect(overrideProblems('x', 'npm rebuild esbuild --ignore-scripts=false', ['esbuild'])).toEqual([]);
     expect(overrideProblems('x', 'npm rebuild esbuild sharp --ignore-scripts=false', ['esbuild'])).not.toEqual([]);
     expect(overrideProblems('x', 'npm ci --ignore-scripts=false', ['esbuild'])).toHaveLength(1);
+    // The exemption covers the rebuild's own command, never the rest of its line.
+    expect(overrideProblems('x', 'npm rebuild esbuild --ignore-scripts=false && npm ci --ignore-scripts=false', ['esbuild'])).toEqual([
+      'x:1: --ignore-scripts=false in `npm ci --ignore-scripts=false`',
+    ]);
+    for (const separator of ['||', ';', '|']) {
+      expect(overrideProblems('x', `npm rebuild esbuild --ignore-scripts=false ${separator} npm install --no-ignore-scripts`, ['esbuild']), separator).toHaveLength(1);
+    }
   });
 
   test('refuses a pre or post hook of a script or an npm event, and a script npm runs on install', () => {

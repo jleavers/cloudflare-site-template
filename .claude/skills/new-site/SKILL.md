@@ -234,11 +234,18 @@ with `file:line`, and say that production preflight (a custom domain, or `DELIVE
    - On a private repository on GitHub Free, which has no environment secrets:
      `gh secret set CLOUDFLARE_API_TOKEN` and `gh secret set CLOUDFLARE_ACCOUNT_ID`. It has no
      rulesets either, so any identity with Contents write can push to `main`.
+   - If the account has never had a Worker, it may have no workers.dev subdomain yet, and CI's
+     wrangler won't register one, so the deploy fails: first, in the Cloudflare dashboard, go to the
+     **Workers & Pages** page and make sure it shows **Your subdomain**.
    - Then, once the site key from step 1 is in `site.ts` (CI's preflight refuses the test key on a
      live site), push. CI's `deploy` job creates the Worker, and with a custom domain attaches it, DNS
-     record and certificate included. Wrangler asks nothing in CI: it takes over a DNS record that
-     already exists for that hostname, or the hostname from another Worker, so check first that
-     nothing else uses it.
+     record and certificate included, so the domain switches at that push. Wrangler asks nothing in
+     CI: it takes over a DNS record that already exists for that hostname, or the hostname from
+     another Worker.
+   - If `<production domain>` already serves a site elsewhere, deploy in two pushes, so the form
+     works the moment the domain moves: a first push without `routes` in `wrangler.jsonc` (I'll take
+     it out; the site goes live on workers.dev only), the secrets (step 4), then put `routes` back
+     and push again.
    - From then on every push to `main` builds and deploys on GitHub-hosted runners: with no hosted
      minutes left, deploys wait until they return. Anyone who can merge into `main`, or push a
      workflow change, can read the token.

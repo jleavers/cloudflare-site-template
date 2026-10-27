@@ -581,13 +581,13 @@ New users who only want to see the template working start with §14.2 instead. T
 2. **Add the inputs:** the Claude Design handoff goes in `design/` (§6.3), and `SITE_BRIEF.md` gets filled in.
 3. **Build:** in Claude Code, run `/new-site`. Review the result locally with `npm run preview`.
 4. **One-off setup** for each account or domain, with commands in the README:
-   - Create a Turnstile widget, through the dashboard or `POST /accounts/{id}/challenges/widgets`. Its hostnames are the production domain and `<subdomain>.workers.dev`, which covers previews. Free widgets allow up to 10 hostnames.
+   - Create a Turnstile widget in the dashboard (an API call would need an API token on the owner's machine, §10). Its hostnames are the production domain and `<subdomain>.workers.dev`, which covers previews. Free widgets allow up to 10 hostnames.
    - Verify the sending domain in Resend, or create a Slack or Teams webhook.
 5. **First deploy, through CI,** like every deploy after it (§10):
    1. Unless the repository is private on GitHub Free: open the `production` environment that CI's first run made (Settings → Environments), or create it, and limit its deployment branches to `main`. On a repository with no runs yet, `gh secret set --env production` fails with a 404 until the environment exists.
    2. `gh secret set CLOUDFLARE_API_TOKEN --env production`, or a repository secret on a private Free repository (§10, "Secrets"). A custom-domain site's token also has Zone → Workers Routes → Write on that site's zone only (D16).
    3. `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`, likewise
-   4. Push. CI's `deploy` job creates the Worker and, with a custom domain, attaches it from `routes`, which provisions DNS and TLS. In CI, wrangler asks nothing: it takes over an existing DNS record for the hostname, or the hostname from another Worker.
+   4. Push. CI's `deploy` job creates the Worker and, with a custom domain, attaches it from `routes`, which provisions DNS and TLS; the domain switches at that push. In CI, wrangler asks nothing: it takes over an existing DNS record for the hostname, or the hostname from another Worker. It also won't register a workers.dev subdomain, so an account that has never had a Worker first gets one in the dashboard (Workers & Pages, "Your subdomain"). A domain that already serves a site elsewhere moves in two pushes, so the form works the moment it moves: first without `routes`, then the secrets (5.5), then with `routes`.
    5. Add `TURNSTILE_SECRET_KEY`, and `RESEND_API_KEY` or `WEBHOOK_URL`, as type Secret in the dashboard (the Worker → Settings → Variables and Secrets, §7.5). Until then the handler refuses every post, which is expected.
    6. Turn on **Always Use HTTPS** for the domain's zone (SSL/TLS → Edge Certificates). Preflight can't check it, and without it the pages can be fetched over http.
    7. Send a test message from the live site.
@@ -617,7 +617,7 @@ The "under 5 minutes" target covers steps 1 and 5 for an account where step 4 ha
 
 ### 14.2 Try it yourself (README "Quick start")
 
-One route puts the example site live on the user's own workers.dev with no Worker secrets and no inputs: **"Use this template"**, then `gh secret set CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (in a `production` environment where the plan has environment secrets, or repository secrets, §10), then push. The `deploy` job does the rest. `npm run preview` tries the site locally with no account at all.
+One route puts the example site live on the user's own workers.dev with no Worker secrets and no inputs: **"Use this template"**, then `gh secret set CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (in a `production` environment where the plan has environment secrets, or repository secrets, §10), then push (an empty commit, or a re-run of the first CI run). The `deploy` job does the rest, once the account has a workers.dev subdomain: CI's wrangler won't register one (§13). `npm run preview` tries the site locally with no account at all.
 
 There is no "Deploy to Cloudflare" button and no local deploy. The button builds and deploys with Workers Builds, which installs the lockfile and runs its code (install scripts, `astro build`, vite, the lockfile's wrangler) in the build that holds an account token, and a local deploy runs the same code beside a login or token. Either way one malicious package version could change every Worker on the account, where CI's split (§10) keeps the token away from that code.
 

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 
@@ -223,17 +223,69 @@ describe('agent-facing documents', () => {
     }
   });
 
+  // On an account with no workers.dev subdomain, wrangler in CI declines to register one and the
+  // deploy fails; a domain that already serves a site moves at the push that adds `routes`.
+  eachDoc('%s covers a fresh account\'s subdomain and a domain that already serves a site', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
+    const text = read(doc).replace(/\s+/g, ' ');
+    for (const fragment of ['workers.dev subdomain', '**Workers & Pages**', '**Your subdomain**', "CI's wrangler won't register one", 'switches at that push', 'first push without `routes`', 'then put `routes` back and push again']) {
+      expect(text, `${doc}: ${fragment}`).toContain(fragment);
+    }
+  });
+
   // A doc may say what not to do, but never tells the reader to sign in, set a secret or deploy from their machine.
   test.each(['README.md', 'AGENTS.md', '.claude/skills/new-site/SKILL.md', 'SECURITY.md'].filter(exists))('%s prescribes no local deploy, login or secret put', (doc) => {
     const text = read(doc).replace(/\s+/g, ' ');
-    for (const command of ['wrangler login', 'wrangler secret put', 'npm run deploy', 'wrangler deploy']) {
+    for (const command of ['wrangler login', 'wrangler secret', 'npm run deploy', 'wrangler deploy', 'wrangler versions deploy', 'wrangler versions upload']) {
       expect(text.replaceAll('wrangler deploy --dry-run', ''), `${doc}: ${command}`).not.toContain(command);
     }
   });
 
-  test('no package.json script deploys, signs in or sets a secret', () => {
-    const commands = Object.values(JSON.parse(read('package.json')).scripts as Record<string, string>);
-    for (const command of commands) expect(command.replaceAll('deploy --dry-run', '')).not.toMatch(/wrangler\b.*\b(deploy|login|secret|versions)\b/);
+  // Wrangler subcommands that deploy, upload, preview, sign in or set a secret. `wrangler dev`, which
+  // scripts/dev-stack.mjs runs, is local and stays allowed.
+  const REMOTE = new Set(['deploy', 'preview', 'secret', 'login']);
+  const REMOTE_VERSIONS = new Set(['deploy', 'upload', 'secret']);
+  // Wrangler's global options that take a value, so a token after one is not the subcommand.
+  const VALUE_OPTIONS = new Set(['--config', '-c', '--env', '-e', '--cwd']);
+
+  /** Remote wrangler commands in a script, as text or as a spawn argument array (`'wrangler', 'deploy'`). */
+  function remoteWranglerCommands(text: string): string[] {
+    const found: string[] = [];
+    const joined = text.replace(/['"`]\s*,\s*['"`]/g, ' ');
+    for (const match of joined.matchAll(/\bwrangler(?:@\S+)?((?:\s+[^\s'"`;&|)\]]+)+)/g)) {
+      const words = match[1]!.trim().split(/\s+/);
+      const commands = words.filter((word, i) => !word.startsWith('-') && !(i > 0 && VALUE_OPTIONS.has(words[i - 1]!)));
+      const [command, sub] = commands;
+      if (command && (REMOTE.has(command) || (command === 'versions' && sub && REMOTE_VERSIONS.has(sub)))) found.push(match[0].trim());
+    }
+    return found;
+  }
+
+  test('the remote-wrangler reader finds every form, and leaves wrangler dev alone', () => {
+    for (const ok of ['npx wrangler dev --var DELIVERY_PROVIDER:log', "start('npx', [\n  'wrangler', 'dev',\n  '--port', port])", 'wrangler dev --env preview', 'wrangler.kill(signal)', 'wrangler ${version}', 'a running wrangler dev serves 404s']) {
+      expect(remoteWranglerCommands(ok), ok).toEqual([]);
+    }
+    for (const bad of [
+      'wrangler deploy',
+      'astro build && npx wrangler@4.149.0 deploy',
+      "start('npx', ['wrangler', 'deploy', '--config', 'wrangler.jsonc'])",
+      'wrangler --config wrangler.jsonc deploy',
+      'wrangler versions deploy',
+      'wrangler versions upload',
+      'wrangler versions secret put X',
+      'wrangler secret put TURNSTILE_SECRET_KEY',
+      'wrangler secret bulk secrets.json',
+      'wrangler preview --name pr-1',
+      'wrangler login',
+    ]) {
+      expect(remoteWranglerCommands(bad), bad).toHaveLength(1);
+    }
+  });
+
+  test('no package.json script or helper script deploys, uploads, previews, signs in or sets a secret', () => {
+    const commands = Object.entries(JSON.parse(read('package.json')).scripts as Record<string, string>).map(([name, command]) => [`package.json scripts.${name}`, command] as const);
+    const helpers = readdirSync(fileURLToPath(new URL('../../scripts/', import.meta.url))).filter((file) => file.endsWith('.mjs')).map((file) => [`scripts/${file}`, read(`scripts/${file}`)] as const);
+    expect(helpers.map(([file]) => file)).toContain('scripts/dev-stack.mjs');
+    expect([...commands, ...helpers].flatMap(([where, text]) => remoteWranglerCommands(text).map((command) => `${where}: ${command}`))).toEqual([]);
     expect(scripts).not.toContain('deploy');
   });
 
@@ -249,9 +301,38 @@ describe('agent-facing documents', () => {
       const readme = read('README.md').replace(/\s+/g, ' ');
       expect(readme).not.toContain('deploy.workers.cloudflare.com');
       expect(readme).toContain('**Every deploy goes through CI, a site\'s first included.**');
-      expect(readme).toContain('**no Cloudflare login or API token on a machine that runs the site\'s build or dev server**');
+      expect(readme).toContain('**keep no Cloudflare login or API token on a machine that runs the site\'s build or dev server**');
       expect(readme).toContain('beside a credential that can change every Worker on the account');
     });
+
+    test('the README says how to clear an old login, and needs no API token on the machine for Turnstile', () => {
+      const readme = read('README.md').replace(/\s+/g, ' ');
+      for (const fragment of ['`npx wrangler logout`', '`~/.config/.wrangler/config/default.toml`', 'once, into `gh secret set`']) expect(readme, fragment).toContain(fragment);
+      expect(section(readme, '### Turnstile', '### Delivery')).not.toMatch(/\bAPI\b/);
+    });
+
+    test("the Quick start's push works for someone who used GitHub's web page", () => {
+      const quick = section(read('README.md').replace(/\s+/g, ' '), '## Quick start', '## Stamp out a site');
+      for (const fragment of ['git commit --allow-empty -m "Deploy"', 'Actions tab']) expect(quick, fragment).toContain(fragment);
+    });
+  });
+
+  test("the spec's runbook creates the Turnstile widget in the dashboard, with no API token", () => {
+    expect(section(read(SPEC), '## 13.', '## 14.')).not.toContain('/challenges/widgets');
+  });
+
+  test('the security sweep logs out of Wrangler and stays logged out', () => {
+    const sweep = read('.claude/skills/security-sweep/SKILL.md').replace(/\s+/g, ' ');
+    expect(sweep).toContain('run `npx wrangler logout`, and stay logged out');
+    expect(sweep).not.toMatch(/wrangler logout` for the run/);
+    expect(sweep).toContain('Leave Wrangler logged out');
+  });
+
+  test("the sweep's npm-supply-chain lane names ignore-scripts as the install-time gate", () => {
+    const lane = section(read('.claude/workflows/security-sweep.js'), "key: 'npm-supply-chain'", "key: 'design-ingest'");
+    expect(lane).toContain("\\`.npmrc\\`'s \\`ignore-scripts=true\\` is the gate"); // the brief is a template literal, its backticks escaped
+    expect(lane).not.toContain('hasInstallScript');
+    expect(lane).not.toMatch(/cluster|npm-supply-chain-\d/);
   });
 
   test('the new-site skill says CONTACT_FROM_EMAIL may carry a display name', () => {

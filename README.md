@@ -76,7 +76,14 @@ for Turnstile or email delivery). The form works and sends nothing until you con
    in it: `gh secret set CLOUDFLARE_API_TOKEN --env production` and the same for
    `CLOUDFLARE_ACCOUNT_ID`. On a private Free repository, use repository secrets instead
    ([which token, and where, by plan](#cloudflare-api-token)).
-3. Push. CI's `deploy` job creates the Worker and puts the site on your workers.dev subdomain.
+3. Push a commit (`git commit --allow-empty -m "Deploy"` and `git push` will do), or, if you
+   made the repository on GitHub's web page, re-run its first CI run from the Actions tab (Re-run
+   all jobs). CI's `deploy` job creates the Worker and puts the site on your workers.dev subdomain.
+
+An account that has never had a Worker may have no workers.dev subdomain yet, and CI's wrangler
+won't register one, so the deploy fails. Before the first deploy, in the Cloudflare dashboard, go
+to the **Workers & Pages** page and make sure it shows **Your subdomain**
+([workers.dev](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)).
 
 To try it without deploying, `npm ci` and `npm run preview` run the whole site and Worker locally,
 with no Cloudflare account at all. Every deploy goes through CI ([why](#cloudflare-api-token)).
@@ -104,10 +111,14 @@ You need: a Claude Design handoff (or an archive or artifact link), the facts in
       environment that CI's first run made (Settings → Environments), or create it, and limit it
       to `main`; then `gh secret set CLOUDFLARE_API_TOKEN --env production` and the same for
       `CLOUDFLARE_ACCOUNT_ID`. On a private Free repository, use repository secrets.
-   2. Push. CI's `deploy` job creates the Worker. With a custom domain, it also attaches the
-      domain, DNS record and certificate included. Wrangler asks nothing in CI: it takes over a DNS
-      record that already exists for that hostname, or the hostname from another Worker, so check
-      first that nothing else uses it.
+   2. Push. CI's `deploy` job creates the Worker. The account needs a workers.dev subdomain
+      first, [as in the Quick start](#quick-start). With a custom domain, the deploy also attaches
+      the domain, DNS record and certificate included, so the domain switches at that push.
+      Wrangler asks nothing in CI: it takes over a DNS record that already exists for that
+      hostname, or the hostname from another Worker. If the domain already serves a site
+      elsewhere, deploy in two pushes, so the form works the moment the domain moves: a first push
+      without `routes` in `wrangler.jsonc` (the site goes live on workers.dev only), the secrets
+      (step 3), then put `routes` back and push again.
    3. Add the Worker's secrets in the Cloudflare dashboard: the Worker → Settings → Variables and
       Secrets → Add, type **Secret**, for `TURNSTILE_SECRET_KEY` and `RESEND_API_KEY` (or
       `WEBHOOK_URL`), then Deploy. Use type Secret, not Text: the next deploy from CI keeps
@@ -136,8 +147,8 @@ time and is slow to undo. Only a preloaded domain is protected on a visitor's ve
 
 ### Turnstile
 
-Create a widget in the Cloudflare dashboard (Turnstile → Add widget, managed mode), or with
-the API. Its hostnames are your domain and `<your-subdomain>.workers.dev`, which covers every
+Create a widget in the Cloudflare dashboard (Turnstile → Add widget, managed mode). Its hostnames
+are your domain and `<your-subdomain>.workers.dev`, which covers every
 preview. A free widget takes up to ten hostnames. Put the **site key** in
 `src/config/site.ts`. Keep the **secret** for the Worker's `TURNSTILE_SECRET_KEY`, which you add
 in the dashboard once CI's first deploy has made the Worker (step 5 of
@@ -169,9 +180,16 @@ button, no Workers Builds and no deploy from your own machine, because each of t
 lockfile's code (npm's install, `astro build`, vite, the lockfile's own wrangler) beside a
 credential that can change every Worker on the account: one bad package version would get that
 credential. CI builds without the token, and deploys with no code from the lockfile. The same
-goes for your machines: **no Cloudflare login or API token on a machine that runs the site's build
-or dev server**, since any package the build runs could read it. That is also why Worker secrets
-are set in the dashboard.
+goes for your machines: **keep no Cloudflare login or API token on a machine that runs the site's
+build or dev server**, since any package the build runs could read it. That is also why Worker
+secrets are set in the dashboard. The CI token passes through your machine only once, into
+`gh secret set`, which prompts for it: paste it there, and don't save it in a file or your
+shell's environment. To clear an old login, run `npx wrangler logout`, which invalidates its
+OAuth token and deletes the stored credentials, or delete Wrangler's saved login, typically
+`~/.config/.wrangler/config/default.toml` (with keychain storage, also `default.enc` beside it
+and the keychain entry;
+[Wrangler's login and logout](https://developers.cloudflare.com/workers/wrangler/commands/general/)).
+Unset any `CLOUDFLARE_API_TOKEN` your shell profile exports, too.
 
 CI hands the token only to jobs that run no code from the branch or the lockfile. They take
 `wrangler.jsonc` and the wrangler version from `main` (for a pull request, from the default

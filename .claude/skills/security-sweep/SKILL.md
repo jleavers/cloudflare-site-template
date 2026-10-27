@@ -186,8 +186,9 @@ stage that falls back to the default subagent (below) inherits all of it.
 - Unload the SSH agent's keys (`ssh-add -D`; `ssh-add -l` should then list none), because GitHub
   accepts a `git push` from any key in `ssh-agent`, whatever `gh` holds. Check this yourself: no
   unencrypted key GitHub accepts should sit in `~/.ssh`. No agent, and not this session, reads it.
-- If you are logged in to Wrangler (OAuth), run `npx wrangler logout` for the run, because its
-  login reaches the Cloudflare API.
+- If you are logged in to Wrangler (OAuth), run `npx wrangler logout`, and stay logged out after
+  the run too: its login reaches the Cloudflare API, and this repository keeps no Cloudflare login
+  on a machine that runs its build (README, "Cloudflare API token").
 - If `~/.npmrc` holds a registry token, move it aside for the run; the lanes are told not to read
   it, and this removes the token rather than relying on that.
 - **Run the sweep with the session in auto mode.** Outside it, every shell command an agent runs

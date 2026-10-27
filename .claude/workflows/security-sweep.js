@@ -949,7 +949,10 @@ site installs the same tree: on the owner's machine, and in CI's tokenless jobs.
 through CI, whose token job runs none of it; there is no Deploy button, Workers Builds or local deploy.
 
 Cover: the lockfile -- every \`resolved\` URL is the npm registry and every package has an
-\`integrity\` hash; packages with install scripts (\`hasInstallScript\`) and what each runs; known
+\`integrity\` hash; install-time code -- \`.npmrc\`'s \`ignore-scripts=true\` is the gate, so check
+that every install the repository prescribes (the workflows, \`package.json\`, the README, AGENTS.md
+and the skills) keeps it, and what lockfile code still runs without install scripts: at build time
+(astro, vite, Tailwind, sharp, wrangler's bundler) and in CI's tokenless jobs; known
 advisories for the locked versions (\`npm audit\` in a scratch copy installed with \`npm ci
 --ignore-scripts\`, OSV, GitHub's advisory database), each with its reachability: is the vulnerable
 code on a path the build, the Worker or the tests actually run; the packages that download binaries
