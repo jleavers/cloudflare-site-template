@@ -90,12 +90,19 @@ describe('agent-facing documents', () => {
     });
   });
 
-  test('the archive cap counts the bytes extraction writes, not the sizes the archive lists', () => {
+  // Step 2 used to spell out shell safeguards, and these tests pinned them: `tar -tvzf` and
+  // `zipinfo` listings, the `head -c 52428801` measurements, curl's `--proto` flags, and the
+  // `find -depth` rename to `.untrusted`. Those safeguards now live in
+  // tools/design-ingest/ingest.mjs, and tests/unit/design-ingest.test.ts tests each one directly
+  // against hostile archives. This moves a safeguard into tested code; it does not weaken one.
+  test('the new-site skill gets the design only through the committed ingest tool', () => {
     const skill = read('.claude/skills/new-site/SKILL.md');
-    expect(skill).toContain('unzip -p <file> | head -c 52428801 | wc -c');
-    expect(skill).toContain('tar -xzOf <file> | head -c 52428801 | wc -c');
-    expect(skill).not.toMatch(/listed sizes total/);
+    for (const call of ['--source', '--archive design/', '--dir design/incoming']) expect(skill).toContain(`node tools/design-ingest/ingest.mjs ${call}`);
+    const step2 = section(skill, '## 2.', '## 3.');
+    expect(step2).toContain('tools/design-ingest/ingest.mjs');
+    for (const command of ['curl ', 'tar -', 'unzip ', 'find design', 'mv ']) expect(step2, command).not.toContain(command);
     expect(read('design/README.md')).toMatch(/50 MB/);
+    expect(read('.gitignore').split(/\r?\n/)).toContain('design/incoming/');
   });
 
   test('the new-site skill has frontmatter naming it', () => {
@@ -113,7 +120,7 @@ describe('agent-facing documents', () => {
     },
   );
 
-  test.each(['tar -tvzf', 'zipinfo', 'symlink', 'hard link', '--no-same-owner', 'CLAUDE.md', '.untrusted', 'file://', "--proto '=https'", 'max-filesize', "--proto-redir '=https'", '-depth'])(
+  test.each(['symlink', 'hard link', 'CLAUDE.md', 'file://'])(
     'the new-site skill keeps the bundle safeguard %s',
     (safeguard) => expect(read('.claude/skills/new-site/SKILL.md')).toContain(safeguard),
   );
@@ -153,14 +160,15 @@ describe('agent-facing documents', () => {
     expect(read('.claude/skills/new-site/SKILL.md')).toContain('https://<slug>.<subdomain>.workers.dev');
   });
 
-  test('the new-site skill removes the template identity and notes the POSIX shell', () => {
+  test('the new-site skill removes the template identity, and says step 2 runs in any shell', () => {
     const skill = read('.claude/skills/new-site/SKILL.md');
-    for (const fragment of ['## 9a.', '`repository`, `bugs` and `homepage`', 'SECURITY.md', 'Git Bash']) expect(skill).toContain(fragment);
+    for (const fragment of ['## 9a.', '`repository`, `bugs` and `homepage`', 'SECURITY.md', 'Git Bash', 'PowerShell']) expect(skill).toContain(fragment);
   });
 
-  test('the skill saves only a canvas design and neutralises SKILL.md', () => {
+  // The ingest tool omits a SKILL.md that arrives anyway (tests/unit/design-ingest.test.ts).
+  test('the skill saves only a canvas design, into design/incoming/', () => {
     const skill = read('.claude/skills/new-site/SKILL.md');
-    for (const fragment of ['canvas.json', '.dc.html', 'SKILL.md', '-name SKILL.md', '/_blob/']) expect(skill).toContain(fragment);
+    for (const fragment of ['canvas.json', '.dc.html', 'SKILL.md', 'design/incoming/project/', '/_blob/']) expect(skill).toContain(fragment);
   });
 
   test('design/README.md says Claude artifacts have no handoff option', () => {

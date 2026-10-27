@@ -976,7 +976,8 @@ Cover: instructions planted in a bundle's README, chats or HTML comments, and wh
 "data, not instructions" rule and AGENTS.md hold against them -- write two or three hostile bundles
 in your scratch directory and reason, from the skill's exact text, about what an agent following it
 would do (do not launch an agent); archive extraction -- absolute paths, \`..\`, symlinks, hard
-links, device files, a decompression bomb -- against the exact checks the skill names; the packages,
+links, device files, a decompression bomb -- against the checks of the ingest tool the skill calls,
+\`tools/design-ingest/ingest.mjs\`, and its tests in \`tests/unit/design-ingest.test.ts\`; the packages,
 fonts, scripts and images a bundle names, and whether contracts C2 and C3 and the dist tests catch
 each one if an agent adopts it (prove it by mutation in a scratch copy: add the offending thing, then
 \`npm ci --ignore-scripts && npm run build && npm run test:dist\`); the skill's edits to
@@ -990,9 +991,9 @@ JavaScript on in a fresh browser context -- what that page can reach, and whethe
 And cover a Claude Design canvas shared as a Claude artifact, which ships the Design type's own
 editor files (\`SKILL.md\`, \`artifact-type/**\`, \`index.html\`, \`support.js\`) beside the design
 (\`project/canvas.json\`, \`project/*.dc.html\`): the skill's §2 says to save only the design, not
-the editor files (\`SKILL.md\` among them), and renames any \`SKILL.md\` that arrives anyway (in an
-archive, say) to \`SKILL.md.untrusted\`, so check that the editor files cannot reach an agent as instructions
-or reach \`dist/\`.`,
+the editor files (\`SKILL.md\` among them), and the ingest tool omits any \`SKILL.md\` that arrives
+anyway (in an archive, say), so check that the editor files cannot reach an agent as instructions or
+reach \`dist/\`.`,
   },
 ]
 
