@@ -5,17 +5,20 @@
 //   node tools/screenshots/capture.mjs                         hero, GIF, social preview, LinkedIn header
 //   node tools/screenshots/capture.mjs --url https://<demo>    the same, from a deployed site
 //   node tools/screenshots/capture.mjs --only hero,gif
-//   node tools/screenshots/capture.mjs --only design --design <screen.html> --site <url>
+//   node tools/screenshots/capture.mjs --only design --design <screen.html> [--bundle <dir>] --site <url>
+//
+// And, for the new-site skill, one design screen to a PNG of its own, with no site and no stack:
+//   node tools/screenshots/capture.mjs --only screen --design <screen.html> [--bundle <dir>] --out <png> [--width 1440] [--height 900]
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { chromium } from '@playwright/test';
 import gifenc from 'gifenc';
 import sharp from 'sharp';
-import { allowedForDesign } from './fence.mjs';
+import { shootDesign } from './design.mjs';
 import * as layouts from './layouts.mjs';
 
 const { GIFEncoder, quantize, applyPalette } = gifenc;
@@ -28,12 +31,22 @@ const { values: args } = parseArgs({
     url: { type: 'string' },
     only: { type: 'string', default: 'hero,gif,social,linkedin' },
     design: { type: 'string' },
+    bundle: { type: 'string' },
     site: { type: 'string' },
-    width: { type: 'string', default: '800' },
+    out: { type: 'string' },
+    width: { type: 'string' },
+    height: { type: 'string' },
     colours: { type: 'string', default: '64' },
   },
 });
 const wanted = new Set(args.only.split(','));
+
+/** A --width or --height, in whole pixels. */
+function pixels(name, fallback) {
+  const value = Number(args[name] ?? fallback);
+  if (!Number.isInteger(value) || value < 1 || value > 8000) throw new Error(`--${name} must be a whole number of pixels, up to 8000`);
+  return value;
+}
 
 function save(name, buffer) {
   mkdirSync(IMAGES, { recursive: true });
@@ -108,21 +121,6 @@ async function shoot(browser, url, { width, height, scale = 1 }) {
   return png;
 }
 
-// JavaScript stays on (Claude Design prototypes need React and Babel to render), so the screen
-// gets a fresh context with no cookies or storage and a request filter instead.
-async function shootDesign(browser, fileUrl, { width, height }) {
-  const designDir = dirname(fileURLToPath(fileUrl));
-  const context = await browser.newContext({ viewport: { width, height } });
-  try {
-    await context.route('**', (route) => (allowedForDesign(route.request().url(), designDir) ? route.continue() : route.abort()));
-    const page = await context.newPage();
-    await page.goto(fileUrl, { waitUntil: 'networkidle' });
-    return await page.screenshot();
-  } finally {
-    await context.close();
-  }
-}
-
 async function render(browser, html, width, height) {
   const page = await browser.newPage({ viewport: { width, height } });
   await page.setContent(html, { waitUntil: 'load' });
@@ -158,7 +156,7 @@ async function contactGif(browser, origin) {
   await grab(3000);
   await page.close();
 
-  const width = Number(args.width);
+  const width = pixels('width', 800);
   const colours = Number(args.colours);
   const { info } = await sharp(frames[0].png).resize({ width }).toBuffer({ resolveWithObject: true });
   const gif = GIFEncoder();
@@ -176,31 +174,48 @@ async function contactGif(browser, origin) {
   return Buffer.from(gif.bytes());
 }
 
-let browser;
-let stack;
-try {
-  browser = await chromium.launch();
-  stack = args.url || wanted.has('design') ? undefined : await startStack();
-  const origin = (args.url ?? stack?.origin ?? '').replace(/\/$/, '');
-  if (wanted.has('hero') || wanted.has('social') || wanted.has('linkedin')) {
-    const desktop = await shoot(browser, `${origin}/`, { width: 1440, height: 900 });
-    if (wanted.has('hero')) {
-      const mobile = await shoot(browser, `${origin}/`, { width: 390, height: 844, scale: 2 });
-      save('hero.png', await compressPng(await render(browser, layouts.hero(dataUrl(desktop), dataUrl(mobile)), 1600, 1000)));
-    }
-    if (wanted.has('social')) save('social-preview.png', await compressPng(await render(browser, layouts.social(dataUrl(desktop)), 1280, 640)));
-    if (wanted.has('linkedin')) save('linkedin-header.png', await compressPng(await render(browser, layouts.linkedin(dataUrl(desktop)), 1920, 1080)));
-  }
-  if (wanted.has('gif')) save('contact-form.gif', await contactGif(browser, origin));
-  if (wanted.has('design')) {
-    if (!args.design || !args.site) throw new Error('--only design needs --design <screen.html> and --site <url>');
-    if (!['http:', 'https:'].includes(new URL(args.site).protocol)) throw new Error('--site must be an http: or https: URL');
-    // The design screen is a file from a handoff bundle: it renders like any page in a browser.
-    const design = await shootDesign(browser, pathToFileURL(resolve(args.design)).href, { width: 1440, height: 900 });
-    const built = await shoot(browser, args.site, { width: 1440, height: 900 });
-    save('design-to-site.png', await compressPng(await render(browser, layouts.sideBySide(dataUrl(design), dataUrl(built)), 1600, 600)));
-  }
-} finally {
-  await browser?.close();
-  stack?.stop();
+// One design screen to its own PNG. The screen is untrusted: design.mjs renders it in a browser of
+// its own, confined to its bundle's files with no network.
+async function screenOnly() {
+  if (wanted.size > 1) throw new Error('--only screen runs on its own');
+  if (!args.design || !args.out) throw new Error('--only screen needs --design <screen.html> and --out <file.png>');
+  const [width, height] = [pixels('width', 1440), pixels('height', 900)];
+  const png = await shootDesign(args.design, { bundle: args.bundle, width, height });
+  mkdirSync(dirname(resolve(args.out)), { recursive: true });
+  writeFileSync(resolve(args.out), png);
+  console.log(`${args.out}: ${width}×${height}, ${Math.round(png.length / 1024)} KB`);
 }
+
+async function media() {
+  let browser;
+  let stack;
+  try {
+    browser = await chromium.launch();
+    stack = args.url || wanted.has('design') ? undefined : await startStack();
+    const origin = (args.url ?? stack?.origin ?? '').replace(/\/$/, '');
+    if (wanted.has('hero') || wanted.has('social') || wanted.has('linkedin')) {
+      const desktop = await shoot(browser, `${origin}/`, { width: 1440, height: 900 });
+      if (wanted.has('hero')) {
+        const mobile = await shoot(browser, `${origin}/`, { width: 390, height: 844, scale: 2 });
+        save('hero.png', await compressPng(await render(browser, layouts.hero(dataUrl(desktop), dataUrl(mobile)), 1600, 1000)));
+      }
+      if (wanted.has('social')) save('social-preview.png', await compressPng(await render(browser, layouts.social(dataUrl(desktop)), 1280, 640)));
+      if (wanted.has('linkedin')) save('linkedin-header.png', await compressPng(await render(browser, layouts.linkedin(dataUrl(desktop)), 1920, 1080)));
+    }
+    if (wanted.has('gif')) save('contact-form.gif', await contactGif(browser, origin));
+    if (wanted.has('design')) {
+      if (!args.design || !args.site) throw new Error('--only design needs --design <screen.html> and --site <url>');
+      if (!['http:', 'https:'].includes(new URL(args.site).protocol)) throw new Error('--site must be an http: or https: URL');
+      // The design screen through the same confined renderer as --only screen; the built site, which
+      // is ours, in the ordinary browser.
+      const design = await shootDesign(args.design, { bundle: args.bundle, width: 1440, height: 900 });
+      const built = await shoot(browser, args.site, { width: 1440, height: 900 });
+      save('design-to-site.png', await compressPng(await render(browser, layouts.sideBySide(dataUrl(design), dataUrl(built)), 1600, 600)));
+    }
+  } finally {
+    await browser?.close();
+    stack?.stop();
+  }
+}
+
+await (wanted.has('screen') ? screenOnly() : media());

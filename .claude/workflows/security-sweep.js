@@ -985,9 +985,12 @@ each one if an agent adopts it (prove it by mutation in a scratch copy: add the 
 domain, a provider pointed elsewhere, \`TURNSTILE_FAIL_OPEN\`); and whether anything in \`design/\`
 can reach \`dist/\`.
 
-Cover, too, the screenshot tool's design-rendering fence: \`tools/screenshots/fence.mjs\` and
-\`node tools/screenshots/capture.mjs --only design\`, which renders an untrusted design screen with
-JavaScript on in a fresh browser context -- what that page can reach, and whether the fence holds.
+Cover, too, the screenshot tool's confined design renderer: \`tools/screenshots/design.mjs\` and
+its fence \`tools/screenshots/fence.mjs\`, behind \`node tools/screenshots/capture.mjs --only screen\`
+(the skill's way to render a screen) and \`--only design\`. It runs an untrusted screen with
+JavaScript on, allowed only the files of its bundle and no network -- what that page can still
+reach (other files, loopback, the LAN, DNS, WebRTC), whether the fence holds, and whether
+\`tests/e2e/design-fence.spec.ts\` would notice if it did not.
 And cover a Claude Design canvas shared as a Claude artifact, which ships the Design type's own
 editor files (\`SKILL.md\`, \`artifact-type/**\`, \`index.html\`, \`support.js\`) beside the design
 (\`project/canvas.json\`, \`project/*.dc.html\`): the skill's §2 says to save only the design, not

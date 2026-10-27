@@ -23,10 +23,30 @@ Regenerate after a change to the example site's look. The script starts the loca
 
 `design-to-site.png` needs a design screen and the site built from it:
 
-    node tools/screenshots/capture.mjs --only design --design <bundle>/project/<artboard>.dc.html --site https://<site>
+    node tools/screenshots/capture.mjs --only design --design <bundle>/project/<artboard>.dc.html --bundle <bundle> --site https://<site>
 
 The script prints each file's size and exits non-zero if one is over its limit. The dials are
 `--width` (the GIF's width, 800) and `--colours` (its palette, 64).
+
+## One design screen
+
+`--only screen` photographs a single design screen into a PNG of its own, for the new-site
+skill's comparisons (`.claude/skills/new-site/SKILL.md`, steps 2 and 8). It needs no `--site`,
+starts no stack, and writes nothing to `docs/images/`:
+
+    node tools/screenshots/capture.mjs --only screen --design "design/bundle/<screen>" --bundle design/bundle --out tools/screenshots/out/<name>.png
+    node tools/screenshots/capture.mjs --only screen --design "design/bundle/<screen>" --bundle design/bundle --width 390 --height 844 --out tools/screenshots/out/<name>-390.png
+
+`--width` and `--height` set the viewport here (1440 × 900 by default). `--bundle` names the
+bundle's folder, which must hold the screen. It defaults to the screen's own folder, so name the
+bundle's root when the screen uses files in a sibling folder (`../assets/`).
+
+A design screen is untrusted. `--only screen` and `--only design` render it with JavaScript on,
+in a browser of its own (`design.mjs`), where it may load only files inside `--bundle`, judged by
+resolved path with symlinks followed, and reaches no network at all: no `https:` or `http:` URL,
+no WebSocket, no WebRTC, behind a proxy that goes nowhere. A screen that loads React or Babel from
+a CDN renders without them. `tests/e2e/design-fence.spec.ts` attacks the renderer with a hostile
+screen.
 
 **The social preview is uploaded by hand**: GitHub takes it only through the web interface, under
 Settings → General → Social preview.

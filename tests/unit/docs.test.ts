@@ -131,6 +131,15 @@ describe('agent-facing documents', () => {
     (safeguard) => expect(read('.claude/skills/new-site/SKILL.md')).toContain(safeguard),
   );
 
+  // A screen's JavaScript runs only in the confined renderer (tests/e2e/design-fence.spec.ts). A
+  // local server would let it read every file under the server's root (sweep cluster 2).
+  test('the new-site skill renders a screen only in the confined renderer, never from a server', () => {
+    const skill = read('.claude/skills/new-site/SKILL.md');
+    expect(skill).toContain('node tools/screenshots/capture.mjs --only screen --design');
+    expect(skill).toContain('Never serve the bundle');
+    expect(skill).not.toMatch(/static server/);
+  });
+
   test('SITE_BRIEF.md has its seven sections, in order', () => {
     const headings = [...read('SITE_BRIEF.md').matchAll(/^## (\d)\. /gm)].map((match) => match[1]);
     expect(headings).toEqual(['1', '2', '3', '4', '5', '6', '7']);
