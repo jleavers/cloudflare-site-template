@@ -27,8 +27,9 @@ within a few days.
   a file that a pull request's build makes wrangler read from the runner.
 - **The design tools**: a Claude Design bundle that gets past `tools/design-ingest/ingest.mjs`
   (a link, an unsafe path, agent instructions or another entry outside its allow-list written into
-  `design/bundle/`); a design screen that, rendered through `tools/screenshots/design.mjs`, reaches
-  a file outside its bundle, or any network.
+  `design/bundle/`, or a file written there that an editor or build tool loads as code, such as a
+  stylesheet whose `@plugin` Tailwind runs); a design screen that, rendered through
+  `tools/screenshots/design.mjs`, reaches a file outside its bundle, or any network.
 - **The agent instructions** (`AGENTS.md`, `.claude/`): text in a Claude Design bundle, a site
   brief or an issue that makes an agent following them widen its own authority: run commands
   the instructions forbid, change CI, secrets or deploy settings, or exfiltrate data.

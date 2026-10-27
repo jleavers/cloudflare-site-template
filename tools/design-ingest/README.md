@@ -35,19 +35,54 @@ refused, with a reason naming the entry, for:
 - more than 2000 entries (folders included), more than 50 MB unpacked, or a path deeper than 32
   segments or longer than 1024 bytes.
 
-These entries are **omitted**, and listed in the output with the reason: anything under a name that
-starts with a dot (`.git`, `.claude`, `.github`, `.mcp.json`, …); agent instructions (`CLAUDE.md`,
-`AGENTS.md`, `AGENTS.override.md`, `SKILL.md`, `*.mdc` and the like, compared folded); tool
-configurations (`*.config.js`, `.mjs`, `.cjs`, `.ts`, `.mts` or `.cts`, `package.json`,
-`tsconfig*.json`, `jsconfig.json`, `babel.config.json`, `deno.json`, `deno.jsonc`, `biome.json`,
-`biome.jsonc` and `vitest.workspace.*`, compared folded), which an editor tool looking upward from
-a file may load and run; anything under a name with a character outside the allowed set (letters,
-digits, combining marks, space and `. _ ( ) + , @ -`; a name starts with a letter, a digit or `_`,
-and no character in it may be default-ignorable, such as a variation selector or a Hangul
-filler, which render as nothing), so a path inside `design/bundle/` is safe in a command in
-double quotes; and any file whose extension,
-lower-cased, is not one of `.html .htm .css .js .mjs .jsx .ts .tsx .json .md .txt .svg .png .jpg
-.jpeg .gif .webp .avif .ico .woff .woff2 .ttf .otf`.
+These entries are **omitted**, and listed in the output with the reason:
+
+- anything under a name that starts with a dot (`.git`, `.claude`, `.github`, `.vscode`,
+  `.mcp.json`, …);
+- agent instructions (`CLAUDE.md`, `AGENTS.md`, `AGENTS.override.md`, `SKILL.md`, `*.mdc` and the
+  like, compared folded);
+- tool configurations, compared folded. An editor or build tool finds one by looking upward from a
+  file, or across the whole workspace, and a configuration can run code or name code to run:
+  - `*.config.js`, `.mjs`, `.cjs`, `.ts`, `.mts` or `.cts`: ESLint, Prettier, Stylelint, PostCSS,
+    Babel, Vite, Vitest, Jest, Playwright, Astro, Tailwind, lint-staged, oxlint, knip, cspell and
+    more;
+  - `package.json`, whose keys configure most of those, and `tsconfig*.json` and `jsconfig.json`,
+    whose `plugins` TypeScript loads into the editor;
+  - `babel.config.json`, `deno.json`, `deno.jsonc`, `biome.json`, `biome.jsonc` and
+    `vitest.workspace.*`;
+  - `tailwind.js`, `tailwind.mjs`, `tailwind.ts` and `tailwind.config.<anything>.js` (or `.mjs`,
+    `.ts`), which the Tailwind CSS editor extension takes for a JavaScript config;
+  - `cspell.json` and `cspell.config.json` (a cspell configuration may import a JavaScript one),
+    `dprint.json` (dprint's plugins download and run), `jest.config.json` (Jest runs the modules
+    it names), and `knip.json`, `knip.js` and `knip.ts`.
+
+  A configuration that a design file type cannot carry (`.cjs`, `.yaml`, `.toml`, `.jsonc`) is
+  omitted for its type, and a dotfile (`.eslintrc.json`, `.prettierrc`, `.markdownlint.jsonc`,
+  `.lintstagedrc`, `.oxlintrc.json`, `.editorconfig`, `.devcontainer/`) for its dot;
+- anything under a `node_modules` folder, compared folded: a tool that loads a package for a file
+  looks in the nearest one first, and the Tailwind CSS editor extension imports `tailwindcss` that
+  way for every Tailwind stylesheet in the workspace, when it starts;
+- anything under a name with a character outside the allowed set (letters, digits, combining
+  marks, space and `. _ ( ) + , @ -`; a name starts with a letter, a digit or `_`, and no
+  character in it may be default-ignorable, such as a variation selector or a Hangul filler,
+  which render as nothing), so a path inside `design/bundle/` is safe in a command in double
+  quotes;
+- any file whose extension, lower-cased, is not one of `.html .htm .css .js .mjs .jsx .ts .tsx
+  .json .md .txt .svg .png .jpg .jpeg .gif .webp .avif .ico .woff .woff2 .ttf .otf`;
+- any file whose bytes hold `@plugin` or `@config`. Tailwind CSS 4 reads its configuration from
+  CSS, and these two make the build and the Tailwind CSS editor extension import and run a
+  JavaScript module. Every design file is read, not only a `.css` one, because a stylesheet's
+  `@import` or `@reference` reads a file of any type as CSS. The match is on the raw bytes, with
+  no CSS parser: in any case, inside a comment or a string too, with comments between the `@` and
+  the name or inside it (Tailwind's parser drops them), and in UTF-16 text. A `.css` file is also
+  omitted for an at-keyword spelled with a backslash escape, whatever it decodes to. A stylesheet
+  with only `@import "tailwindcss"` and `@theme` tokens is kept: design tokens are the point of a
+  design. If a design you trust needs a Tailwind plugin, its stylesheet is left out: remove the
+  directive from your copy and ingest again, and ask before adding the plugin, which is a
+  dependency (AGENTS.md).
+
+The tool reads each file's bytes once, in memory, after its name has passed: the caps above bound
+what it reads, and the check takes about a second for the 50 MB maximum.
 
 **The output is always a fresh `design/bundle/`.** The tool refuses if it exists in any form, and
 writes files `0644` with nothing taken from the archive's modes or owners. A refusal exits 1 and

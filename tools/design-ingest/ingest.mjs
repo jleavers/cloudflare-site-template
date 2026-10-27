@@ -6,7 +6,9 @@ import { crc32, gunzipSync, inflateRawSync } from 'node:zlib';
 
 // The only way a Claude Design bundle reaches the checkout (the new-site skill, step 2). It reads
 // the handoff URL from design/SOURCE.md itself, or a local .zip or .tar.gz, or a staging folder,
-// checks every entry against one allow-list, and only then writes a fresh design/bundle/. Nothing
+// checks every entry against one allow-list, and only then writes a fresh design/bundle/. The
+// allow-list judges an entry by its path and type, and a file also by its bytes, since a design
+// file type can still be code to a tool: a stylesheet's @plugin makes Tailwind run a module. Nothing
 // it reads is ever put into a command line, and nothing is renamed in place: an entry outside the
 // allow-list is refused (the whole bundle) or omitted (that entry), never moved aside. It imports
 // only node: modules, so it needs no install, and it runs the same on Windows and Linux.
@@ -44,10 +46,40 @@ export const HANDOFF_HOST = 'api.anthropic.com';
 /** Agent-instruction file names, compared lower-cased; so is the `.mdc` suffix. */
 const INSTRUCTIONS = new Set(['claude.md', 'claude.local.md', 'agents.md', 'agents.override.md', 'agent.md', 'skill.md', 'gemini.md', 'copilot-instructions.md']);
 /**
- * Tool configurations, compared folded: an editor or build tool that looks upward from a file for
- * its nearest config may load one of these, and a JavaScript config runs as code.
+ * Tool configurations of a design file type, compared folded. An editor or build tool finds one by
+ * looking upward from a file, or across the whole workspace, and a configuration can run code or
+ * name code to run. Names a design file type cannot carry (`.cjs`, `.yaml`, `.toml`, a dotfile)
+ * are omitted anyway. tools/design-ingest/README.md says which tool each one is for.
  */
-const TOOL_CONFIG = /\.config\.[cm]?[jt]s$|^package\.json$|^tsconfig.*\.json$|^jsconfig\.json$|^babel\.config\.json$|^deno\.jsonc?$|^biome\.jsonc?$|^vitest\.workspace\.(?:[cm]?[jt]s|json)$/;
+const TOOL_CONFIG = new RegExp(
+  [
+    // ESLint, Prettier, Stylelint, PostCSS, Babel, Vite, Vitest, Jest, Playwright, Astro, Tailwind,
+    // lint-staged, oxlint, knip, cspell and many more: <tool>.config.{js,mjs,cjs,ts,mts,cts}.
+    String.raw`\.config\.[cm]?[jt]s$`,
+    // Keys in package.json configure most of them, and tsconfig.json or jsconfig.json loads tsserver plugins.
+    String.raw`^package\.json$`,
+    String.raw`^tsconfig.*\.json$`,
+    String.raw`^jsconfig\.json$`,
+    String.raw`^babel\.config\.json$`,
+    String.raw`^deno\.jsonc?$`,
+    String.raw`^biome\.jsonc?$`,
+    String.raw`^vitest\.workspace\.(?:[cm]?[jt]s|json)$`,
+    // The Tailwind CSS language server's {tailwind,tailwind.config,tailwind.*.config,tailwind.config.*}.{js,…}.
+    String.raw`^tailwind(?:\.config\..*)?\.[cm]?[jt]s$`,
+    // cspell (a configuration may import a JavaScript one), dprint (its plugins download and run),
+    // Jest (setupFiles, globalSetup and transform name modules it runs), and knip.
+    String.raw`^cspell(?:\.config)?\.json$`,
+    String.raw`^dprint\.json$`,
+    String.raw`^jest\.config\.json$`,
+    String.raw`^knip\.(?:json|[cm]?[jt]s)$`,
+  ].join('|'),
+);
+/**
+ * A package folder, compared folded. A tool that loads a package for a file looks in the nearest
+ * `node_modules` first: the Tailwind CSS language server imports `tailwindcss` that way for every
+ * stylesheet it takes as a Tailwind 4 one, which `@import "tailwindcss"` is enough for.
+ */
+const PACKAGE_FOLDER = 'node_modules';
 /** The file types a design is made of, compared lower-cased (not folded: `.ＰＮＧ` is not `.png`). */
 const DESIGN_TYPES = new Set(['.html', '.htm', '.css', '.js', '.mjs', '.jsx', '.ts', '.tsx', '.json', '.md', '.txt', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.ico', '.woff', '.woff2', '.ttf', '.otf']);
 /** Device names Windows reserves in any folder, with any extension (superscript digits included). */
@@ -773,16 +805,90 @@ export function checkPath(name, limits) {
 }
 
 /**
+ * The bytes of a CSS name: ASCII letters and digits, `-`, `_`, `\` (an escape continues a name),
+ * and every byte of a non-ASCII character.
+ */
+const NAME_BYTE = Uint8Array.from({ length: 256 }, (_, byte) => Number(byte >= 0x80 || /[\w\\-]/.test(String.fromCharCode(byte))));
+const [AT, SLASH, STAR, BACKSLASH] = [0x40, 0x2f, 0x2a, 0x5c];
+/**
+ * The at-rules that make a consumer import a module: Tailwind CSS 4's build (`@tailwindcss/node`)
+ * and its editor language server load `@plugin`'s module and `@config`'s file as JavaScript. For
+ * each, which letters of its name a byte is, ASCII case-insensitively, as bits.
+ */
+const DIRECTIVES = ['@plugin', '@config'].map((directive) => {
+  const letters = directive.slice(1);
+  const masks = Uint8Array.from({ length: 256 }, (_, byte) => {
+    let mask = 0;
+    for (let k = 0; k < letters.length; k++) if (letters.charCodeAt(k) === (byte >= 0x41 && byte <= 0x5a ? byte | 0x20 : byte)) mask |= 1 << k;
+    return mask;
+  });
+  return { directive, masks, all: (1 << letters.length) - 1, full: 1 << letters.length };
+});
+
+/**
+ * The code-loading directive a file's raw bytes hold, or null. It reads the bytes as they are, with
+ * no CSS parser, so no difference between parsers re-opens it:
+ * - `@plugin` or `@config`, ASCII case-insensitively, that no name character follows, wherever it
+ *   is: inside a comment or a string too;
+ * - with any number of comments between the `@` and the name or inside it, since Tailwind's
+ *   parser drops a comment from a name. A comment here is anything from a `/*` to any later `*\/`,
+ *   so where a parser would end one does not matter;
+ * - NUL bytes skipped, so UTF-16 text is read too;
+ * - in a stylesheet only, also an at-keyword spelled with a backslash escape (`@` and any name
+ *   characters, then `\`), whatever it decodes to. Elsewhere `@\` is ordinary text (a regular
+ *   expression such as `/\S+@\S+/`), and in binary data it is common.
+ * One pass, in time linear in the bytes: each name is matched by a small automaton, not a regular
+ * expression that backtracks over comments.
+ *
+ * @param {Uint8Array} bytes
+ * @param {{ stylesheet?: boolean }} [options]
+ * @returns {'@plugin' | '@config' | 'an escaped at-keyword' | null}
+ */
+export function codeLoadingDirective(bytes, { stylesheet = false } = {}) {
+  // Per directive, as bits by the number of letters matched: `ready`, right after the `@` and those
+  // letters; `open`, after a `/` there; `inside`, in a comment opened there (it stays set, since a
+  // comment may end at any later `*/`); `star`, in such a comment, after a `*`.
+  const ready = new Uint8Array(DIRECTIVES.length);
+  const open = new Uint8Array(DIRECTIVES.length);
+  const inside = new Uint8Array(DIRECTIVES.length);
+  const star = new Uint8Array(DIRECTIVES.length);
+  let atName = false;
+  for (let i = 0; i <= bytes.length; i++) {
+    // -1 is the end, where a name that is complete is followed by nothing.
+    const byte = i < bytes.length ? bytes[i] : -1;
+    if (byte === 0) continue;
+    for (let d = 0; d < DIRECTIVES.length; d++) {
+      const { directive, masks, all, full } = DIRECTIVES[d];
+      const r = ready[d];
+      if (r & full && (byte === -1 || !NAME_BYTE[byte])) return /** @type {'@plugin' | '@config'} */ (directive);
+      if (byte === -1) continue;
+      const n = inside[d];
+      ready[d] = ((r & masks[byte]) << 1) | (byte === SLASH ? star[d] : 0) | (byte === AT ? 1 : 0);
+      inside[d] = n | (byte === STAR ? open[d] : 0);
+      open[d] = byte === SLASH ? r & all : 0;
+      star[d] = byte === STAR ? n : 0;
+    }
+    if (stylesheet && byte !== -1) {
+      if (atName && byte === BACKSLASH) return 'an escaped at-keyword';
+      atName = byte === AT || (atName && NAME_BYTE[byte] === 1);
+    }
+  }
+  return null;
+}
+
+/**
  * Why an entry that passed checkPath is not written, or null to write it: a segment that starts
- * with a dot, a segment that names agent instructions or a tool configuration (all compared
- * folded), a segment with a character outside the allowed set, or a file that is not a design file
- * type (its extension compared lower-cased).
+ * with a dot, a segment that names agent instructions, a tool configuration or a package folder
+ * (all compared folded), a segment with a character outside the allowed set, a file that is not a
+ * design file type (its extension compared lower-cased), or a file whose bytes hold a directive
+ * that loads code (codeLoadingDirective). Its bytes are read only when its name passes.
  *
  * @param {string[]} segments
  * @param {'file' | 'dir'} kind
+ * @param {Uint8Array} [data] a file's bytes
  * @returns {string | null}
  */
-export function omission(segments, kind) {
+export function omission(segments, kind, data) {
   for (const segment of segments) {
     if (fold(segment).startsWith('.')) return `${show(segment)} starts with a dot: dotfiles and dot-folders (.git, .claude, .github and the like) are never written`;
   }
@@ -790,7 +896,10 @@ export function omission(segments, kind) {
     const folded = fold(segment);
     if (INSTRUCTIONS.has(folded) || folded.endsWith('.mdc')) return `${show(segment)} names agent instructions, which are never written`;
     if (TOOL_CONFIG.test(folded)) {
-      return `${show(segment)} is a tool configuration (*.config.js and the like, package.json, tsconfig*.json, jsconfig.json, babel.config.json, deno.json, biome.json or vitest.workspace.*), which an editor tool looking upward from a file may load and run, so it is never written`;
+      return `${show(segment)} is a tool configuration (*.config.js, package.json, tsconfig.json, tailwind.js, cspell.json, dprint.json and the like, which tools/design-ingest/README.md lists), which an editor or build tool may find and load, so it is never written`;
+    }
+    if (folded === PACKAGE_FOLDER) {
+      return `${show(segment)} is a package folder: a tool that loads a package for a file looks in the nearest one first (the Tailwind CSS editor extension imports tailwindcss so), so it is never written`;
     }
   }
   for (const segment of segments) {
@@ -803,7 +912,15 @@ export function omission(segments, kind) {
   const dot = last.lastIndexOf('.');
   if (dot <= 0) return 'it has no file extension, so it is not a design file type';
   const extension = last.slice(dot).toLowerCase();
-  return DESIGN_TYPES.has(extension) ? null : `${show(extension)} is not a design file type`;
+  if (!DESIGN_TYPES.has(extension)) return `${show(extension)} is not a design file type`;
+  const directive = data && codeLoadingDirective(data, { stylesheet: extension === '.css' });
+  if (directive === 'an escaped at-keyword') {
+    return 'it holds an escaped at-keyword (an @-name spelled with a backslash escape, whatever it decodes to), which could spell a directive that loads code, such as @plugin or @config, so it is never written';
+  }
+  if (directive) {
+    return `it holds ${JSON.stringify(directive)}, a Tailwind CSS directive that makes the build and the editor extension load and run a JavaScript module, so it is never written (any spelling counts, in a comment or a string too, and a stylesheet's @import reads a file of any type)`;
+  }
+  return null;
 }
 
 /**
@@ -848,7 +965,7 @@ export function plan(entries, limits) {
   /** @type {Set<string>} */
   const dirs = new Set();
   for (const entry of checked) {
-    const reason = omission(entry.segments, entry.kind);
+    const reason = omission(entry.segments, entry.kind, entry.data);
     if (reason) {
       omitted.push({ name: entry.name, reason });
       continue;

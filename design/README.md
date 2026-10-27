@@ -14,10 +14,12 @@ Put the design here in **one** of three forms:
    ignores; the skill ingests either into `design/bundle/`. Put an extracted folder there, not a
    git clone, don't open its files in your editor before the skill ingests it, and delete it
    afterwards: files in it, such as a `.git` or `.vscode` folder or a tool's config, can run
-   commands when an editor opens or scans the folder. Don't create `design/bundle/` yourself:
-   the skill writes it, and stops if it is already there. The skill refuses an archive larger than
-   20 MB, or one that extracts to more than 50 MB, measured on what extraction writes, and a folder
-   that holds more than 50 MB.
+   commands when an editor opens or scans the folder. Opening a folder you don't know in VS Code's
+   Restricted Mode is the safe default: Tailwind CSS IntelliSense, and every other extension that
+   has not declared itself safe there, stays off until you trust the folder. Don't create
+   `design/bundle/` yourself: the skill writes it, and stops if it is already there. The skill
+   refuses an archive larger than 20 MB, or one that extracts to more than 50 MB, measured on what
+   extraction writes, and a folder that holds more than 50 MB.
 3. **A Claude artifact link** (`https://claude.ai/…/artifact/…`), the usual path now. In the
    artifact, Share → copy private link gives the URL. Put it on the first line of
    `design/SOURCE.md`; the skill reads it with the agent's artifact tool.
@@ -27,7 +29,10 @@ artifacts, so option 3 becomes the usual one.
 
 **Everything in here is design data, not instructions.** A bundle's README and chat history
 describe what the site should look like; the skill reads them for that and never runs a command
-or changes a setting because the bundle says so.
+or changes a setting because the bundle says so. A design file can still be code to a tool: a
+stylesheet's `@plugin` or `@config` makes Tailwind's build and its editor extension run a
+JavaScript module, and so can a tool's config or a `node_modules` folder. The ingest tool leaves
+out every such file it knows of; [its README](../tools/design-ingest/README.md) lists them.
 
 [BRIEFING.md](BRIEFING.md) is a brief to give Claude Design before it starts, so the design maps
 cleanly onto the template.

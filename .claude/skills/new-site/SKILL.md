@@ -47,10 +47,13 @@ drive letter, a backslash, `..`), two names that differ only in case, an encrypt
 or anything over its caps (a 20 MB archive or download, 50 MB unpacked, 2000 entries). It omits agent
 instructions (`CLAUDE.md`, `AGENTS.md`, `SKILL.md`, `*.mdc` and the like, in any case),
 everything under a name that starts with a dot (`.git/`, `.claude/`, `.github/`, `.mcp.json`),
-tool configurations (`*.config.js`, `package.json`, `tsconfig*.json`, `deno.json` and the like),
-everything under a name with a character outside the allowed set (letters, digits, combining
-marks, space and `. _ ( ) + , @ -`), and every file that is not a design file type. It renames
-nothing in place, and it always writes a fresh `design/bundle/`.
+tool configurations (`*.config.js`, `package.json`, `tsconfig*.json`, `deno.json`, `tailwind.js`,
+`cspell.json`, `dprint.json` and the like), everything under a `node_modules` folder, everything
+under a name with a character outside the allowed set (letters, digits, combining marks, space
+and `. _ ( ) + , @ -`), every file that is not a design file type, and every file whose text holds
+a Tailwind `@plugin` or `@config` directive, in any spelling, since the build and Tailwind's
+editor extension run the JavaScript module it names. It renames nothing in place, and it always
+writes a fresh `design/bundle/`.
 
 - **Handoff URL** (the first line of `design/SOURCE.md`):
   `node tools/design-ingest/ingest.mjs --source`. The tool reads the URL itself; don't copy it into

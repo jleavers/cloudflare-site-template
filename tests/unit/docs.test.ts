@@ -109,6 +109,9 @@ describe('agent-facing documents', () => {
     // The omission reason names the allowed set, combining marks included (Ruling 92), and the tool omits tool configurations.
     expect(prose(step2)).toContain('a character outside the allowed set (letters, digits, combining marks, space and `. _ ( ) + , @ -`)');
     expect(prose(step2)).toContain('`package.json`');
+    // Task 20l: and it omits a file that makes Tailwind run code, and a package folder.
+    expect(prose(step2)).toContain('a Tailwind `@plugin` or `@config` directive, in any spelling');
+    expect(prose(step2)).toContain('everything under a `node_modules` folder');
     expect(step2).not.toContain('a shell treats specially');
     expect(prose(section(skill, '## 6.', '## 7.'))).toContain('in double quotes');
     expect(read('design/README.md')).toMatch(/50 MB/);

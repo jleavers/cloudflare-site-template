@@ -681,6 +681,26 @@ describe('omitting, not writing', () => {
     ['\u{3164}.png', /name has a character outside the allowed set/],
     ['x\u{115F}.png', /name has a character outside the allowed set/],
     ['x\u{FFA0}.png', /name has a character outside the allowed set/],
+    // Task 20l: the Tailwind CSS language server takes any {tailwind,tailwind.config.*}.{js,ts,mjs,…}
+    // anywhere in the workspace for a JavaScript config, and requires it when no local Tailwind v4 is found.
+    ['tailwind.js', /tool configuration/],
+    ['tailwind.mjs', /tool configuration/],
+    ['tailwind.ts', /tool configuration/],
+    ['tailwind.config.dark.js', /tool configuration/],
+    ['cfg5/Tailwind.TS', /tool configuration/],
+    // Task 20l: other tools' configurations of a design file type that can run code, or name code to run.
+    ['cspell.json', /tool configuration/],
+    ['cfg6/cSpell.json', /tool configuration/],
+    ['cspell.config.json', /tool configuration/],
+    ['dprint.json', /tool configuration/],
+    ['jest.config.json', /tool configuration/],
+    ['knip.json', /tool configuration/],
+    ['knip.js', /tool configuration/],
+    ['knip.ts', /tool configuration/],
+    // Task 20l: a package folder. The language server imports `tailwindcss` from the nearest one to a stylesheet.
+    ['node_modules/tailwindcss/index.js', /"node_modules" is a package folder/],
+    ['web/node_modules/tailwindcss/package.json.js', /"node_modules" is a package folder/],
+    ['mods/Node_Modules/x.js', /"Node_Modules" is a package folder/],
   ];
 
   test.each(OMITTED)('omission(%s) gives a reason', (name, reason) => {
@@ -715,6 +735,15 @@ describe('omitting, not writing', () => {
     ['vitest.workspace.html'],
     // An ordinary Hangul name (한글), whose letters are not fillers.
     ['\u{D55C}\u{AE00}.png'],
+    // Task 20l: near the new names, but none of them.
+    ['tailwind.css'],
+    ['tailwind.min.js'],
+    ['tailwindcss.js'],
+    ['cspell.md'],
+    ['dprint.txt'],
+    ['jest.json'],
+    ['knip.md'],
+    ['node_modules.png'],
   ])('keeps the allowed name %s', (name) => {
     expect(omission(['assets', name], 'file')).toBeNull();
   });
@@ -740,6 +769,97 @@ describe('omitting, not writing', () => {
     expect(omission(['.git'], 'dir')).toMatch(/starts with a dot/);
     expect(omission(['CLAUDE.md'], 'dir')).toMatch(/agent instructions/);
     expect(omission(['package.json'], 'dir')).toMatch(/tool configuration/);
+    expect(omission(['node_modules'], 'dir')).toMatch(/"node_modules" is a package folder/);
+    expect(omission(['my_node_modules'], 'dir')).toBeNull();
+    expect(omission(['my_node_modules', 'x.png'], 'file')).toBeNull();
+  });
+
+  // Task 20l (Ruling 95): Tailwind 4 reads its configuration from CSS, and `@plugin` and `@config`
+  // make the build and the Tailwind CSS editor extension import and run a JavaScript module. A
+  // stylesheet's `@import` and `@reference` read a file of any type as CSS, so every design file is
+  // judged by its raw text, comments and strings included.
+  const enc = (text: string) => new TextEncoder().encode(text);
+  const CODE_LOADING: Array<[string, string | Uint8Array, RegExp]> = [
+    ['styles/a.css', '@plugin "./brand.js";', /"@plugin"/],
+    ['styles/b.css', "@plugin './brand.js';", /"@plugin"/],
+    ['styles/c.css', '@config "./tailwind.config.js";', /"@config"/],
+    ['styles/d.css', "@config './theme.js';", /"@config"/],
+    ['styles/e.css', '@import "tailwindcss";\n@plugin "@tailwindcss/typography";\n', /"@plugin"/],
+    ['styles/f.css', '@plugin"./brand.js";', /"@plugin"/],
+    ['styles/g.css', '@plugin "./brand.js" {\n  size: 2;\n}\n', /"@plugin"/],
+    // Any case, whatever a parser does (Tailwind 4.3.3 compares names exactly; CSS says ASCII case-insensitively).
+    ['styles/h.css', '@PLUGIN "./brand.js";', /"@plugin"/],
+    ['styles/i.css', '@Config "./theme.js";', /"@config"/],
+    // A comment and a string do not excuse it.
+    ['styles/j.css', '/* @plugin "./brand.js"; */\na { color: red }\n', /"@plugin"/],
+    ['styles/k.css', 'a { content: "@config \\"./theme.js\\";" }\n', /"@config"/],
+    // Tailwind's parser drops a comment from a name, so these are @plugin and @config to it.
+    ['styles/l.css', '@/* x */plugin "./brand.js";', /"@plugin"/],
+    ['styles/m.css', '@plu/**/gin "./brand.js";', /"@plugin"/],
+    ['styles/n.css', '@con/* a */f/* b */ig "./theme.js";', /"@config"/],
+    // Inside a comment, Tailwind's parser skips the character after a backslash, so this comment ends at the second */.
+    ['styles/o.css', '@p/* \\*/ */lugin "./brand.js";', /"@plugin"/],
+    // An at-keyword spelled with a backslash escape, whatever it decodes to.
+    ['styles/p.css', '@\\70 lugin "./brand.js";', /escaped at-keyword/],
+    ['styles/q.css', '@\\plugin "./brand.js";', /escaped at-keyword/],
+    ['styles/r.css', '@pl\\75gin "./brand.js";', /escaped at-keyword/],
+    ['styles/s.css', '@m\\65 dia (min-width: 1px) { a { color: red } }', /escaped at-keyword/],
+    // UTF-16 text has a NUL beside each ASCII character.
+    ['styles/t.css', Buffer.from('@plugin "./brand.js";', 'utf16le'), /"@plugin"/],
+    ['styles/u.css', Buffer.from('@config "./theme.js";', 'utf16le').swap16(), /"@config"/],
+  ];
+
+  test.each(CODE_LOADING)('omission(%s) names the directive its text holds', (name, content, reason) => {
+    expect(omission(name.split('/'), 'file', typeof content === 'string' ? enc(content) : content)).toMatch(reason);
+  });
+
+  // `@import "./notes.txt"` reads notes.txt as CSS, so the type does not matter (probed with tailwindcss 4.3.3).
+  test.each(['.html', '.htm', '.css', '.js', '.mjs', '.jsx', '.ts', '.tsx', '.json', '.md', '.txt', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.ico', '.woff', '.woff2', '.ttf', '.otf'])(
+    'a %s file that holds @plugin or @config is omitted, a comment in the name or not',
+    (extension) => {
+      expect(omission(['assets', `x${extension}`], 'file', enc('@plugin "./brand.js";'))).toMatch(/"@plugin"/);
+      expect(omission(['assets', `x${extension}`], 'file', enc('\u0089PNG\r\n\u001a\n{}\n@con/**/fig "./theme.js";'))).toMatch(/"@config"/);
+    },
+  );
+
+  test.each([
+    // Design tokens are the point of a design.
+    ['styles/tokens.css', '@import "tailwindcss";\n@theme {\n  --color-brand: oklch(0.44 0.06 160);\n  --font-display: "Fraunces", serif;\n}\n'],
+    ['styles/global.css', readFileSync(fileURLToPath(new URL('../../src/styles/global.css', import.meta.url)), 'utf8')],
+    ['styles/app.css', '@import "./tokens.css";\n@media (min-width: 40rem) { .card { padding: 2rem } }\n@font-face { font-family: Inter; src: url(./Inter.woff2) }\n'],
+    // Near the directives, but neither: a longer name, an address, a space after the @.
+    ['styles/near.css', '@plugins x;\n@configure y;\n@config-x z;\n@ plugin "./brand.js";\n'],
+    ['contact.html', '<p>Write to hello@configurator.example or sales@plugins.example.</p>'],
+    // The escape rule is for stylesheets: elsewhere `@\\` is ordinary text, such as a regular expression.
+    ['screens/Contact.jsx', 'const valid = (email) => /^\\S+@\\S+\\.\\S+$/.test(email);\n'],
+  ])('keeps %s', (name, content) => {
+    expect(omission(name.split('/'), 'file', enc(content))).toBeNull();
+  });
+
+  test('keeps binary data, and reads an adversarial file in linear time', () => {
+    let seed = 20261027;
+    const random = new Uint8Array(4 << 20).map(() => ((seed = (seed * 1103515245 + 12345) >>> 0) >>> 24));
+    expect(omission(['assets', 'hero.png'], 'file', random)).toBeNull();
+    // Each `@/*` opens a comment that never closes; a matcher that backtracked over them would never finish.
+    expect(omission(['styles', 'slow.css'], 'file', enc('@/*'.repeat(1 << 20)))).toBeNull();
+    expect(omission(['styles', 'slow.css'], 'file', enc(`${'@p/*'.repeat(1 << 18)}*/lugin "./x.js";`))).toMatch(/"@plugin"/);
+  });
+
+  // The sweep's probe (design-ingest-1): a Tailwind 4 stylesheet, the plugin it names, and a JavaScript config.
+  test.each(FORMATS)('%s: the stylesheet that names a plugin is omitted, and its tokens file is kept', (_format, build) => {
+    const result = inMemory(
+      build([
+        { name: 'styles/app.css', data: '@import "tailwindcss";\n@plugin "./brand.js";\n@theme { --color-brand: #2f5d46; }\n' },
+        { name: 'styles/brand.js', data: 'export default function () {}\n' },
+        { name: 'styles/tokens.css', data: '@theme { --color-brand: #2f5d46; }\n' },
+        { name: 'tailwind.config.ts', data: 'export default {};\n' },
+        { name: 'node_modules/tailwindcss/index.js', data: 'export default {};\n' },
+        { name: 'index.html', data: html('Home') },
+      ]),
+    );
+    expect(result.files.map((file) => file.path)).toEqual(['styles/brand.js', 'styles/tokens.css', 'index.html']);
+    expect(result.omitted.map((entry) => entry.name)).toEqual(['styles/app.css', 'tailwind.config.ts', 'node_modules/tailwindcss/index.js']);
+    expect(result.omitted[0]!.reason).toMatch(/"@plugin"/);
   });
 
   test.each(FORMATS)('%s: each is reported, and only the design file is kept', (_format, build) => {
