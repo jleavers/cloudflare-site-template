@@ -231,13 +231,27 @@ describe('agent-facing documents', () => {
   // deploy fails; a domain that already serves a site moves at the push that adds `routes`.
   eachDoc('%s covers a fresh account\'s subdomain and a domain that already serves a site', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
     const text = read(doc).replace(/\s+/g, ' ');
-    for (const fragment of ['workers.dev subdomain', '**Workers & Pages**', '**Your subdomain**', "CI's wrangler won't register one", 'switches at that push', 'first push without `routes`', 'then put `routes` back and push again']) {
+    for (const fragment of ['workers.dev subdomain', '**Workers & Pages**', '**Your subdomain**', "CI's wrangler won't register one", 'open the link the failed deploy prints', 'switches at that push', 'first push without `routes`', 'then put `routes` back and push again']) {
+      expect(text, `${doc}: ${fragment}`).toContain(fragment);
+    }
+    // The check comes before the push it is for.
+    expect(text.indexOf('**Your subdomain**'), `${doc}: the subdomain check before the first push`).toBeLessThan(text.indexOf("CI's `deploy` job creates the Worker"));
+  });
+
+  // Build-time code, which ignore-scripts does not stop, can use any GitHub credential on the machine,
+  // and one that can push to `main` gets CI's token, since every push to `main` deploys (final review 2, I1).
+  eachDoc("%s says a GitHub credential on the build machine is one step from CI's token", ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
+    const text = read(doc).replace(/\s+/g, ' ');
+    for (const fragment of ['any GitHub credential', "one that can push to `main` reaches CI's token", 'dev container', 'can only open pull requests', "another identity's approval", 'residual risk']) {
       expect(text, `${doc}: ${fragment}`).toContain(fragment);
     }
   });
 
-  // A doc may say what not to do, but never tells the reader to sign in, set a secret or deploy from their machine.
-  test.each(['README.md', 'AGENTS.md', '.claude/skills/new-site/SKILL.md', 'SECURITY.md'].filter(exists))('%s prescribes no local deploy, login or secret put', (doc) => {
+  // These documents never name a command that signs in to Cloudflare, sets a Worker secret or deploys
+  // from the reader's machine, not even to warn against it (`wrangler deploy --dry-run` aside). A site's
+  // README and SECURITY.md are its owner's to write once /new-site replaces them, and may warn "never run
+  // `wrangler login`", so those two are checked only while they are still the template's.
+  eachDoc('%s names no local deploy, login or secret put', ['README.md', 'AGENTS.md', '.claude/skills/new-site/SKILL.md', ...(templateSecurity ? ['SECURITY.md'] : [])], (doc: string) => {
     const text = read(doc).replace(/\s+/g, ' ');
     for (const command of ['wrangler login', 'wrangler secret', 'npm run deploy', 'wrangler deploy', 'wrangler versions deploy', 'wrangler versions upload']) {
       expect(text.replaceAll('wrangler deploy --dry-run', ''), `${doc}: ${command}`).not.toContain(command);
@@ -442,7 +456,49 @@ describe('agent-facing documents', () => {
       expect(readme).not.toContain('Static requests never touch it');
       expect(section(readme, '## How it works', '## Live demo')).toMatch(/A miss \(an unknown page, a missing asset\)/);
       expect(section(readme, 'To try real delivery locally', '**Pull-request previews**')).toMatch(/real `TURNSTILE_SECRET_KEY`[^.]*\..*`localhost`/);
+      // Any package the build or dev server runs can read .dev.vars (final review 2).
+      for (const fragment of ['restricted, short-lived key', 'delete `.dev.vars` afterwards']) expect(section(readme, 'To try real delivery locally', '**Pull-request previews**'), fragment).toContain(fragment);
     });
+
+    test('the README names every place Wrangler keeps a saved login', () => {
+      const readme = read('README.md').replace(/\s+/g, ' ');
+      for (const fragment of ['`~/Library/Preferences/.wrangler/config/default.toml`', '`%APPDATA%\\xdg.config\\.wrangler\\config\\default.toml`', '`~/.wrangler/`']) expect(readme, fragment).toContain(fragment);
+    });
+  });
+
+  test("the spec's no-.dev.vars.example rationale agrees with the README's real-delivery advice", () => {
+    const sources = prose(section(read(SPEC), '### 7.5', '## 8.'));
+    expect(sources).not.toContain('should not suggest a file for');
+    expect(sources).toContain('restricted, short-lived key');
+  });
+
+  // AGENTS.md is kept in every site, so these run everywhere.
+  test('AGENTS.md maps the design tools, and runs e2e after touching tools/screenshots/', () => {
+    const agents = read('AGENTS.md');
+    const rows = agents.split(/\r?\n/).filter((line) => line.startsWith('| `'));
+    for (const path of ['`tools/design-ingest/`', '`tools/screenshots/design.mjs`']) expect(rows.some((row) => row.startsWith(`| ${path} |`)), path).toBe(true);
+    expect(prose(section(agents, '## Verification', '## Stamping'))).toMatch(/`src\/contact\/`,? or `tools\/screenshots\/`, also run `npm run test:e2e`/);
+  });
+
+  test('the spec says a design screen renders only through tools/screenshots/design.mjs', () => {
+    const spec = read(SPEC);
+    expect(prose(section(spec, '### 6.3', '### 6.4'))).toMatch(/[Ss]creens? render[^.]*only through `tools\/screenshots\/design\.mjs`[^.]*no network/);
+    expect(spec.split('\n').find((line) => line.startsWith('tools/screenshots/')) ?? '').toContain('design.mjs');
+    expect(prose(section(spec, '## 12.', '## 13.'))).toContain('--only screen');
+    expect(prose(section(spec, '### 14.3', '## 15.'))).toContain('`design.mjs`');
+  });
+
+  describe.skipIf(!templateSecurity)('template SECURITY.md only', () => {
+    test('SECURITY.md puts the design tools in scope', () => {
+      const scope = prose(section(read('SECURITY.md'), '## In scope', '## Not in scope'));
+      for (const fragment of ['`tools/design-ingest/ingest.mjs`', '`tools/screenshots/design.mjs`', 'outside its bundle', 'any network']) expect(scope, fragment).toContain(fragment);
+    });
+  });
+
+  // The person, not the agent, puts a folder in design/incoming/, so design/README.md tells them what SKILL.md tells the agent.
+  test('design/README.md says what may go in design/incoming/, and what to do with it', () => {
+    const readme = prose(read('design/README.md'));
+    for (const fragment of ['not a git clone', "don't open its files in your editor", 'delete it afterwards']) expect(readme, fragment).toContain(fragment);
   });
 
   // gh secret set --env production fails with a 404 until the environment exists.

@@ -11,7 +11,10 @@ Put the design here in **one** of three forms:
    bundle into `design/bundle/`.
 2. **A downloaded archive** (the `.zip` "Project archive", or a handoff `.tar.gz`). Leave the
    archive in this folder, or put a folder you extracted from it in `design/incoming/`, which git
-   ignores; the skill ingests either into `design/bundle/`. Don't create `design/bundle/` yourself:
+   ignores; the skill ingests either into `design/bundle/`. Put an extracted folder there, not a
+   git clone, don't open its files in your editor before the skill ingests it, and delete it
+   afterwards: files in it, such as a `.git` or `.vscode` folder or a tool's config, can run
+   commands when an editor opens or scans the folder. Don't create `design/bundle/` yourself:
    the skill writes it, and stops if it is already there. The skill refuses an archive larger than
    20 MB, or one that extracts to more than 50 MB, measured on what extraction writes, and a folder
    that holds more than 50 MB.

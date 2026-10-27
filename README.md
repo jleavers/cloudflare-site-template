@@ -76,14 +76,14 @@ for Turnstile or email delivery). The form works and sends nothing until you con
    in it: `gh secret set CLOUDFLARE_API_TOKEN --env production` and the same for
    `CLOUDFLARE_ACCOUNT_ID`. On a private Free repository, use repository secrets instead
    ([which token, and where, by plan](#cloudflare-api-token)).
-3. Push a commit (`git commit --allow-empty -m "Deploy"` and `git push` will do), or, if you
+3. Check the account's workers.dev subdomain. An account that has never had a Worker may have no
+   workers.dev subdomain yet, and CI's wrangler won't register one, so the deploy fails. In the
+   Cloudflare dashboard, go to the **Workers & Pages** page and make sure it shows
+   **Your subdomain** ([workers.dev](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)).
+   If **Your subdomain** isn't there, choose one there, or open the link the failed deploy prints.
+4. Push a commit (`git commit --allow-empty -m "Deploy"` and `git push` will do), or, if you
    made the repository on GitHub's web page, re-run its first CI run from the Actions tab (Re-run
    all jobs). CI's `deploy` job creates the Worker and puts the site on your workers.dev subdomain.
-
-An account that has never had a Worker may have no workers.dev subdomain yet, and CI's wrangler
-won't register one, so the deploy fails. Before the first deploy, in the Cloudflare dashboard, go
-to the **Workers & Pages** page and make sure it shows **Your subdomain**
-([workers.dev](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)).
 
 To try it without deploying, `npm ci` and `npm run preview` run the whole site and Worker locally,
 with no Cloudflare account at all. Every deploy goes through CI ([why](#cloudflare-api-token)).
@@ -110,9 +110,9 @@ You need: a Claude Design handoff (or an archive or artifact link), the facts in
       a custom domain needs one more permission on its zone). First open the `production`
       environment that CI's first run made (Settings → Environments), or create it, and limit it
       to `main`; then `gh secret set CLOUDFLARE_API_TOKEN --env production` and the same for
-      `CLOUDFLARE_ACCOUNT_ID`. On a private Free repository, use repository secrets.
-   2. Push. CI's `deploy` job creates the Worker. The account needs a workers.dev subdomain
-      first, [as in the Quick start](#quick-start). With a custom domain, the deploy also attaches
+      `CLOUDFLARE_ACCOUNT_ID`. On a private Free repository, use repository secrets. Check, too,
+      that the account has a workers.dev subdomain ([Quick start](#quick-start), step 3).
+   2. Push. CI's `deploy` job creates the Worker. With a custom domain, the deploy also attaches
       the domain, DNS record and certificate included, so the domain switches at that push.
       Wrangler asks nothing in CI: it takes over a DNS record that already exists for that
       hostname, or the hostname from another Worker. If the domain already serves a site
@@ -185,11 +185,27 @@ build or dev server**, since any package the build runs could read it. That is a
 secrets are set in the dashboard. The CI token passes through your machine only once, into
 `gh secret set`, which prompts for it: paste it there, and don't save it in a file or your
 shell's environment. To clear an old login, run `npx wrangler logout`, which invalidates its
-OAuth token and deletes the stored credentials, or delete Wrangler's saved login, typically
-`~/.config/.wrangler/config/default.toml` (with keychain storage, also `default.enc` beside it
-and the keychain entry;
-[Wrangler's login and logout](https://developers.cloudflare.com/workers/wrangler/commands/general/)).
+OAuth token and deletes the stored credentials, or delete Wrangler's saved login:
+`~/.config/.wrangler/config/default.toml` on Linux,
+`~/Library/Preferences/.wrangler/config/default.toml` on macOS,
+`%APPDATA%\xdg.config\.wrangler\config\default.toml` on Windows, or
+`.wrangler/config/default.toml` under `$XDG_CONFIG_HOME` on any OS where that is set. Where a
+legacy `~/.wrangler/` folder exists, on any OS, Wrangler uses it instead, so delete
+`~/.wrangler/config/default.toml` too. With keychain storage, delete `default.enc` beside the
+file and the keychain entry as well
+([Wrangler's login and logout](https://developers.cloudflare.com/workers/wrangler/commands/general/)).
 Unset any `CLOUDFLARE_API_TOKEN` your shell profile exports, too.
+
+**A GitHub credential on that machine is one step from CI's token.** Code the build runs, which
+`ignore-scripts` does not stop (a vite or Astro plugin, say), or an agent working on that machine,
+can use any GitHub credential there: your `gh` token, an SSH key, a Git credential helper. And
+one that can push to `main` reaches CI's token, because every push to `main` deploys, running that
+commit's `scripts/trusted-config.mjs` in the job that holds the token. So build where no such
+credential is (a dev container or a VM), or give that machine a credential that can only open pull
+requests, with a ruleset requiring another identity's approval on `main` (as for coding agents,
+below; a private Free repository has no rulesets). If you work alone and push to `main` from the
+machine you build on, this is a residual risk: one bad package version in your build could deploy
+through CI.
 
 CI hands the token only to jobs that run no code from the branch or the lockfile. They take
 `wrangler.jsonc` and the wrangler version from `main` (for a pull request, from the default
@@ -277,7 +293,10 @@ Fonts API, so building needs network access, while visitors never contact Google
 `npm run preview` never sends a real message. To try real delivery locally, put the settings in
 a `.dev.vars` file (gitignored) with a real `TURNSTILE_SECRET_KEY`: the handler refuses a test
 secret with any provider but `log`. That secret's widget needs `localhost` among its hostnames, and
-`site.ts` its site key. Then run `npm run build` and `npx wrangler dev` yourself.
+`site.ts` its site key. Then run `npm run build` and `npx wrangler dev` yourself. Any package the
+build or dev server runs can read that file, so use a restricted, short-lived key for delivery (a
+Resend key with sending access only, or a webhook for a test channel, deleted when you're done),
+and delete `.dev.vars` afterwards.
 
 **Pull-request previews**, once [turned on](#cloudflare-api-token), use Cloudflare
 [Previews](https://developers.cloudflare.com/workers/previews/): each gets its own URL,

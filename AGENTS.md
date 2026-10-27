@@ -22,6 +22,8 @@ the design; read its §5 (contracts) and §7 (the form) before changing either.
 | `src/worker.ts` | The only Cloudflare-specific code |
 | `wrangler.jsonc` | Worker config: name, vars, previews, custom domain |
 | `tests/` | `unit/`, `dist/` (contracts on the build), `e2e/` (Playwright), `preflight/` |
+| `tools/design-ingest/` | The only way a design enters `design/bundle/` (new-site step 2) |
+| `tools/screenshots/design.mjs` | The only renderer for a design screen (`capture.mjs --only screen`) |
 | `SITE_BRIEF.md`, `design/` | A site's inputs; see `.claude/skills/new-site/SKILL.md` |
 
 ## Contracts
@@ -80,8 +82,8 @@ change that needs one of those tests weakened is the wrong change.
 ## Verification
 
 Before finishing any change, run `npm run verify` (type check, unit tests, build, dist
-contracts). After touching `ContactForm.astro`, `src/scripts/`, `src/worker.ts` or
-`src/contact/`, also run `npm run test:e2e`. After a visual change, run `npm run lighthouse`.
+contracts). After touching `ContactForm.astro`, `src/scripts/`, `src/worker.ts`, `src/contact/`
+or `tools/screenshots/`, also run `npm run test:e2e`. After a visual change, run `npm run lighthouse`.
 
 ## Stamping out a new site
 

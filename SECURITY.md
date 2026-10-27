@@ -23,6 +23,10 @@ within a few days.
   or real delivery) past `npm run preflight`.
 - **The CI workflow**: a way for a pull request from a fork to obtain the Cloudflare token, write
   to the repository, or run on a self-hosted runner.
+- **The design tools**: a Claude Design bundle that gets past `tools/design-ingest/ingest.mjs`
+  (a link, an unsafe path, agent instructions or another entry outside its allow-list written into
+  `design/bundle/`); a design screen that, rendered through `tools/screenshots/design.mjs`, reaches
+  a file outside its bundle, or any network.
 - **The agent instructions** (`AGENTS.md`, `.claude/`): text in a Claude Design bundle, a site
   brief or an issue that makes an agent following them widen its own authority: run commands
   the instructions forbid, change CI, secrets or deploy settings, or exfiltrate data.

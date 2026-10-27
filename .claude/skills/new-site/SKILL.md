@@ -222,7 +222,13 @@ with `file:line`, and say that production preflight (a custom domain, or `DELIVE
 3. **First deploy, through CI:** every deploy goes through CI, the first included. There is no
    deploy from your machine: keep no Cloudflare login or API token on a machine that runs this
    site's build or dev server, because any package the build runs could read it (template README,
-   https://github.com/jleavers/cloudflare-site-template#cloudflare-api-token).
+   https://github.com/jleavers/cloudflare-site-template#cloudflare-api-token). The same code, or an
+   agent on that machine, can use any GitHub credential there (your `gh` token, an SSH key, a
+   credential helper), and one that can push to `main` reaches CI's token, since every push to
+   `main` deploys. So build where no such credential is (a dev container or a VM), or give that
+   machine a credential that can only open pull requests, with a ruleset requiring another
+   identity's approval on `main`. If you work alone and push to `main` from this machine, that is a residual
+   risk.
    - Create the CI token: Account → Workers Scripts → Edit and Account → Account Settings → Read,
      limited to one account. With a custom domain, add Zone → Workers Routes → Edit (Cloudflare's
      permissions page calls it Write), with the token's zone resources limited to
@@ -237,7 +243,8 @@ with `file:line`, and say that production preflight (a custom domain, or `DELIVE
      rulesets either, so any identity with Contents write can push to `main`.
    - If the account has never had a Worker, it may have no workers.dev subdomain yet, and CI's
      wrangler won't register one, so the deploy fails: first, in the Cloudflare dashboard, go to the
-     **Workers & Pages** page and make sure it shows **Your subdomain**.
+     **Workers & Pages** page and make sure it shows **Your subdomain**. If **Your subdomain** isn't
+     there, choose one there, or open the link the failed deploy prints.
    - Then, once the site key from step 1 is in `site.ts` (CI's preflight refuses the test key on a
      live site), push. CI's `deploy` job creates the Worker, and with a custom domain attaches it, DNS
      record and certificate included, so the domain switches at that push. Wrangler asks nothing in
