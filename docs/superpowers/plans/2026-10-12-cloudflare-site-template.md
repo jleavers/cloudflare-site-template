@@ -5881,12 +5881,12 @@ Owner-driven. The executor prepares commands and checks results.
 
 - [ ] **Step 1: Run the spec's §15 steps 4, 4a, 4b and 5, in order, up to the flip**
 
-Spec §15 is the one go-public checklist; this task adds nothing to it. The executor prepares each command and reads its result back. The **owner** runs every command that needs write access, and everything in Cloudflare. The flip itself is Step 3. Before it, on every plan:
+Spec §15 is the one go-public checklist; this task adds nothing to it. The executor prepares each command and reads its result back. The **owner** runs every command that needs write access, and everything in Cloudflare. The flip itself is Step 3, and §15 step 5a, straight after it, is Step 3a. Before the flip, on every plan:
 - 4: remove the jl-dev-02 runners and `CI_LINUX_RUNNER` together, confirm the secrets belong to the demo account, and revoke any main-account token ever stored here;
 - 4a: the security sweep, `baseline` and then `public`;
-- 4b: the roll (a new token stored and its date read back, the old token revoked last), the owner's checks that go with it, the repository settings, the agent identity and the `main` ruleset;
-- 4b, where the plan gives a private repository environment secrets (Pro, Team, Enterprise): also the move into `production`, limited to `main`;
-- 5, up to the flip: the edit histories, then the template flag.
+- 4b: the roll (a new token stored and its date read back, the old token revoked last), the owner's checks that go with it, and the workflow permissions;
+- 4b, where the plan gives a private repository environment secrets and rulesets (Pro, Team, Enterprise): also the move into `production`, limited to `main`, and the `main` ruleset, with the owner on its bypass list;
+- 5, up to the flip: the edit histories, the deletion of the Actions runs made while the repository was private, then the template flag.
 
 - [ ] **Step 2: Read the result back, before the flip**
 
@@ -5901,7 +5901,7 @@ Expected where the move is done (not Free):
 - the second lists neither;
 - `is_template` is `true` and `visibility` is `private`.
 
-Expected on Free, where the move waits for Step 3a: the second lists `CLOUDFLARE_API_TOKEN` dated on or after the roll, the first is empty or errors, and `is_template` is `true` with `visibility` `private`.
+Expected on Free, where the move waits for Step 3a: the second lists `CLOUDFLARE_API_TOKEN`, dated on or after the roll, and `CLOUDFLARE_ACCOUNT_ID`, the first is empty or errors, and `is_template` is `true` with `visibility` `private`.
 
 - [ ] **Step 3: Owner: go public**
 
@@ -5909,9 +5909,24 @@ Expected on Free, where the move waits for Step 3a: the second lists `CLOUDFLARE
 gh repo edit jleavers/cloudflare-site-template --visibility public --accept-visibility-change-consequences
 ```
 
-- [ ] **Step 3a: Owner, GitHub Free only: the move into `production`**
+- [ ] **Step 3a: Owner, every plan: the settings GitHub accepts only on a public repository, and their read-back**
 
-Straight after Step 3, before anything else merges into `main`: spec §15 step 4b's last bullet. Limit `production` to `main`, set both secrets in it with the token already rolled, delete the repository-level copies, then run the first two read-backs of Step 2. Expected: the first lists both secrets dated on or after the roll, and the second lists neither.
+Straight after Step 3, before anything else: spec §15 step 5a ("Straight after the flip, on every plan"). The owner sets private vulnerability reporting and the fork pull request approval (its Settings control on a 404 or 422). On Free, before anything else merges into `main`, the owner also adds the `main` ruleset and makes the move into `production`: limit it to `main`, set both secrets in it with the token already rolled, and delete the repository-level copies. Then read each setting back:
+
+```bash
+R=jleavers/cloudflare-site-template
+gh api repos/$R/private-vulnerability-reporting --jq .enabled
+gh api repos/$R/actions/permissions/fork-pr-contributor-approval --jq .approval_policy
+gh ruleset list --repo $R
+gh api repos/$R/environments/production --jq .deployment_branch_policy
+```
+Expected, on every plan:
+- `true`;
+- `all_external_contributors` (after the Settings fallback, that control reads "Require approval for all external contributors" instead);
+- the `main` ruleset;
+- `custom_branch_policies` `true`, not `null`.
+
+On Free, also run the first two read-backs of Step 2. Expected: the first lists both secrets dated on or after the roll, and the second lists neither.
 
 - [ ] **Step 4: CI on GitHub-hosted runners, and the demo**
 
