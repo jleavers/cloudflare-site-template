@@ -3,6 +3,9 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { crc32, gunzipSync, inflateRawSync } from 'node:zlib';
+import { fold, namesAgentInstructions } from './agent-files.mjs';
+
+export { fold };
 
 // The only way a Claude Design bundle reaches the checkout (the new-site skill, step 2). It reads
 // the handoff URL from design/SOURCE.md itself, or a local .zip or .tar.gz, or a folder outside the
@@ -46,8 +49,6 @@ export const LIMITS = Object.freeze({
 /** Claude Design's handoff host. Any other needs --host, after the person confirms it. */
 export const HANDOFF_HOST = 'api.anthropic.com';
 
-/** Agent-instruction file names, compared lower-cased; so is the `.mdc` suffix. */
-const INSTRUCTIONS = new Set(['claude.md', 'claude.local.md', 'agents.md', 'agents.override.md', 'agent.md', 'skill.md', 'gemini.md', 'copilot-instructions.md']);
 /**
  * Tool configurations of a design file type, compared folded. An editor or build tool finds one by
  * looking upward from a file, or across the whole workspace, and a configuration can run code or
@@ -97,14 +98,6 @@ const WINDOWS_DEVICE = /^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]) *(?:\
  */
 const ALLOWED_NAME = /^(?![^]*\p{Default_Ignorable_Code_Point})[\p{L}\p{N}_][\p{L}\p{N}\p{Mn}\p{Mc} ._()+,@-]*$/u;
 const ALLOWED_SET = 'letters, digits, combining marks, space and . _ ( ) + , @ -';
-/**
- * A name folded as case-insensitive and normalising filesystems fold it, or more strictly: NFKC,
- * then lower-, upper- and lower-cased, so `ſ` is `s`, `ﬆ` is `st`, the Kelvin sign is `k`,
- * fullwidth letters are ASCII, and `ß` and `ẞ` are both `ss`. The first lower-casing takes `ẞ` to
- * `ß`, which the upper-casing then takes to `SS`, so a folded name folds to itself. Used for
- * agent-instruction and tool-configuration names, and duplicates.
- */
-export const fold = (/** @type {string} */ name) => name.normalize('NFKC').toLowerCase().toUpperCase().toLowerCase();
 /** A host name of letters, digits and hyphens, whose last label starts with a letter: no IP address, and nothing a shell reads specially. */
 const DNS_NAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -914,7 +907,7 @@ export function omission(segments, kind, data) {
   }
   for (const segment of segments) {
     const folded = fold(segment);
-    if (INSTRUCTIONS.has(folded) || folded.endsWith('.mdc')) return `${show(segment)} names agent instructions, which are never written`;
+    if (namesAgentInstructions(segment)) return `${show(segment)} names agent instructions, which are never written`;
     if (TOOL_CONFIG.test(folded)) {
       return `${show(segment)} is a tool configuration (*.config.js, package.json, tsconfig.json, tailwind.js, cspell.json, dprint.json and the like, which tools/design-ingest/README.md lists), which an editor or build tool may find and load, so it is never written`;
     }

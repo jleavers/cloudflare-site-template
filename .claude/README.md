@@ -7,7 +7,8 @@
 
 There is deliberately **no `settings.json`, hook or `.mcp.json`** here: a committed settings file
 binds every session in every copy of this template, its owner's included. `tests/sweep/` fails if one
-appears.
+appears, and `tests/sweep/tree.test.ts` fails on any tracked agent-instruction file or dot path
+anywhere in the tree that is not on its exact lists.
 
 ## The stage tool profiles
 
