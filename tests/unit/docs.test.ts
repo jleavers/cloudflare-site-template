@@ -341,6 +341,31 @@ describe('agent-facing documents', () => {
     }
   });
 
+  // A fork's pull request runs the fork's own workflow file, which can name main's concurrency group
+  // with cancel-in-progress. YAML cannot stop that; GitHub's fork-approval setting does (sweep run
+  // 20261028T105259Z, cluster 3, Ruling 108). The wording is the setting's own, from GitHub's docs.
+  eachDoc('%s says to require approval for all external contributors, and to read workflow changes before approving', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
+    const text = read(doc).replace(/\s+/g, ' ');
+    for (const fragment of [
+      'Settings → Actions → General',
+      '"Approval for running fork pull request workflows from contributors"',
+      '**"Require approval for all external contributors"**',
+      '`.github/workflows/`',
+      "pull request's diff",
+      'runs its own workflow file',
+    ]) {
+      expect(text, `${doc}: ${fragment}`).toContain(fragment);
+    }
+  });
+
+  // A classic token with repository access can re-run workflows, and a re-run is a way to deploy.
+  eachDoc('%s offers a coding agent no classic token', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
+    const text = read(doc).replace(/\s+/g, ' ');
+    expect(text).not.toMatch(/classic without the `workflow` scope/);
+    expect(text).toMatch(/no Actions write/);
+    expect(text).toMatch(/never a classic token|Not a classic token/);
+  });
+
   // Every deploy goes through CI, a site's first included, and the Worker's secrets are set in the
   // dashboard: a local deploy, a login or a token on a machine that runs the build would sit beside
   // the lockfile's code (sweep cluster 3, Ruling 84).

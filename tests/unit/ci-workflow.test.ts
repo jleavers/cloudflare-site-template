@@ -1,4 +1,7 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 
@@ -224,6 +227,23 @@ const RUNNER = "${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}";
 // verify on a push to main builds the artifact that deploys, so it too runs on a GitHub-hosted runner.
 const VERIFY_RUNNER = "${{ github.event_name == 'push' && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}";
 const ENABLED = "env.HAS_CLOUDFLARE == 'true'";
+// deploy's steps after the head check also wait for its answer: this commit is main's head.
+const AT_HEAD = `${ENABLED} && steps.head.outputs.current == 'true'`;
+// The first step of deploy that holds a token of any kind: it reads main's head with the job's own
+// GITHUB_TOKEN, passed in through env (never interpolated into the script, which zizmor refuses),
+// and fails the job when it cannot, rather than deploy on a check that did not happen.
+const HEAD_CHECK = [
+  'if ! head="$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)" || [ -z "$head" ]; then',
+  '  echo "::error::could not read main\'s head, so nothing deploys"',
+  '  exit 1',
+  'fi',
+  'if [ "$head" = "$SHA" ]; then',
+  '  echo "current=true" >> "$GITHUB_OUTPUT"',
+  'else',
+  '  echo "current=false" >> "$GITHUB_OUTPUT"',
+  '  echo "::notice title=Deploy skipped::main\'s head is now $head, not $SHA; the run for $head deploys it"',
+  'fi',
+].join('\n');
 const TRUSTED_FILES = ['/.nvmrc', '/package.json', '/scripts/trusted-config.mjs', '/wrangler.jsonc'];
 const SITE = '${{ runner.temp }}/site';
 const TRUSTED_CONFIG = 'node trusted/scripts/trusted-config.mjs trusted';
@@ -283,7 +303,7 @@ const INPUTS: Record<string, string[]> = {
   'actions/github-script': ['script'],
   'cloudflare/wrangler-action': ['apiToken', 'accountId', 'wranglerVersion', 'workingDirectory', 'command'],
 };
-const STEP_ENV = ['WRANGLER_VERSION', 'ARTIFACT_ID', 'PREVIEW_URL', 'npm_config_ignore_scripts', 'npm_config_min_release_age'];
+const STEP_ENV = ['GH_TOKEN', 'REPO', 'SHA', 'WRANGLER_VERSION', 'ARTIFACT_ID', 'PREVIEW_URL', 'npm_config_ignore_scripts', 'npm_config_min_release_age'];
 const ARTIFACT_ID = '${{ steps.upload.outputs.artifact-id }}';
 
 // The jobs that hold the token: the environment each runs through, the ref it trusts, the job whose
@@ -296,7 +316,8 @@ const TOKEN_JOBS = {
     builder: 'verify',
     // --upload-source-maps=false: a sourceMappingURL in worker.js could name any file on the runner (Ruling 96).
     command: 'deploy bundle/worker.js --no-bundle --upload-source-maps=false --config wrangler.jsonc',
-    scripts: [ID_CHECK, COPY_SITE, SYMLINK_CHECK],
+    gate: AT_HEAD,
+    scripts: [HEAD_CHECK, ID_CHECK, COPY_SITE, SYMLINK_CHECK],
     copies: ['"$RUNNER_TEMP/artifact/bundle/worker.js"', '"$RUNNER_TEMP/artifact/dist"', 'trusted/wrangler.jsonc'],
   },
   'ci.yml:preview': {
@@ -304,6 +325,7 @@ const TOKEN_JOBS = {
     ref: 'refs/heads/${{ github.event.repository.default_branch }}',
     builder: 'preview-build',
     command: `preview bundle/worker.js --name pr-\${{ github.event.pull_request.number }} --config ${PREVIEW_CONFIG_FILE}`,
+    gate: ENABLED,
     scripts: [ID_CHECK, COPY_PREVIEW_SITE, SYMLINK_CHECK, WRITE_PREVIEW_CONFIG, PREVIEW_CONFIG_CHECK],
     copies: ['"$RUNNER_TEMP/artifact/bundle/worker.js"', '"$RUNNER_TEMP/artifact/dist"'],
   },
@@ -312,6 +334,7 @@ const TOKEN_JOBS = {
     ref: 'refs/heads/${{ github.event.repository.default_branch }}',
     builder: undefined,
     command: 'preview delete --name pr-${{ github.event.pull_request.number }} --config wrangler.jsonc',
+    gate: ENABLED,
     scripts: [COPY_CONFIG],
     copies: ['trusted/wrangler.jsonc'],
   },
@@ -351,39 +374,45 @@ const previewGate = (action: string) =>
     'github.event.pull_request.base.ref == github.event.repository.default_branch',
   );
 const notice = (title: string, text: string) => ({ if: "env.HAS_CLOUDFLARE != 'true'", run: `echo "::notice title=${title} skipped::${text}"` });
-const enabled = (step: { [key: string]: Yaml }) => ({ if: ENABLED, ...step });
-const trustedSteps = (ref: string) => [
-  enabled({
-    uses: TOKEN_ACTIONS.checkout,
-    with: { ref, path: 'trusted', 'sparse-checkout': literal(TRUSTED_FILES.join('\n')), 'sparse-checkout-cone-mode': 'false', 'persist-credentials': 'false' },
-  }),
-  enabled({ uses: TOKEN_ACTIONS.setupNode, with: { 'node-version-file': 'trusted/.nvmrc', 'package-manager-cache': 'false' } }),
-  enabled({ id: 'trusted', run: TRUSTED_CONFIG }),
-  enabled({ env: { WRANGLER_VERSION: WRANGLER_VERSION_OUTPUT }, run: VERSION_CHECK }),
-  enabled({ run: literal(FLOOR_CHECK) }),
+const enabled = (step: { [key: string]: Yaml }, gate = ENABLED) => ({ if: gate, ...step });
+const trustedSteps = (ref: string, gate = ENABLED) => [
+  enabled(
+    {
+      uses: TOKEN_ACTIONS.checkout,
+      with: { ref, path: 'trusted', 'sparse-checkout': literal(TRUSTED_FILES.join('\n')), 'sparse-checkout-cone-mode': 'false', 'persist-credentials': 'false' },
+    },
+    gate,
+  ),
+  enabled({ uses: TOKEN_ACTIONS.setupNode, with: { 'node-version-file': 'trusted/.nvmrc', 'package-manager-cache': 'false' } }, gate),
+  enabled({ id: 'trusted', run: TRUSTED_CONFIG }, gate),
+  enabled({ env: { WRANGLER_VERSION: WRANGLER_VERSION_OUTPUT }, run: VERSION_CHECK }, gate),
+  enabled({ run: literal(FLOOR_CHECK) }, gate),
 ];
-const siteSteps = (builder: string, copy: string) => {
+const siteSteps = (builder: string, copy: string, gate = ENABLED) => {
   const id = `\${{ needs.${builder}.outputs.site-artifact-id }}`;
   return [
-    enabled({ env: { ARTIFACT_ID: id }, run: ID_CHECK }),
-    enabled({ uses: TOKEN_ACTIONS.download, with: { 'artifact-ids': id, path: '${{ runner.temp }}/artifact' } }),
-    enabled({ run: literal(copy) }),
-    enabled({ run: SYMLINK_CHECK }),
+    enabled({ env: { ARTIFACT_ID: id }, run: ID_CHECK }, gate),
+    enabled({ uses: TOKEN_ACTIONS.download, with: { 'artifact-ids': id, path: '${{ runner.temp }}/artifact' } }, gate),
+    enabled({ run: literal(copy) }, gate),
+    enabled({ run: SYMLINK_CHECK }, gate),
   ];
 };
-const wranglerStep = (command: string, id?: string) =>
-  enabled({
-    ...(id ? { id } : {}),
-    uses: TOKEN_ACTIONS.wrangler,
-    env: { npm_config_ignore_scripts: "'true'", npm_config_min_release_age: `'${COOLDOWN_DAYS[0]}'` },
-    with: {
-      apiToken: '${{ secrets.CLOUDFLARE_API_TOKEN }}',
-      accountId: '${{ secrets.CLOUDFLARE_ACCOUNT_ID }}',
-      wranglerVersion: WRANGLER_VERSION_OUTPUT,
-      workingDirectory: SITE,
-      command,
+const wranglerStep = (command: string, id?: string, gate = ENABLED) =>
+  enabled(
+    {
+      ...(id ? { id } : {}),
+      uses: TOKEN_ACTIONS.wrangler,
+      env: { npm_config_ignore_scripts: "'true'", npm_config_min_release_age: `'${COOLDOWN_DAYS[0]}'` },
+      with: {
+        apiToken: '${{ secrets.CLOUDFLARE_API_TOKEN }}',
+        accountId: '${{ secrets.CLOUDFLARE_ACCOUNT_ID }}',
+        wranglerVersion: WRANGLER_VERSION_OUTPUT,
+        workingDirectory: SITE,
+        command,
+      },
     },
-  });
+    gate,
+  );
 const PREVIEW_COMMENT = [
   "const marker = '<!-- cloudflare-site-template:preview -->';",
   'const sha = context.payload.pull_request.head.sha.slice(0, 7);',
@@ -411,9 +440,10 @@ const TOKEN_JOB_SHAPES: Record<keyof typeof TOKEN_JOBS, { [key: string]: Yaml }>
     env: { HAS_CLOUDFLARE },
     steps: [
       notice('Deploy', `Set the ${SECRETS_IN} production environment (or as repository secrets, on a private GitHub Free repository) to deploy from CI.`),
-      ...trustedSteps(TOKEN_JOBS['ci.yml:deploy'].ref),
-      ...siteSteps('verify', COPY_SITE),
-      wranglerStep(TOKEN_JOBS['ci.yml:deploy'].command),
+      enabled({ id: 'head', env: { GH_TOKEN: '${{ github.token }}', REPO: '${{ github.repository }}', SHA: '${{ github.sha }}' }, run: literal(HEAD_CHECK) }),
+      ...trustedSteps(TOKEN_JOBS['ci.yml:deploy'].ref, AT_HEAD),
+      ...siteSteps('verify', COPY_SITE, AT_HEAD),
+      wranglerStep(TOKEN_JOBS['ci.yml:deploy'].command, undefined, AT_HEAD),
     ],
   },
   'ci.yml:preview': {
@@ -703,11 +733,11 @@ describe.each(Object.entries(TOKEN_JOBS))('the %s job, which holds the token', (
     for (const step of all) for (const key of mapping(step, 'env', 8).keys()) expect(STEP_ENV, key).toContain(key);
   });
 
-  test('runs every step under the same condition, but the skip notice', () => {
+  test('runs every step under the same condition, but the skip notice and (in deploy) the head check', () => {
     for (const step of all) {
       const script = scalar(step, 'run', 8);
       if (script !== undefined && NOTICE.test(script)) expect(stepValue(step, 'if')).toBe("env.HAS_CLOUDFLARE != 'true'");
-      else expect(stepValue(step, 'if'), step.split('\n')[0]).toBe(ENABLED);
+      else expect(stepValue(step, 'if'), step.split('\n')[0]).toBe(stepValue(step, 'id') === 'head' ? ENABLED : expected.gate);
     }
   });
 
@@ -918,9 +948,10 @@ describe('the token-job pin', () => {
     expect(readCanonical('ci.yml', text).errors).toEqual([]);
     return tokenJobProblems(name, jobBlocks('ci.yml', text).get(name.slice('ci.yml:'.length)) ?? '');
   };
-  const TRUSTED_STEP = `        id: trusted\n        if: ${ENABLED}\n`;
-  const VERSION_STEP = `      - name: Stop unless a wrangler version was read\n        if: ${ENABLED}\n`;
-  const WRANGLER = `      - if: ${ENABLED}\n        uses: cloudflare/wrangler-action@`;
+  // deploy's steps after the head check wait for it too (AT_HEAD); the preview jobs' do not.
+  const TRUSTED_STEP = `        id: trusted\n        if: ${AT_HEAD}\n`;
+  const VERSION_STEP = `      - name: Stop unless a wrangler version was read\n        if: ${AT_HEAD}\n`;
+  const WRANGLER = `      - if: ${AT_HEAD}\n        uses: cloudflare/wrangler-action@`;
 
   test('passes ci.yml as it is', () => {
     for (const name of Object.keys(TOKEN_JOBS) as (keyof typeof TOKEN_JOBS)[]) expect(problemsOf(ci, name), name).toEqual({ keys: [], secrets: [], shape: [] });
@@ -932,14 +963,14 @@ describe('the token-job pin', () => {
     let text = inJob(ci, 'deploy', TRUSTED_STEP, `${TRUSTED_STEP}        background: true\n`);
     text = inJob(text, 'deploy', VERSION_STEP, `${VERSION_STEP}        background: true\n`);
     const { keys, shape } = problemsOf(text, 'ci.yml:deploy');
-    expect(keys).toEqual(['step 4: "background" is not a key a token job\'s step may have', 'step 5: "background" is not a key a token job\'s step may have']);
-    expect(shape.join('\n')).toContain('step 4: ');
+    expect(keys).toEqual(['step 5: "background" is not a key a token job\'s step may have', 'step 6: "background" is not a key a token job\'s step may have']);
+    expect(shape.join('\n')).toContain('step 5: ');
   });
 
   test('refuses (b): a github-script step in deploy that posts the token to another host', () => {
     const step = [
       '      - name: Report the deploy',
-      `        if: ${ENABLED}`,
+      `        if: ${AT_HEAD}`,
       `        uses: ${TOKEN_ACTIONS.githubScript} # v9.0.0`,
       '        with:',
       '          script: |',
@@ -947,8 +978,8 @@ describe('the token-job pin', () => {
       '',
     ].join('\n');
     const { secrets, shape } = problemsOf(inJob(ci, 'deploy', WRANGLER, step + WRANGLER), 'ci.yml:deploy');
-    expect(secrets).toEqual(['step 11: with.script names secrets']);
-    expect(shape).toContain('12 steps, but the pin has 11');
+    expect(secrets).toEqual(['step 12: with.script names secrets']);
+    expect(shape).toContain('13 steps, but the pin has 12');
   });
 
   test('refuses (c): PREVIEW_URL set to the token, which the comment step would post on the pull request', () => {
@@ -1005,14 +1036,14 @@ describe('the token-job pin', () => {
   });
 
   // Fix round 1: the symlink check in both jobs that take an artifact, and deploy's source maps (Ruling 96).
-  const SYMLINK_STEP = `      - name: Stop if the site directory holds a symlink\n        if: ${ENABLED}\n        run: ${SYMLINK_CHECK}\n`;
+  const SYMLINK_STEP = (gate: string) => `      - name: Stop if the site directory holds a symlink\n        if: ${gate}\n        run: ${SYMLINK_CHECK}\n`;
   const SYMLINK_RUN = `        run: ${SYMLINK_CHECK}\n`;
 
   test.each([
-    ['ci.yml:deploy', 'deploy', '10 steps, but the pin has 11', 'step 10: '],
-    ['ci.yml:preview', 'preview', '13 steps, but the pin has 14', 'step 10: '],
-  ] as const)('refuses (h): %s without the symlink check, or with one that can pass over a link', (name, jobName, fewer, checkStep) => {
-    expect(problemsOf(inJob(ci, jobName, SYMLINK_STEP, ''), name).shape).toContain(fewer);
+    ['ci.yml:deploy', 'deploy', AT_HEAD, '11 steps, but the pin has 12', 'step 11: ', 'step 10: '],
+    ['ci.yml:preview', 'preview', ENABLED, '13 steps, but the pin has 14', 'step 10: ', 'step 9: '],
+  ] as const)('refuses (h): %s without the symlink check, or with one that can pass over a link', (name, jobName, gate, fewer, checkStep, copyStep) => {
+    expect(problemsOf(inJob(ci, jobName, SYMLINK_STEP(gate), ''), name).shape).toContain(fewer);
     for (const run of [
       // A search for something else.
       SYMLINK_CHECK.replace('-type l', '-type f'),
@@ -1023,14 +1054,222 @@ describe('the token-job pin', () => {
     }
     // A copy that follows links (cp -L) would hide one from the check, and upload its target.
     const followed = inJob(ci, jobName, '          cp -R "$RUNNER_TEMP/artifact/dist"', '          cp -RL "$RUNNER_TEMP/artifact/dist"');
-    expect(problemsOf(followed, name).shape.join('\n')).toContain('step 9: ');
+    expect(problemsOf(followed, name).shape.join('\n')).toContain(copyStep);
   });
 
   test('refuses (i): a deploy command that leaves wrangler free to upload a source map', () => {
     const DEPLOY_COMMAND = `          command: ${TOKEN_JOBS['ci.yml:deploy'].command}\n`;
     for (const flags of ['', ' --upload-source-maps', ' --upload-source-maps=true']) {
       const mutated = inJob(ci, 'deploy', DEPLOY_COMMAND, DEPLOY_COMMAND.replace(' --upload-source-maps=false', flags));
-      expect(problemsOf(mutated, 'ci.yml:deploy').shape.join('\n'), flags).toContain('step 11: ');
+      expect(problemsOf(mutated, 'ci.yml:deploy').shape.join('\n'), flags).toContain('step 12: ');
     }
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Sweep 20261028T105259Z, cluster 3 (Ruling 108). What production serves rested on run metadata
+// that other actors can reproduce: a re-run of an older push run kept every test deploy's gate
+// made, and a dispatch run shared main's concurrency group. So deploy asks GitHub what main's head
+// is now and deploys only that commit, and only main's own push runs share main's group.
+// ---------------------------------------------------------------------------------------------
+
+const MAIN_REF = 'refs/heads/main';
+const CI = WORKFLOWS.get('ci.yml')!;
+/** `text` with `old` replaced by `replacement`, where it must occur exactly once. */
+function mutated(text: string, old: string, replacement: string): string {
+  expect(text.split(old), old).toHaveLength(2);
+  return text.replace(old, () => replacement);
+}
+
+type RunKind = { event_name: string; ref: string; run_id: number; pull_request?: number };
+/**
+ * The concurrency block's group and cancel-in-progress for one kind of run. There is no expression
+ * evaluator among the dependencies, so this is a small one: each `${{ }}` in the value is checked
+ * against the few characters the block uses, rewritten to the JavaScript that means the same
+ * (`==` is `===`; `&&` and `||` return their operand, as GitHub's do), and run with the github
+ * context and format().
+ */
+function concurrencyOf(text: string, run: RunKind): { group: string; cancel: string } {
+  const block = /^concurrency:\n {2}group: (.*)\n {2}cancel-in-progress: (.*)\n(?=\n)/m.exec(text);
+  expect(block, 'a concurrency block of exactly a group and cancel-in-progress').not.toBeNull();
+  const github = { workflow: 'CI', event_name: run.event_name, ref: run.ref, run_id: run.run_id, event: { pull_request: { number: run.pull_request } } };
+  const format = (template: string, ...args: unknown[]) => template.replace(/\{(\d)\}/g, (_match, i: string) => String(args[Number(i)]));
+  const evaluate = (value: string) =>
+    value.replace(/\$\{\{ (.*?) \}\}/g, (_match, expression: string) => {
+      expect(expression, 'only the characters the concurrency expressions use').toMatch(/^[\w.'\s&|=!(),{}-]+$/);
+      const js = expression.replace(/==/g, '===').replace(/!=/g, '!==');
+      return String(new Function('github', 'format', `return (${js});`)(github, format));
+    });
+  return { group: evaluate(block![1]!), cancel: evaluate(block![2]!) };
+}
+
+/** What lets a run other than main's own push share main's group, or lets anything but a pull request cancel a run. */
+function concurrencyProblems(text: string): string[] {
+  const main = concurrencyOf(text, { event_name: 'push', ref: MAIN_REF, run_id: 1 });
+  const problems: string[] = [];
+  if (main.group !== `CI-${MAIN_REF}`) problems.push(`a push to main is grouped as ${main.group}`);
+  if (main.cancel !== 'false') problems.push('a push to main cancels in progress');
+  // A merged pull request's `closed` run reports the base branch as its ref, and the dispatch is run on main.
+  const others: [string, RunKind][] = [
+    ['a closed, merged pull request', { event_name: 'pull_request', ref: MAIN_REF, run_id: 2, pull_request: 7 }],
+    ['an open pull request', { event_name: 'pull_request', ref: 'refs/pull/7/merge', run_id: 3, pull_request: 7 }],
+    ['a dispatch on main', { event_name: 'workflow_dispatch', ref: MAIN_REF, run_id: 4 }],
+    ['another dispatch on main', { event_name: 'workflow_dispatch', ref: MAIN_REF, run_id: 5 }],
+    ['a dispatch on a branch', { event_name: 'workflow_dispatch', ref: 'refs/heads/other', run_id: 6 }],
+    ['a kind of event nobody listed', { event_name: 'schedule', ref: MAIN_REF, run_id: 8 }],
+  ];
+  const groups = new Map<string, string>();
+  for (const [name, run] of others) {
+    const { group, cancel } = concurrencyOf(text, run);
+    if (group === main.group) problems.push(`${name} shares main's group`);
+    if (run.event_name !== 'pull_request' && groups.has(group)) problems.push(`${name} shares a group with ${groups.get(group)}`);
+    groups.set(group, name);
+    if ((cancel === 'true') !== (run.event_name === 'pull_request')) problems.push(`${name}: cancel-in-progress is ${cancel}`);
+  }
+  if (concurrencyOf(text, others[0]![1]).group !== concurrencyOf(text, others[1]![1]).group) problems.push('a pull request is not grouped by its number');
+  return problems;
+}
+
+describe('the concurrency group', () => {
+  test('puts a pull request in its own group, main in the ref group, and everything else in a group of its own, cancelling only for a pull request', () => {
+    expect(concurrencyOf(CI, { event_name: 'pull_request', ref: MAIN_REF, run_id: 2, pull_request: 7 })).toEqual({ group: 'CI-pr-7', cancel: 'true' });
+    expect(concurrencyOf(CI, { event_name: 'push', ref: MAIN_REF, run_id: 1 })).toEqual({ group: `CI-${MAIN_REF}`, cancel: 'false' });
+    expect(concurrencyOf(CI, { event_name: 'workflow_dispatch', ref: MAIN_REF, run_id: 4242 })).toEqual({ group: 'CI-workflow_dispatch-4242', cancel: 'false' });
+    expect(concurrencyProblems(CI)).toEqual([]);
+  });
+
+  test.each([
+    ['a dispatch run shares main\'s group', (text: string) => mutated(text, " || github.event_name == 'push' && github.ref || format('{0}-{1}', github.event_name, github.run_id)", ' || github.ref'), "a dispatch on main shares main's group"],
+    ['a dispatch run is grouped by event alone, so two share one', (text: string) => mutated(text, "format('{0}-{1}', github.event_name, github.run_id)", 'github.event_name'), 'another dispatch on main shares a group with a dispatch on main'],
+    ['a dispatch run cancels in progress', (text: string) => mutated(text, "cancel-in-progress: ${{ github.event_name == 'pull_request' }}", "cancel-in-progress: ${{ github.event_name != 'push' }}"), 'a dispatch on main: cancel-in-progress is true'],
+    ['everything cancels in progress', (text: string) => mutated(text, "cancel-in-progress: ${{ github.event_name == 'pull_request' }}", 'cancel-in-progress: true'), 'a push to main cancels in progress'],
+    ['everything is grouped by ref, as before', (text: string) => mutated(text, "github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || format('{0}-{1}', github.event_name, github.run_id)", 'github.ref'), "a closed, merged pull request shares main's group"],
+    ['a pull request is grouped by ref', (text: string) => mutated(text, "github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || ", ''), 'a pull request is not grouped by its number'],
+  ])('refuses a workflow where %s', (_name, mutate, problem) => {
+    expect(concurrencyProblems(mutate(CI))).toContain(problem);
+  });
+});
+
+// The step's shell, run as Actions runs it (bash -e) against a stub gh: a .mjs on PATH, so no
+// GitHub API is called. Not run where there is no bash.
+const BASH = process.platform !== 'win32';
+const STUB_GH = [
+  '#!/usr/bin/env node',
+  "import { appendFileSync } from 'node:fs';",
+  'const args = process.argv.slice(2);',
+  'appendFileSync(process.env.STUB_LOG, `${JSON.stringify(args)} with ${process.env.GH_TOKEN}\\n`);',
+  'if (args.join(" ") !== `api repos/${process.env.REPO}/git/ref/heads/main --jq .object.sha`) {',
+  '  console.error(`unexpected arguments: ${args.join(" ")}`);',
+  '  process.exit(2);',
+  '}',
+  'if (process.env.STUB_FAIL) {',
+  '  console.error("gh: HTTP 502");',
+  '  process.exit(1);',
+  '}',
+  'process.stdout.write(`${process.env.STUB_HEAD}\\n`);',
+].join('\n');
+const SHA_A = 'a'.repeat(40);
+const SHA_B = 'b'.repeat(40);
+
+/** Runs a head-check script against the stub: what it printed, how it exited, and what it wrote to GITHUB_OUTPUT. */
+function runHeadCheck(script: string, stub: { head?: string; fail?: boolean }) {
+  const dir = mkdtempSync(join(tmpdir(), 'head-check-'));
+  try {
+    writeFileSync(join(dir, 'gh.mjs'), STUB_GH, { mode: 0o755 });
+    symlinkSync(join(dir, 'gh.mjs'), join(dir, 'gh'));
+    writeFileSync(join(dir, 'step.sh'), script);
+    writeFileSync(join(dir, 'output'), '');
+    const result = spawnSync('bash', ['-e', join(dir, 'step.sh')], {
+      encoding: 'utf8',
+      env: {
+        PATH: `${dir}:${process['env'].PATH}`,
+        GH_TOKEN: 'job-token',
+        REPO: 'example-owner/example-repo',
+        SHA: SHA_A,
+        GITHUB_OUTPUT: join(dir, 'output'),
+        STUB_LOG: join(dir, 'log'),
+        STUB_HEAD: stub.head ?? '',
+        ...(stub.fail ? { STUB_FAIL: '1' } : {}),
+      },
+    });
+    const log = existsSync(join(dir, 'log')) ? readFileSync(join(dir, 'log'), 'utf8') : '';
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr, output: readFileSync(join(dir, 'output'), 'utf8'), log };
+  } finally {
+    for (const name of ['gh', 'gh.mjs', 'step.sh', 'output', 'log']) rmSync(join(dir, name), { force: true });
+    rmdirSync(dir);
+  }
+}
+
+/** What is wrong with deploy's head check, in ci.yml's text `text`. */
+function headCheckProblems(text: string): string[] {
+  const all = steps(jobBlocks('ci.yml', text).get('deploy') ?? '');
+  const at = all.findIndex((step) => stepValue(step, 'id') === 'head');
+  if (at === -1) return ['deploy has no step with the id head'];
+  const step = all[at]!;
+  const script = scalar(step, 'run', 8) ?? '';
+  const problems: string[] = [];
+  if (script !== HEAD_CHECK) problems.push('the head check is not the pinned script');
+  if (script.includes('${{')) problems.push('the head check interpolates an expression into its script');
+  const env = mapping(step, 'env', 8);
+  for (const [key, value] of [['GH_TOKEN', '${{ github.token }}'], ['REPO', '${{ github.repository }}'], ['SHA', '${{ github.sha }}']] as const) {
+    if (env.get(key) !== value) problems.push(`the head check's ${key} is ${env.get(key)}, not ${value}`);
+  }
+  if (stepValue(step, 'if') !== ENABLED) problems.push("the head check does not run exactly when the token is there");
+  // Before anything that uses the token: only the skip notice may come first.
+  for (const earlier of all.slice(0, at)) if (!NOTICE.test(scalar(earlier, 'run', 8) ?? '')) problems.push(`step ${all.indexOf(earlier) + 1} comes before the head check`);
+  // Every later step waits for its answer.
+  all.slice(at + 1).forEach((later, i) => {
+    if (stepValue(later, 'if') !== AT_HEAD) problems.push(`step ${at + 2 + i} does not wait for the head check`);
+  });
+  if (BASH) {
+    const same = runHeadCheck(script, { head: SHA_A });
+    if (same.status !== 0 || same.output !== 'current=true\n' || same.stdout.includes('::notice')) problems.push(`the same SHA does not go on: ${JSON.stringify(same)}`);
+    const newer = runHeadCheck(script, { head: SHA_B });
+    if (newer.status !== 0 || newer.output !== 'current=false\n' || !newer.stdout.includes(`::notice title=Deploy skipped::main's head is now ${SHA_B}`)) {
+      problems.push(`a different SHA does not skip with the notice: ${JSON.stringify(newer)}`);
+    }
+    for (const [name, stub] of [['gh failing', { fail: true }], ['an empty answer', { head: '' }]] as const) {
+      const failed = runHeadCheck(script, stub);
+      if (failed.status === 0 || failed.output.includes('current=true')) problems.push(`${name} does not fail the job: ${JSON.stringify(failed)}`);
+    }
+  }
+  return problems;
+}
+
+describe("deploy's head check", () => {
+  test('is the first step with a token: it reads main\'s head with the job\'s own GITHUB_TOKEN, and every later step waits for it', () => {
+    expect(headCheckProblems(CI)).toEqual([]);
+  });
+
+  test.skipIf(!BASH)('runs as Actions runs it, against a stub gh: same SHA goes on, a different one skips with the notice, a failed read fails', () => {
+    const same = runHeadCheck(HEAD_CHECK, { head: SHA_A });
+    expect(same).toMatchObject({ status: 0, output: 'current=true\n', stdout: '' });
+    expect(same.log).toBe('["api","repos/example-owner/example-repo/git/ref/heads/main","--jq",".object.sha"] with job-token\n');
+    const newer = runHeadCheck(HEAD_CHECK, { head: SHA_B });
+    expect(newer).toMatchObject({ status: 0, output: 'current=false\n' });
+    expect(newer.stdout).toBe(`::notice title=Deploy skipped::main's head is now ${SHA_B}, not ${SHA_A}; the run for ${SHA_B} deploys it\n`);
+    const failed = runHeadCheck(HEAD_CHECK, { fail: true });
+    expect(failed.status).toBe(1);
+    expect(failed.output).toBe('');
+    expect(failed.stdout).toContain("::error::could not read main's head, so nothing deploys");
+  });
+
+  test.each([
+    ['the check is removed', (text: string) => mutated(text, /      - name: Stop unless this commit is main's head[\s\S]*?(?=      - name: Check out the trusted config)/.exec(text)![0], ''), 'deploy has no step with the id head'],
+    ['a failed read skips instead of failing', (text: string) => mutated(text, '            exit 1\n          fi\n          if [ "$head"', '            echo "current=false" >> "$GITHUB_OUTPUT"\n            exit 0\n          fi\n          if [ "$head"'), 'gh failing does not fail the job'],
+    ['a failed read has a fallback', (text: string) => mutated(text, '--jq .object.sha)" || [ -z "$head" ]; then', '--jq .object.sha || true)" || [ -z "$head" ]; then'), 'the head check is not the pinned script'],
+    ['a different SHA still goes on', (text: string) => mutated(text, 'if [ "$head" = "$SHA" ]; then', 'if [ -n "$head" ]; then'), 'a different SHA does not skip with the notice'],
+    ['wrangler runs whatever the check found', (text: string) => mutated(text, `      - if: ${AT_HEAD}\n        uses: cloudflare/wrangler-action@`, `      - if: ${ENABLED}\n        uses: cloudflare/wrangler-action@`), 'does not wait for the head check'],
+    ['the checkout comes before the check', reorderedHeadCheck, 'comes before the head check'],
+    ['the token is interpolated into the script', (text: string) => mutated(text, 'gh api "repos/$REPO/', 'GH_TOKEN=${{ github.token }} gh api "repos/$REPO/'), 'the head check interpolates an expression into its script'],
+  ])('refuses a workflow where %s', (_name, mutate, problem) => {
+    expect(headCheckProblems(mutate(CI)).join('\n')).toContain(problem);
+  });
+});
+
+/** ci.yml with the head check moved after the trusted checkout. */
+function reorderedHeadCheck(text: string): string {
+  const check = /      - name: Stop unless this commit is main's head[\s\S]*?(?=      - name: Check out the trusted config)/.exec(text)![0];
+  const checkout = /      - name: Check out the trusted config[\s\S]*?(?=      # No npm cache)/.exec(text)![0];
+  return mutated(text, check + checkout, checkout + check);
+}

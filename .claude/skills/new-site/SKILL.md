@@ -310,9 +310,14 @@ with `file:line`, and say that production preflight (a custom domain, or `DELIVE
    - If the checks run on a self-hosted runner (`CI_LINUX_RUNNER`), remove the runner's
      registration (Settings → Actions → Runners) before the repository goes public, not only the
      variable: a fork's pull request runs its own workflow file, which can name the runner directly.
+   - On a public repository, set Settings → Actions → General → "Approval for running fork pull request workflows from contributors" to **"Require approval for all external contributors"**, and read any change
+     under `.github/workflows/` in the pull request's diff before approving its run: a fork's pull
+     request runs its own workflow file, which can name main's concurrency group and cancel a
+     deploy waiting in it.
    - If a coding agent pushes branches for you, give it a separate GitHub identity (a machine
      user or a GitHub App installation), never your own credential or SSH key, with an HTTPS
-     token without workflow permission. Where the plan has rulesets, require one approval on
+     token without workflow permission (fine-grained, no Workflows and no Actions write; never a
+     classic token, which can re-run workflows). Where the plan has rulesets, require one approval on
      `main` and keep that identity off the bypass list (same README section).
 4. **Secrets and HTTPS, once the Worker exists:**
    - Cloudflare dashboard → the Worker → Settings → Variables and Secrets → Add, type **Secret**:

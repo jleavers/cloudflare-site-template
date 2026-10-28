@@ -400,11 +400,13 @@ PR builds set `PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA`, the always-p
 
 ## 10. CI/CD: `.github/workflows/ci.yml`
 
-**Triggers:** `push` to `main`, and `pull_request` (`opened`, `synchronize`, `reopened`, `closed`).
+**Triggers:** `push` to `main`, `pull_request` (`opened`, `synchronize`, `reopened`, `closed`), and `workflow_dispatch`.
 
 **Runners:** every job installs Node itself with `actions/setup-node` and `.nvmrc`. `e2e` and `preview-build` use `runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}`. `verify` uses `runs-on: ${{ github.event_name == 'push' && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}`: a push (only ever to `main`) builds the artifact that deploys, so it runs on a GitHub-hosted runner, while pull requests and dispatches keep the self-hosted one. The jobs that hold the token (`deploy`, `preview`, `preview-cleanup`) always use `runs-on: ubuntu-latest`. A persistent self-hosted runner keeps its workspaces, tool cache and home directory between jobs, and the other jobs run branch and lockfile code there as the same user. That code could replace `node` or `npx` in `$RUNNER_TOOL_CACHE`, or write `~/.npmrc`, for a token job to run, or for the next `main` build, which would ship its `worker.js` to production beside the Worker's own secrets. Each push to `main` therefore spends hosted minutes on `verify` as well as `deploy`, and a private repository with no hosted minutes left can't deploy that month: its deploys wait until the minutes return. A public repository's hosted minutes are free. That follows the `jleavers/ci-runners` rules: install every toolchain in the job, write only inside the workspace or `$RUNNER_TEMP`, publish no fixed host ports, and remove nothing you didn't create.
 
-**Concurrency** is grouped per workflow and ref. In-progress runs are cancelled for PRs, never for `main`.
+**Concurrency** is grouped per workflow and, by event: a pull request by its number (never by ref: a merged PR's `closed` run reports `main` as its ref), a `push` (only ever to `main`) by ref, and any other event, a `workflow_dispatch` run, by event and run ID, so it never shares a group with `main`'s push runs and cannot displace a pending one. In-progress runs are cancelled for PRs only. YAML cannot stop a fork's pull request, which runs its own workflow file, from naming `main`'s group; the repository's fork-approval setting does (§15 step 4b).
+
+**The deploy gate.** `deploy` runs for a `push` to `main`, and its first step, once the token is present, reads `main`'s head with the job's own `GITHUB_TOKEN` (`gh api repos/<repo>/git/ref/heads/main`). A different SHA from the run's skips every later step with a notice (that newer push has its own run); a failed read fails the job, so it never deploys on a check that did not happen. A re-run of an older push run therefore deploys nothing.
 
 **Permissions:** `contents: read` by default. Only the `preview` job adds `pull-requests: write`.
 
@@ -668,6 +670,7 @@ The capture tools are Node scripts using Playwright (already a dev dependency), 
    - Set both secrets in it: `gh secret set CLOUDFLARE_API_TOKEN --env production` and `gh secret set CLOUDFLARE_ACCOUNT_ID --env production`.
    - Delete the repository-level copies: `gh secret delete CLOUDFLARE_API_TOKEN` and `gh secret delete CLOUDFLARE_ACCOUNT_ID`.
    - Leave `CI_PREVIEWS` unset, unless a `preview` environment with required reviewers holds the token.
+   - Set Settings → Actions → General → "Approval for running fork pull request workflows from contributors" to "Require approval for all external contributors", and read any change under `.github/workflows/` in the pull request's diff before approving its run: a fork's pull request runs its own workflow file.
    - Add the ruleset the README describes ("Coding agents"): one approval on `main`, approvals dismissed when new commits are pushed, and no agent's identity on its bypass list.
 5. Set "Template repository" (`gh api -X PATCH repos/jleavers/cloudflare-site-template -F is_template=true`), and make the repo public.
 6. Confirm, after the first public push, that CI is green on GitHub-hosted runners and that the `deploy` job redeployed the live demo.

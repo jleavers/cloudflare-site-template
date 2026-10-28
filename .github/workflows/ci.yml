@@ -12,12 +12,20 @@ on:
       - closed
   workflow_dispatch:
 
-# A newer push to a pull request makes an in-flight run obsolete. Runs on main always finish.
-# Pull-request runs are grouped by PR number, never by ref: when a PR is merged, its `closed`
-# run reports github.ref as the base branch (refs/heads/main), so a ref-based group put it
-# beside the merge's push run, and it cancelled that run's Deploy job.
+# A newer push to a pull request makes an in-flight run obsolete; nothing else is ever cancelled.
+# The group says who may queue behind whom:
+# - A pull request is grouped by PR number, never by ref: when a PR is merged, its `closed` run
+#   reports github.ref as the base branch (refs/heads/main), so a ref-based group put it beside
+#   the merge's push run, and it cancelled that run's Deploy job.
+# - A push (only ever to main) is grouped by ref, so only main's own push runs share its group;
+#   they queue, and GitHub keeps the newest pending one.
+# - Any other event (a workflow_dispatch run) gets a group of its own, by run ID, so it can never
+#   displace main's pending push run and its deploy.
+# What YAML cannot stop is a fork's pull request, which runs its own workflow file and can name
+# main's group with cancel-in-progress: the repository's fork-approval setting does (README,
+# "Cloudflare API token").
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || format('{0}-{1}', github.event_name, github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -173,6 +181,11 @@ jobs:
   #   from v8, fails on a digest mismatch.
   # - name that config with --config, because without it wrangler looks for a config beside the
   #   entry first.
+  # - deploy only main's current head. The gate below tests run metadata, which a re-run of an
+  #   older push run keeps, so the first step asks GitHub what main's head is now, with the job's
+  #   own GITHUB_TOKEN, and every later step waits for the answer to be this commit. A read that
+  #   fails fails the job: it never deploys on a check that did not happen. A newer push has its
+  #   own run, which deploys it.
   deploy:
     name: Deploy
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -187,8 +200,26 @@ jobs:
       - name: Explain a skipped deploy
         if: env.HAS_CLOUDFLARE != 'true'
         run: echo "::notice title=Deploy skipped::Set the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets in the production environment (or as repository secrets, on a private GitHub Free repository) to deploy from CI."
-      - name: Check out the trusted config
+      - name: Stop unless this commit is main's head
+        id: head
         if: env.HAS_CLOUDFLARE == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          if ! head="$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)" || [ -z "$head" ]; then
+            echo "::error::could not read main's head, so nothing deploys"
+            exit 1
+          fi
+          if [ "$head" = "$SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Deploy skipped::main's head is now $head, not $SHA; the run for $head deploys it"
+          fi
+      - name: Check out the trusted config
+        if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
@@ -202,18 +233,18 @@ jobs:
           persist-credentials: false
       # No npm cache: wrangler-action's install of wrangler should not trust a cache a pull request
       # could have written.
-      - if: env.HAS_CLOUDFLARE == 'true'
+      - if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: trusted/.nvmrc
           package-manager-cache: false
       - name: Refuse a custom build, and read the pinned wrangler version
         id: trusted
-        if: env.HAS_CLOUDFLARE == 'true'
+        if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
         run: node trusted/scripts/trusted-config.mjs trusted
       # Fail closed: without a version, wrangler-action would install whatever wrangler 4 is latest.
       - name: Stop unless a wrangler version was read
-        if: env.HAS_CLOUDFLARE == 'true'
+        if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
         env:
           WRANGLER_VERSION: ${{ steps.trusted.outputs.wrangler-version }}
         run: test -n "$WRANGLER_VERSION" || { echo "::error::trusted-config.mjs gave no wrangler version"; exit 1; }
@@ -222,7 +253,7 @@ jobs:
       # 11.16+ both print 7 for the setting and null for the `before` date), so this reads npm's
       # version, and fails closed on anything it can't parse.
       - name: Stop unless npm knows the release-age floor
-        if: env.HAS_CLOUDFLARE == 'true'
+        if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
         run: |
           node -e '
             const version = process.argv[1];
@@ -237,12 +268,12 @@ jobs:
       # An empty artifact-ids would download every artifact in the run, so fail closed unless the
       # ID is one number.
       - name: Stop unless verify gave one artifact ID
-        if: env.HAS_CLOUDFLARE == 'true'
+        if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
         env:
           ARTIFACT_ID: ${{ needs.verify.outputs.site-artifact-id }}
         run: test -n "$ARTIFACT_ID" && test -z "${ARTIFACT_ID//[0123456789]/}" || { echo "::error::the artifact ID is empty or not a number, and an empty one would download every artifact in the run"; exit 1; }
       # By the ID verify uploaded, never by name (see verify's outputs).
-      - if: env.HAS_CLOUDFLARE == 'true'
+      - if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.verify.outputs.site-artifact-id }}
@@ -250,7 +281,7 @@ jobs:
       # Only worker.js ships. A Worker whose bundle has more modules (a .wasm, text or data import)
       # fails to deploy until this copy, and the test that pins it, take them too.
       - name: Put the site, the Worker and the trusted config in a fresh directory
-        if: env.HAS_CLOUDFLARE == 'true'
+        if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/site/bundle"
           cp -R "$RUNNER_TEMP/artifact/dist" "$RUNNER_TEMP/site/dist"
@@ -259,9 +290,9 @@ jobs:
       # download-artifact writes regular files only, but wrangler follows any link it finds there
       # (it stat()s each asset), so the job stops if one ever arrives, or if find cannot look.
       - name: Stop if the site directory holds a symlink
-        if: env.HAS_CLOUDFLARE == 'true'
+        if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
         run: links="$(find "$RUNNER_TEMP/site" -type l)" && test -z "$links" || { echo "::error::the site directory holds a symlink, or find could not search it"; exit 1; }
-      - if: env.HAS_CLOUDFLARE == 'true'
+      - if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
         env:
           # wrangler-action installs the pinned wrangler with npm, and with no lockfile: run none of
