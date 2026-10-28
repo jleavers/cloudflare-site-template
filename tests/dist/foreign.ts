@@ -27,14 +27,199 @@ interface Reference {
   script: boolean;
 }
 
-const URL_FUNCTION = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s"']*))\s*\)/gi;
-const IMPORT_STRING = /@import\s+(?:"([^"]*)"|'([^']*)')/gi;
+type CssToken =
+  | { type: 'function' | 'at-keyword'; name: string }
+  | { type: 'string' | 'url'; value: string }
+  | { type: '(' | ')' | 'whitespace' | 'other' };
 
-function cssUrls(css: string): string[] {
+const REPLACEMENT = String.fromCodePoint(0xfffd);
+const isCssSpace = (char: string | undefined) => char === ' ' || char === '\t' || char === '\n';
+const isNameStart = (char: string | undefined) => char !== undefined && (/[A-Za-z_]/.test(char) || char.charCodeAt(0) >= 0x80);
+const isNameChar = (char: string | undefined) => isNameStart(char) || (char !== undefined && /[0-9-]/.test(char));
+const isNonPrintable = (char: string) => {
+  const code = char.charCodeAt(0);
+  return code <= 0x08 || code === 0x0b || (code >= 0x0e && code <= 0x1f) || code === 0x7f;
+};
+const asciiLower = (text: string) => text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+
+/**
+ * The tokens of a stylesheet that can name a URL, read as CSS Syntax 3 section 4 reads them.
+ * Escapes (a backslash, then 1 to 6 hex digits and one optional whitespace, or any other
+ * character) are decoded inside names, strings and unquoted url()s, so `\75 rl(` is `url(`, and
+ * an escaped quote or parenthesis stays part of its value, as it does in a browser. Comments go;
+ * numbers, hashes and delimiters are "other", which can only add a match, never hide one.
+ */
+function cssTokens(source: string): CssToken[] {
+  const css = source.replace(/\r\n?|\f/g, '\n');
+  const tokens: CssToken[] = [];
+  let i = 0;
+  const validEscape = (at: number) => css[at] === '\\' && css[at + 1] !== '\n';
+  const startsName = (at: number) =>
+    css[at] === '-' ? isNameStart(css[at + 1]) || css[at + 1] === '-' || validEscape(at + 1) : isNameStart(css[at]) || validEscape(at);
+  // After the backslash.
+  const escaped = (): string => {
+    const hex = /^[0-9A-Fa-f]{1,6}/.exec(css.slice(i, i + 6));
+    if (hex) {
+      i += hex[0].length;
+      if (isCssSpace(css[i])) i++;
+      const code = parseInt(hex[0], 16);
+      return code === 0 || (code >= 0xd800 && code <= 0xdfff) || code > 0x10ffff ? REPLACEMENT : String.fromCodePoint(code);
+    }
+    if (i >= css.length) return REPLACEMENT;
+    const char = String.fromCodePoint(css.codePointAt(i)!);
+    i += char.length;
+    return char;
+  };
+  const name = (): string => {
+    let out = '';
+    for (;;) {
+      if (isNameChar(css[i])) out += css[i++];
+      else if (validEscape(i)) {
+        i++;
+        out += escaped();
+      } else return out;
+    }
+  };
+  // After the opening quote. A raw newline makes a bad string, which names nothing.
+  const string = (quote: string): CssToken => {
+    let out = '';
+    for (;;) {
+      const char = css[i];
+      if (char === undefined) return { type: 'string', value: out };
+      if (char === quote) {
+        i++;
+        return { type: 'string', value: out };
+      }
+      if (char === '\n') return { type: 'other' };
+      if (char === '\\') {
+        i++;
+        if (css[i] === '\n') i++;
+        else if (i < css.length) out += escaped();
+      } else {
+        out += char;
+        i++;
+      }
+    }
+  };
+  // The rest of a bad url, which names nothing.
+  const badUrl = (): CssToken => {
+    while (i < css.length && css[i] !== ')') {
+      if (validEscape(i)) {
+        i++;
+        escaped();
+      } else i++;
+    }
+    i++;
+    return { type: 'other' };
+  };
+  // After `url(` and its whitespace, when no quote follows.
+  const url = (): CssToken => {
+    let out = '';
+    for (;;) {
+      const char = css[i];
+      if (char === undefined) return { type: 'url', value: out };
+      if (char === ')') {
+        i++;
+        return { type: 'url', value: out };
+      }
+      if (isCssSpace(char)) {
+        while (isCssSpace(css[i])) i++;
+        if (css[i] === undefined || css[i] === ')') {
+          i++;
+          return { type: 'url', value: out };
+        }
+        return badUrl();
+      }
+      if (char === '"' || char === "'" || char === '(' || isNonPrintable(char)) return badUrl();
+      if (char === '\\') {
+        if (!validEscape(i)) return badUrl();
+        i++;
+        out += escaped();
+      } else {
+        out += char;
+        i++;
+      }
+    }
+  };
+  while (i < css.length) {
+    const char = css[i]!;
+    if (char === '/' && css[i + 1] === '*') {
+      const end = css.indexOf('*/', i + 2);
+      i = end === -1 ? css.length : end + 2;
+    } else if (isCssSpace(char)) {
+      while (isCssSpace(css[i])) i++;
+      tokens.push({ type: 'whitespace' });
+    } else if (char === '"' || char === "'") {
+      i++;
+      tokens.push(string(char));
+    } else if (char === '(' || char === ')') {
+      i++;
+      tokens.push({ type: char });
+    } else if (char === '@' && startsName(i + 1)) {
+      i++;
+      tokens.push({ type: 'at-keyword', name: name() });
+    } else if (startsName(i)) {
+      const ident = name();
+      if (css[i] !== '(') {
+        tokens.push({ type: 'other' });
+        continue;
+      }
+      i++;
+      let next = i;
+      while (isCssSpace(css[next])) next++;
+      // url( with a quote after it is a function like any other; without one, an unquoted url.
+      if (asciiLower(ident) !== 'url' || css[next] === '"' || css[next] === "'") tokens.push({ type: 'function', name: ident });
+      else {
+        i = next;
+        tokens.push(url());
+      }
+    } else {
+      i++;
+      tokens.push({ type: 'other' });
+    }
+  }
+  return tokens;
+}
+
+const STRING_URL_FUNCTIONS = new Set(['url', 'src']);
+const IMAGE_SETS = new Set(['image-set', '-webkit-image-set']);
+
+/**
+ * Every URL a stylesheet can make a browser fetch: url(), quoted or not; src(); @import's
+ * string; and image-set()'s and -webkit-image-set()'s own string options (not type()'s), whose
+ * url()s are found as url()s. This is the early, named error. The built CSP is the backstop for
+ * any form this still misses (tests/dist/headers.ts): img-src, font-src and style-src allow
+ * nothing but the site and data: images.
+ */
+export function cssUrls(css: string): string[] {
+  const tokens = cssTokens(css);
   const urls: string[] = [];
-  for (const match of css.matchAll(URL_FUNCTION)) urls.push((match[1] ?? match[2] ?? match[3] ?? '').trim());
-  for (const match of css.matchAll(IMPORT_STRING)) urls.push((match[1] ?? match[2] ?? '').trim());
-  return urls;
+  const stringAfter = (at: number) => {
+    let next = at + 1;
+    while (tokens[next]?.type === 'whitespace') next++;
+    const token = tokens[next];
+    return token?.type === 'string' ? token.value : undefined;
+  };
+  tokens.forEach((token, at) => {
+    if (token.type === 'url') urls.push(token.value);
+    if (token.type !== 'function' && token.type !== 'at-keyword') return;
+    const name = asciiLower(token.name);
+    if ((token.type === 'function' && STRING_URL_FUNCTIONS.has(name)) || (token.type === 'at-keyword' && name === 'import')) {
+      const value = stringAfter(at);
+      if (value !== undefined) urls.push(value);
+    } else if (token.type === 'function' && IMAGE_SETS.has(name)) {
+      // Its options are the strings at its own depth; a function or bracket inside opens a level.
+      let depth = 0;
+      for (const inner of tokens.slice(at + 1)) {
+        if (inner.type === 'function' || inner.type === '(') depth++;
+        else if (inner.type === ')') {
+          if (depth === 0) break;
+          depth--;
+        } else if (inner.type === 'string' && depth === 0) urls.push(inner.value);
+      }
+    }
+  });
+  return urls.map((url) => url.trim());
 }
 
 /** Every candidate URL of a srcset, following the HTML parsing rules: a URL is a run of non-space characters. */
@@ -213,7 +398,7 @@ export function foreignInHtml(html: string, options: Options): string[] {
   return [...repeated.map((problem) => `${options.page}: ${problem}`), ...violations(references, options, options.page)];
 }
 
-/** Violations in one stylesheet: every url() and @import. */
+/** Violations in one stylesheet: every URL cssUrls finds. */
 export function foreignInCss(css: string, options: Options): string[] {
   const references = cssUrls(css).map((url) => ({ element: 'css', attribute: 'url', url, image: true, script: false }));
   return violations(references, options, options.file ?? options.page);

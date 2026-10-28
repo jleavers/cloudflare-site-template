@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { attributeNames, foreignInCss, foreignInHtml, refreshUrl, repeatedAttributes } from '../dist/foreign';
+import { attributeNames, cssUrls, foreignInCss, foreignInHtml, refreshUrl, repeatedAttributes } from '../dist/foreign';
 
 const SITE = 'https://example.com';
 const PAGE = `${SITE}/privacy/`;
@@ -102,6 +102,54 @@ describe('foreignInCss', () => {
   });
   test('allows same-origin and data: urls', () => {
     expect(css('@font-face{src:url(/_astro/fonts/a.woff2)} a{background:url("data:image/png;base64,AAAA")}')).toEqual([]);
+  });
+
+  // Every CSS form that makes a browser fetch a URL (sweep run 20261028T185449Z, cluster 2).
+  test.each([
+    ['a string in image-set()', 'a{background:image-set("https://evil.example/a.png" 1x)}'],
+    ['a string in -webkit-image-set()', 'a{background:-webkit-image-set("https://evil.example/a.png" 1x)}'],
+    ['src()', '@font-face{font-family:x;src:src("https://evil.example/f.woff2")}'],
+    ['an escaped url() name', String.raw`a{background:\75 rl(https://evil.example/x)}`],
+    ['a second, single-quoted image-set() option', `a{background:image-set("/_astro/a.png" 1x,'https://evil.example/b.png' 2x)}`],
+    ['a url() inside image-set()', 'a{background:image-set(url(https://evil.example/a.png) 1x)}'],
+    ['image-set() in capitals', 'a{background:IMAGE-SET("https://evil.example/a.png" 1x)}'],
+    ['src() with a space and a comment before its string', "a{background:src( /* c */ 'https://evil.example/f.woff2')}"],
+    ['an escaped image-set() name', String.raw`a{background:\69 mage-set("https://evil.example/a.png" 1x)}`],
+    ['six-digit escapes with no space after them', String.raw`a{background:\000075\000072\00006c(https://evil.example/x)}`],
+    ['an escape of a letter that is not a hex digit', String.raw`a{background:ur\l(https://evil.example/x)}`],
+    ['an escaped scheme in a quoted url()', String.raw`a{background:url("\68 ttps://evil.example/x")}`],
+    ['an escaped quote that would end the string early', String.raw`a{background:url("https://example.com\22 @evil.example/x")}`],
+    ['an escaped parenthesis in an unquoted url()', String.raw`a{background:url(https://example.com\29 @evil.example/x)}`],
+    ['@import with no space before its string', '@import"https://evil.example/x.css";'],
+    ['@import with a comment before its string', "@import/**/'https://evil.example/x.css';"],
+    ['an escaped @import', String.raw`@\69 mport "https://evil.example/x.css";`],
+    ['a url() string followed by a modifier', 'a{background:url("https://evil.example/x" cross-origin(anonymous))}'],
+  ])('refuses %s', (_name, source) => {
+    expect(css(source)).not.toEqual([]);
+  });
+
+  test.each([
+    ['same-origin and data: image-set() strings', 'a{background:image-set("/_astro/a.png" 1x, "data:image/png;base64,AAAA" 2x)}'],
+    ["image-set()'s type() string, which is not a URL", 'a{background:image-set("/_astro/a.avif" type("image/avif") 1x)}'],
+    ['a url() in a comment', '/* url(https://evil.example/x) */ a{color:red}'],
+    ['a string that only mentions url()', 'a{content:"url(https://evil.example/x)"}'],
+    ['an escaped class name that only spells url()', String.raw`.bg-\[url\(https\:\/\/evil\.example\/x\)\]{color:red}`],
+  ])('allows %s', (_name, source) => {
+    expect(css(source)).toEqual([]);
+  });
+});
+
+// The URLs as a browser reads them: escapes decoded, image-set()'s own strings but not type()'s.
+describe('cssUrls', () => {
+  test.each([
+    [String.raw`a{b:\75 rl(https\3a //evil.example/x)}`, ['https://evil.example/x']],
+    [String.raw`a{b:url("https://example.com\22 @evil.example/x")}`, ['https://example.com"@evil.example/x']],
+    [`a{b:image-set("a.png" 1x, url(b.png) 2x, 'c.png' type("image/png") 3x)}`, ['a.png', 'b.png', 'c.png']],
+    [`@import "x.css"; @import url(y.css); @import url( 'z.css' ) layer(a);`, ['x.css', 'y.css', 'z.css']],
+    ['@font-face{src:url(a.woff2) format("woff2"), src("b.woff2")}', ['a.woff2', 'b.woff2']],
+    ['a{b:url(bad"url) url(ok)}', ['ok']],
+  ])('%s', (source, urls) => {
+    expect(cssUrls(source).sort()).toEqual(urls);
   });
 });
 
