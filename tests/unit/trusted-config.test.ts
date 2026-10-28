@@ -102,8 +102,17 @@ describe('previewConfig', () => {
     expect(PREVIEW_SETTINGS).toEqual({ no_bundle: true, upload_source_maps: false, find_additional_modules: false });
   });
 
-  test("is the repository's wrangler.jsonc with those settings, and nothing else changed", () => {
-    expect(previewConfig(repo())).toEqual({ ...repo(), ...PREVIEW_SETTINGS });
+  // A stamped site may add an env.staging block or a tsconfig, which previewConfig drops by design.
+  const stamped = () => ({ ...repo(), tsconfig: 'tsconfig.json', env: { staging: { name: 'site-staging', vars: { DELIVERY_PROVIDER: 'log' } } } });
+  test.each([
+    ['the repository', repo],
+    ['a stamped site with an env.staging block and a tsconfig', stamped],
+  ])("takes %s's wrangler.jsonc, sets those settings, and drops only env and tsconfig", (_what, config) => {
+    let written: Record<string, unknown> | undefined;
+    expect(() => (written = previewConfig(config()))).not.toThrow();
+    expect(written).toMatchObject(PREVIEW_SETTINGS);
+    const { env: _env, tsconfig: _tsconfig, ...kept } = config();
+    expect(written).toEqual({ ...kept, ...PREVIEW_SETTINGS });
   });
 
   test('sets them over whatever the trusted config says', () => {

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
+// A site that deletes tools/design-ingest/ must keep ingest.mjs, or move this matcher into this file.
 import { codeLoadingDirective } from '../../tools/design-ingest/ingest.mjs';
 
 const root = (path: string) => fileURLToPath(new URL(`../../${path}`, import.meta.url));

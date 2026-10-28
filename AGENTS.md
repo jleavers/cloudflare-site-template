@@ -58,7 +58,10 @@ change that needs one of those tests weakened is the wrong change.
 
 ## Rules
 
-- **No unapproved dependencies.** Ask before adding any package, and never one C3 forbids.
+- **No unapproved dependencies.** Ask before adding any package, and never one C3 forbids. Once
+  the owner approves a Tailwind plugin and it is installed properly, its module name goes in
+  `APPROVED_TAILWIND_MODULES` in `tests/unit/contracts.test.ts`: that is the sanctioned edit, not a
+  weakened contract.
 - **npm runs no install scripts here.** `.npmrc` sets `ignore-scripts=true`. Never turn scripts
   back on, with a flag or an environment variable, and add no `pre` or `post` hook script: npm
   would skip it (`tests/unit/supply-chain.test.ts` checks all three).
