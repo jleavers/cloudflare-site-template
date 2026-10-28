@@ -164,7 +164,7 @@ Every stamped-out site must satisfy these, whatever its design. AGENTS.md states
 |---|---|---|
 | C1 | Design tokens live only in `src/styles/global.css` (`@theme`). Site-wide facts live only in `src/config/site.ts`. Page copy lives in the page files and is passed to sections as props. | AGENTS.md; skill |
 | C2 | Fonts are self-hosted through the Astro Fonts API. Raster images go through `<Image>`, from `src/assets/`. | dist: every URL a built page or stylesheet can fetch or connect to (`src`, `srcset`, `href` but on `<a>` and `<area>`, `poster`, `data`, `action`, `formaction`, `ping`, `xlink:href`, a meta refresh, and `url()` and `@import` in a `style` attribute, a `<style>` or a CSS file) resolves to the site's own origin, but a `data:` image and the script hosts C3 allows; an attribute name repeated on one element is refused, since a browser reads only the first; every `<img>` has `width`, `height` and `alt`, and a `src` under `/_astro/` or exactly `/favicon.svg` |
-| C3 | No client framework. No third-party scripts except Turnstile, and the Cloudflare Web Analytics beacon when it is enabled. | dist: script `src` allow-list; package.json has no react, vue, svelte, preact, solid or alpinejs |
+| C3 | No client framework. No third-party scripts except Turnstile, and the Cloudflare Web Analytics beacon when it is enabled. | dist: script `src` allow-list, and every CSP in the built `_headers` held directive by directive to the allow-list in `tests/dist/headers.ts` (§8); package.json has no react, vue, svelte, preact, solid or alpinejs |
 | C4 | Every page renders through `BaseLayout`. | dist: every HTML page has `<title>`, meta description, canonical, `og:title`, `og:description`, an absolute `og:image` URL and `lang` |
 | C5 | `ContactForm` markup may be restyled, but its contract is fixed: `form[data-contact-form]`, `action="/api/contact"`, `method="post"`, fields `name`, `email`, `message`, `_gotcha` (hidden), a `[data-turnstile]` container, a `[data-status]` live region, and the bundled submit script. | dist checks the structure; e2e checks the behaviour |
 | C6 | The worker stays portable: `src/contact/**` uses only Web-standard APIs, and no KV, D1, Durable Objects or other proprietary bindings are added unless explicitly instructed. | unit tests on Node; a test asserts no `cloudflare:` imports in `src/contact` |
@@ -372,7 +372,8 @@ PR builds set `PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA`, the always-p
     Cache-Control: public, max-age=31536000, immutable
   ```
   - The `/_astro/*` immutable rule applies to hashed files that exist. A missing one's 404 is served by the Worker with `Cache-Control: no-store` (and the `/*` security headers), so a browser never keeps it.
-  - Enabling Cloudflare Web Analytics adds `https://static.cloudflareinsights.com` to `script-src` and `https://cloudflareinsights.com` to `connect-src`.
+  - Enabling Cloudflare Web Analytics adds `https://static.cloudflareinsights.com` to `script-src` and `https://cloudflareinsights.com` to `connect-src`. The dist test allows those two only while `site.analytics.cloudflareToken` is set, and then requires them.
+  - `tests/dist/files.test.ts` reads the built `_headers` as Cloudflare does, and holds every `Content-Security-Policy` in it, on any path, to the allow-list in `tests/dist/headers.ts`. Each directive's sources must be a subset of that directive's list, so a site may tighten the policy but not widen it, and no directive may repeat. `object-src 'none'`, `base-uri 'self'`, `form-action 'self'` and `frame-ancestors 'none'` must be exact, and `default-src`, `script-src` and `connect-src` present. No `!` line may remove a security header, and `/*` sets each sibling header above once, with HSTS `max-age` at least 31536000. A site that genuinely needs another source edits that allow-list, which is the change a reviewer sees.
   - Whether Astro inlines small scripts, which this CSP would block, is verified during implementation (§16).
   - The Worker sets its own headers on `/api/*` responses, since `_headers` applies to static assets only.
 
@@ -542,7 +543,7 @@ It only warns when `design/SOURCE.md` and `design/bundle/` are both absent.
   - `handleContact`: every row of §7.3, plus the honeypot sending nothing.
   - `worker.ts` routing, with a stub `ASSETS`.
   - C6: no file under `src/contact/` imports a `cloudflare:` specifier, any package, or any module outside `src/contact/`.
-- **Dist contracts** (`tests/dist/`) cover C2 to C5 over every HTML file in `dist/`. They also check that `sitemap-index.xml`, `robots.txt`, `404.html` and `_headers` exist, and that `robots.txt` names the sitemap with an absolute URL.
+- **Dist contracts** (`tests/dist/`) cover C2 to C5 over every HTML file in `dist/`. They also check that `sitemap-index.xml`, `robots.txt`, `404.html` and `_headers` exist, that `robots.txt` names the sitemap with an absolute URL, and that every CSP and security header in the built `_headers` passes the allow-list (§8).
 - **Preflight** (`tests/preflight/`): §11.3.
 - **E2E** (`tests/e2e/`, Chromium):
   1. The happy path: scroll to the form, the Turnstile test widget passes, the button enables, fill and submit, and `data-state="sent"` shows the success message.
