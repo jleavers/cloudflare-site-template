@@ -101,6 +101,15 @@ test('the shared lane rules, inside HANDS_OFF, keep a lane to a free port, an em
   }
 });
 
+// The owner may review the run in another session, which starts from the run directory's path.
+test('phase 6 names the run directory before it asks, and lets the owner review it in another session', () => {
+  const phase6 = section(skillText(), '## Phase 6', '## Phase 7');
+  expect(phase6.indexOf('`run_dir`')).toBeGreaterThan(-1);
+  expect(phase6.indexOf('`run_dir`')).toBeLessThan(phase6.indexOf('Then ask'));
+  expect(phase6).toContain('review it in another session');
+  expect(section(skillText(), '## Phase 8', '## Growing the lanes')).toContain('another session');
+});
+
 test('phase 7 gets its write credential back before filing, and phase 8 unsets GH_TOKEN before gh auth login', () => {
   const skill = skillText();
   const phase7 = section(skill, '## Phase 7', '## Phase 8');

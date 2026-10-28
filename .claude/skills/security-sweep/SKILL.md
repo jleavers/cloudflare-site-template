@@ -412,10 +412,14 @@ the Write tool. If the session died after the workflow finished, take the text f
 `<runDir>/05-dedupe.json`, or, if that holds only the verdicts, from the `dedupe-report`
 agent's result in the workflow's `journal.jsonl` (the task notification names its directory).
 
-Read `<runDir>/report-<stamp>.md`. Present the clusters ranked by severity; for each give the
-title, the **invariant**, the blast radius, and the dedupe verdict with the issue numbers and
-advisory ids it matched. Then ask which to fix, and which, if any, may be described in public
-now. The default is no.
+Read `<runDir>/report-<stamp>.md`. Open the summary with the run directory's absolute path (the
+workflow result's `run_dir`) and the report's, so the owner can take the review to another
+session. Present the clusters ranked by severity; for each give the title, the **invariant**, the
+blast radius, and the dedupe verdict with the issue numbers and advisory ids it matched. Then ask
+which to fix, and which, if any, may be described in public now. The default is no.
+
+One answer is always "review it in another session". Then write and file nothing more, and go to
+Phase 8; end it with the run directory's path again.
 
 Say explicitly:
 
@@ -486,8 +490,9 @@ forbids agents from deleting a directory tree.
 
 **Keep the run directory.** It is the comparison the next sweep needs.
 
-**Give back what phase 0 took away,** once the clusters are filed or held: unset the read-only `GH_TOKEN`, then log back in to `gh`
-(`gh auth login`, unless phase 7 already did), reload the SSH keys you want (`ssh-add`), and move `~/.npmrc` back.
+**Give back what phase 0 took away,** once the clusters are filed or held, or the review has moved
+to another session: unset the read-only `GH_TOKEN`, then log back in to `gh` (`gh auth login`,
+unless phase 7 already did), reload the SSH keys you want (`ssh-add`), and move `~/.npmrc` back.
 Leave Wrangler logged out: this repository keeps no Cloudflare login or API token on a machine that
 runs its build, and every deploy goes through CI (README, "Cloudflare API token").
 
