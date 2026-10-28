@@ -199,29 +199,68 @@ stage that falls back to the default subagent (below) inherits all of it.
 On Windows use PowerShell equivalents and chain with `;`; the commands below are the Bash form.
 
 ```bash
-REF=origin/main    # a pre-merge release sweep: push the branch, then REF=origin/<branch>
+REF=origin/main # a pre-merge release sweep: push the branch, then REF=origin/<branch>
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 WT=.claude/worktrees/security-sweep-$STAMP
 RD=.claude/security-sweeps/$STAMP
 git fetch origin
-git rev-list --count main.."$REF"                # informational only
+git rev-list --count main.."$REF" # informational only
 git worktree add --detach "$WT" "$REF"
-git -C "$WT" rev-parse HEAD                     # the swept SHA
-gh repo view --json nameWithOwner --jq .nameWithOwner   # the repo: where origin points
-mkdir -p "$RD" "$WT-scratch"
+git -C "$WT" rev-parse HEAD # the swept SHA
+git rev-parse --show-toplevel # the repository root, a real path: repoRoot
+gh repo view --json nameWithOwner --jq .nameWithOwner # the repo: where origin points
+mkdir -p "$RD"
 ```
 
-`$WT-scratch` is where every agent puts anything temporary (npm installs, clones, stub servers,
-throwaway copies of the worktree). It sits inside the repository rather than in shared `/tmp`,
-where a fixed name is one another local principal can create first, and under
-`.claude/worktrees/`, so git ignores it. The workflow derives it from `worktree` unless `scratch`
-is passed.
+**The scratch directory lies outside the repository.** It is where every agent puts anything
+temporary: npm installs, clones, stub servers, throwaway copies of the worktree, and the probe
+bundles a lane builds. Never put it inside the repository, `.claude/worktrees/` included: an editor
+extension that scans the workspace (Tailwind CSS IntelliSense) loads what a probe leaves there, a
+stylesheet's `@plugin` beside its module and a `node_modules`, and that git ignores a folder says
+nothing about what scans it. The workflow refuses a `scratch` that is missing, relative, or at,
+under or above the repository.
+
+- **If the session has its own scratch directory, use it.** Claude Code names one in its system
+  prompt, writable without permission prompts. Make a new subfolder there:
+
+  ```bash
+  SCRATCH="<the session scratch directory>/security-sweep-$STAMP"
+  mkdir "$SCRATCH"
+  ```
+
+- **Otherwise make a new one under the OS temp directory.** `mktemp -d` gives it mode 0700 and a
+  name nobody can guess, so no other local principal can create it first in a shared `/tmp`:
+
+  ```bash
+  SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/security-sweep-$STAMP-XXXXXXXX")
+  ```
+
+  In PowerShell, under the user's own temp folder, with a GUID for the name (`New-Item` fails if
+  the folder exists):
+
+  ```powershell
+  $SCRATCH = Join-Path ([System.IO.Path]::GetTempPath()) "security-sweep-$STAMP-$([guid]::NewGuid().ToString('N'))"
+  New-Item -ItemType Directory -Path $SCRATCH | Out-Null
+  ```
+
+Then take its real path (`SCRATCH=$(cd "$SCRATCH" && pwd -P)` in Bash), because the workflow
+compares paths as text and cannot follow a link.
+
+**Check that the scratch is writable before launching the workflow.** Lanes write there through
+Bash and through the Write tool, and a run that stalls at its first lane wastes the owner's run.
+Write one file there with the Write tool (`$SCRATCH/write-check.txt`), and one with Bash
+(`echo ok > "$SCRATCH/bash-check.txt"`). If either fails, or asks for permission, stop and tell
+the owner. If the harness prompts for writes outside the project, the owner adds the folder to the
+session first, then you check again: in Claude Code that is `/add-dir <path>` during the session,
+or `claude --add-dir <path>` at launch ("Working directories" in Claude Code's permissions
+documentation).
 
 Then write `$RD/run.json`:
 
 ```json
 {"stamp": "...", "sha": "...", "ref": "origin/main", "repo": "<owner>/<name>",
- "worktree": "<absolute>", "run_dir": "<absolute>", "lane_set": "baseline", "phases": {}}
+ "repo_root": "<absolute>", "worktree": "<absolute>", "run_dir": "<absolute>",
+ "scratch": "<absolute>", "lane_set": "baseline", "phases": {}}
 ```
 
 - **`repo` is what `gh repo view` printed, never a literal.** It is the tracker the dedupe reads
@@ -301,13 +340,16 @@ gh api -X GET --paginate repos/{owner}/{repo}/collaborators --jq '.[] | "\(.logi
 ```
 Workflow({
   name: "security-sweep",
-  args: {stamp, sha, repo, worktree: <absolute>, runDir: <absolute>, escalationCap: 3,
-         lanes: "baseline", tracker: <the array from $RD/tracker.json>,
-         agentAccounts: [<login>, ...]}
+  args: {stamp, sha, repo, repoRoot: <absolute>, worktree: <absolute>, runDir: <absolute>,
+         scratch: <absolute>, escalationCap: 3, lanes: "baseline",
+         tracker: <the array from $RD/tracker.json>, agentAccounts: [<login>, ...]}
 })
 ```
 
-`worktree` and `runDir` must be absolute: the agents resolve them directly. Leaving out `tracker`
+`repoRoot`, `worktree`, `runDir` and `scratch` must be absolute: the agents resolve them directly.
+`scratch` is the folder phase 0 made and checked. The workflow refuses to start without it, and
+refuses one at, under or above `repoRoot`, the worktree, or the checkout the worktree or the run
+directory sits in; it never derives one. Leaving out `tracker`
 is not an error; the dedupe pass then reports that it searched an empty tracker. Leaving out
 `agentAccounts` marks only `[bot]` logins as agent-written. Other args: `known` (prose naming
 what is already filed) and `toolProfiles: false`.
@@ -437,9 +479,9 @@ git worktree list
 Never with `--force`. If the remove fails because the worktree is dirty (it should not be: the
 prompts send any executed code to the scratch directory), report it and leave it for the owner.
 
-Then **tell the owner** the scratch directory's path
-(`.claude/worktrees/security-sweep-$STAMP-scratch`) and that they delete it themselves. This
-repository's AGENTS.md forbids agents from deleting a directory tree.
+Then **tell the owner** the scratch directory's path (`$SCRATCH`, as `run.json` records it under
+`scratch`, outside the repository) and that they delete it themselves. This repository's AGENTS.md
+forbids agents from deleting a directory tree.
 
 **Keep the run directory.** It is the comparison the next sweep needs.
 
@@ -467,7 +509,8 @@ The Workflow tool's own resume is same-session only, so there are three tiers:
 2. **Session gone, run directory intact** — read `<runDir>/run.json` and see which artefacts
    exist: `01-surface-map.md`, `02-findings-<lane>.json`, `03-verdicts-<lane>.json`,
    `03-escalated-<id>.json`, `04-clusters.json`, `04-gaps.md`, `05-dedupe.json`. Restart from
-   the first missing phase, by hand if need be — the files are the contract.
+   the first missing phase, by hand if need be — the files are the contract. A new session has
+   its own scratch directory: make and check a new `scratch` as phase 0 does, and pass that.
 3. **Worktree gone too** — `run.json` records the SHA, so re-cut it:
    `git worktree add --detach <path> <sha>`. A partial run stays comparable with itself
    rather than with a moved target.

@@ -737,6 +737,7 @@ The owner's public repositories (`codervis`, `issuebot`) were each swept before 
 - **While the repository is private, findings are held in the run directory, not filed.** Repository security advisories need a public repository, and an issue filed now would become public at the flip, before its fix.
 - Critical and high clusters block the release.
 - After the flip, approved clusters are filed as draft security advisories.
+- Every agent's scratch lies outside the repository: a new folder in the session's own scratch directory, or one `mktemp -d` makes, which phase 0 checks is writable. The workflow refuses to start without one, or with one at, under or above the repository, since an editor extension that scans the workspace loads what a probe leaves there.
 - The skill never removes a directory tree. The owner deletes the scratch directory.
 
 **Tests:**

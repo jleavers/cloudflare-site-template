@@ -191,8 +191,11 @@ async function run(extraArgs = {}, findingPatch = {}, answers = {}) {
       stamp: "20260101T000000Z",
       sha: "0000000",
       repo: "jleavers/cloudflare-site-template",
+      repoRoot: "/repo",
       worktree: "/worktree",
       runDir: "/run",
+      // Outside the repository, as the workflow requires (engine.test.ts pins the refusals).
+      scratch: "/scratch",
       escalationCap: 3,
       ...extraArgs,
     },

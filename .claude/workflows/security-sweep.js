@@ -12,15 +12,62 @@ export const meta = {
 }
 
 if (!args || !args.runDir) {
-  throw new Error('security-sweep needs args: {stamp, sha, repo, worktree, runDir, escalationCap}')
+  throw new Error('security-sweep needs args: {stamp, sha, repo, repoRoot, worktree, runDir, scratch, escalationCap}')
 }
 const { stamp, sha, repo, worktree, runDir } = args
 const escalationCap = Number.isInteger(args.escalationCap) ? args.escalationCap : 3
-// Where agents put everything temporary: npm installs, clones, stub servers, throwaway copies of the worktree.
-// Inside the repository (under the gitignored .claude/worktrees/) but outside the worktree:
-// one directory the owner deletes after the run, and not shared /tmp, where a
-// fixed name is one another local principal can create first.
-const scratch = args.scratch || `${worktree}-scratch`
+
+// Where agents put everything temporary: npm installs, clones, stub servers, throwaway copies of the
+// worktree, and the probe bundles a lane builds. It must lie outside the repository, the main
+// checkout and the worktree alike. An editor extension that scans the workspace (Tailwind CSS
+// IntelliSense) imports what a probe leaves there -- a stylesheet's `@plugin` beside its module,
+// and a `node_modules` -- and that git ignores a folder says nothing about what scans it. Nor may it
+// be a fixed name in shared /tmp, which another local principal can create first. SKILL.md phase 0
+// makes it in the session's own scratch directory, or with `mktemp -d` (mode 0700, a name nobody can
+// guess), and passes it; this script refuses to guess one. It has no filesystem, so it compares paths
+// as text, folded for case (Windows, macOS and WSL's Windows drives ignore it), and SKILL.md passes
+// real paths. One directory is what the owner deletes after the run.
+//
+// A path as the comparison reads it: forward slashes, no `.`, `..` or empty segment, lower case;
+// null when it is not absolute, since an agent resolves a relative path from the checkout it runs in.
+const comparablePath = (path) => {
+  if (typeof path !== 'string') return null
+  const text = path.replace(/\\/g, '/')
+  const root = /^(?:[A-Za-z]:\/|\/\/|\/)/.exec(text)
+  if (!root) return null
+  const segments = []
+  for (const segment of text.slice(root[0].length).split('/')) {
+    if (segment === '..') segments.pop()
+    else if (segment !== '' && segment !== '.') segments.push(segment)
+  }
+  return `${root[0]}${segments.join('/')}`.toLowerCase()
+}
+const underOrAt = (path, base) => path === base || path.startsWith(base.endsWith('/') ? base : `${base}/`)
+// The checkout a SKILL-shaped path sits in: `<repo>/.claude/worktrees/<name>` or `<repo>/.claude/security-sweeps/<name>`.
+const checkoutOf = (path, folder) => {
+  const match = path && new RegExp(`^(.+)/\\.claude/${folder}/[^/]+$`).exec(path)
+  return match ? match[1] : null
+}
+const scratch = (() => {
+  const given = comparablePath(args.scratch)
+  if (!given) {
+    throw new Error('security-sweep needs args.scratch: an absolute path to a new folder outside the repository (SKILL.md phase 0 makes it)')
+  }
+  if (args.repoRoot !== undefined && !comparablePath(args.repoRoot)) {
+    throw new Error('security-sweep needs args.repoRoot, when given, as an absolute path to check args.scratch against')
+  }
+  const tree = comparablePath(worktree)
+  const checkouts = [comparablePath(args.repoRoot), checkoutOf(tree, 'worktrees'), checkoutOf(comparablePath(runDir), 'security-sweeps')].filter(Boolean)
+  if (checkouts.length === 0) {
+    throw new Error('security-sweep cannot tell where the repository is: pass args.repoRoot, its absolute path, so the scratch can be checked against it')
+  }
+  for (const repository of [...checkouts, tree].filter(Boolean)) {
+    if (underOrAt(given, repository) || underOrAt(repository, given)) {
+      throw new Error(`args.scratch must lie outside the repository: ${args.scratch} is at, under or above ${repository}. Make it in the session scratch directory or with mktemp -d (SKILL.md phase 0)`)
+    }
+  }
+  return args.scratch
+})()
 
 // Which lane set to run. `baseline` is the first sweep of this tree: the form handler, what a
 // deployed site serves, CI, dependencies and the design-ingest skill. `public` is for the tree
@@ -362,8 +409,8 @@ request reached it.
 empty file in your scratch directory, so npm never reads the operator's \`~/.npmrc\`; the first \`npm ci\`
 of an earlier run may have.
 
-**Use your copy's packages only.** The scratch directory sits inside the main checkout, so Node
-resolves any package your copy lacks from the main checkout's \`node_modules\`. Install in your copy
+**Use your copy's packages only.** Node resolves a package your copy lacks from any
+\`node_modules\` in a folder above it, wherever your scratch directory is. Install in your copy
 first (\`npm ci --ignore-scripts --userconfig <your empty file>\`) and run tools from your copy's
 \`node_modules/.bin\`. If a tool resolves from outside your copy, say so in \`coverage\` rather than
 relying on it; Playwright did in an earlier run.
@@ -404,9 +451,11 @@ from it, and \`blast_radius\` says which.
 **Your scratch directory is \`${scratch}\`.** Everything temporary goes in a subdirectory of it
 named for your task: npm installs, clones and mirrors, synthetic data, stub servers, copies of the
 worktree, throwaway client configuration. Wherever a brief says "a temporary directory", it
-means there. Never use \`/tmp\` or any other path outside the repository: shared \`/tmp\` is
-where another local principal can create a name before you do, and one directory is what
-the owner cleans up.
+means there. Write nothing elsewhere: never outside your scratch directory, apart from the one
+record your prompt asks for in the run directory. Not in the repository or the worktree, where an
+editor extension that scans the workspace loads what a probe leaves (a stylesheet's \`@plugin\`
+beside its module runs in the owner's editor), and not in shared \`/tmp\`, where another local
+principal can create a name before you do. One directory is what the owner cleans up.
 
 **Delete nothing, your own files included.** The owner removes the whole scratch
 directory after the run, so there is nothing for you to clean up. When you need a fresh copy of
