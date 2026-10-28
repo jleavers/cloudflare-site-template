@@ -1,4 +1,4 @@
-import { formatText } from './format';
+import { formatResend } from './format';
 import { postJson, type Provider } from './types';
 
 export const RESEND_URL = 'https://api.resend.com/emails';
@@ -8,13 +8,7 @@ export const sendResend: Provider = async (submission, config, { siteHost, fetch
   await postJson(
     fetch,
     RESEND_URL,
-    {
-      from: config.fromEmail,
-      to: [config.toEmail],
-      reply_to: submission.email,
-      subject: `New enquiry from ${submission.name} via ${siteHost}`,
-      text: formatText(submission, siteHost),
-    },
+    { from: config.fromEmail, to: [config.toEmail], ...formatResend(submission, siteHost) },
     'Resend',
     { Authorization: `Bearer ${config.resendApiKey}` },
   );

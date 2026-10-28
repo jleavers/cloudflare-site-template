@@ -52,6 +52,33 @@ describe('validate', () => {
     },
   );
 
+  // Ruling 109: whole Unicode categories, not a list. Cc is C0, DEL and C1 (NEL, CSI); Cf holds the
+  // bidi controls, zero-width characters, the soft hyphen and the tag characters; Zl and Zp are
+  // U+2028 and U+2029. Each sits mid-name, because trim() would remove some of them at either end.
+  test.each([
+    ['NEL', 'Ada\u0085Bcc: x@example.com'],
+    ['CSI', 'Ada\u009B31m'],
+    ['U+2028', 'Ada\u2028Email: boss@example.com'],
+    ['U+2029', 'Ada\u2029Lovelace'],
+    ['RLO and PDF', 'Ada \u202Egro.elpmaxe\u202C'],
+    ['an isolate', 'Ada \u2067x\u2069'],
+    ['LRM', 'Ada\u200ELovelace'],
+    ['a zero-width space', 'Ada\u200BLovelace'],
+    ['a zero-width no-break space', 'Ada\uFEFFLovelace'],
+    ['a soft hyphen', 'Ada\u00ADLovelace'],
+    ['a tag character', 'Ada\u{E0041}Lovelace'],
+  ])('refuses %s in the name', (_label, name) => {
+    expect(validate({ ...ok, name })).toEqual({ ok: false, errors: { name: 'Your name contains characters we can’t accept.' } });
+  });
+
+  test.each([
+    ['ZWNJ, as in a Persian name', 'علی\u200Cرضا'],
+    ['ZWJ, as in Sinhala', 'ශ්\u200Dරී'],
+    ['a variation selector', 'Ada ❤\uFE0F'],
+  ])('accepts %s in the name', (_label, name) => {
+    expect(validate({ ...ok, name })).toEqual({ ok: true, value: { ...ok, name } });
+  });
+
   test.each([
     'ada@example.com\r\nBcc: x@example.com',
     'ada lovelace@example.com',
@@ -63,11 +90,70 @@ describe('validate', () => {
     expect(errorsFor({ ...ok, email })).toEqual(['email']);
   });
 
+  test.each([
+    ['CR and LF', 'ada@example.com\r\nBcc: x@example.com'],
+    ['NEL', 'ada\u0085@example.com'],
+    ['U+2028', 'ada\u2028x@example.com'],
+    ['U+2029', 'ada\u2029x@example.com'],
+    ['RLO', 'ada\u202E@example.com'],
+    ['a zero-width space', 'ada\u200B@example.com'],
+    ['ZWNJ', 'ada\u200C@example.com'],
+    ['a soft hyphen', 'ada@exam\u00ADple.com'],
+    ['a tag character', 'ada@example.com\u{E0041}'],
+  ])('refuses %s in the email, saying so', (_label, email) => {
+    expect(validate({ ...ok, email })).toEqual({ ok: false, errors: { email: 'Your email address contains characters we can’t accept.' } });
+  });
+
+  test.each([
+    ['a display name', '"IT-Support"<attacker@example.net>'],
+    ['angle brackets', '<ada@example.com>'],
+    ['a group', 'g:ada@example.com;'],
+    ['a list', 'ada@example.com,boss@example.com'],
+    ['a comma', 'a,boss@example.com'],
+    ['a semicolon', 'ada;x@example.com'],
+    ['a colon', 'ada:x@example.com'],
+    ['a quoted local part', '"ada"@example.com'],
+    ['a comment', 'ada(comment)@example.com'],
+    ['a leading dot', '.ada@example.com'],
+    ['two dots in a row', 'ada..lovelace@example.com'],
+    ['a dot before the @', 'ada.@example.com'],
+    ['an empty domain label', 'ada@example..com'],
+    ['a domain literal', 'ada@[192.0.2.1]'],
+    ['a full-width angle bracket', 'ada＜x@example.com'],
+  ])('refuses an email that is not a bare address: %s', (_label, email) => {
+    expect(validate({ ...ok, email })).toEqual({ ok: false, errors: { email: 'Please enter a valid email address.' } });
+  });
+
+  test.each([
+    'ada+enquiries@example.com',
+    'ada.lovelace@mail.example.co.uk',
+    "o'neill@example.com",
+    "!#$%&'*+/=?^_`{|}~-@example.com",
+    'zoë@bücher.example',
+  ])('accepts the bare address %s', (email) => {
+    expect(validate({ ...ok, email })).toEqual({ ok: true, value: { ...ok, email } });
+  });
+
   test('normalises CRLF to LF and strips control characters from the message, keeping newlines and tabs', () => {
     expect(validate({ ...ok, message: 'Line one\r\nLine two\tTabbed\u0007' })).toEqual({
       ok: true,
       value: { ...ok, message: 'Line one\nLine two\tTabbed' },
     });
+  });
+
+  // The message is stripped, never refused, so a long message is not lost to an invisible character.
+  test.each([
+    ['C1 controls (NEL, CSI)', 'one\u0085two\u009Bthree'],
+    ['U+2028 and U+2029', 'one\u2028two\u2029three'],
+    ['the bidi embeddings and overrides', 'one\u202Atwo\u202Bthree\u202C\u202D\u202E'],
+    ['the bidi isolates', 'one\u2066two\u2067three\u2068\u2069'],
+  ])('strips %s from the message', (_label, message) => {
+    expect(validate({ ...ok, message })).toEqual({ ok: true, value: { ...ok, message: 'onetwothree' } });
+  });
+
+  test('keeps ZWNJ, ZWJ, variation selectors and emoji tag sequences in the message', () => {
+    const message = 'می\u200Cخواهم 👩\u200D💻 ❤\uFE0F 🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}';
+    expect(validate({ ...ok, message })).toEqual({ ok: true, value: { ...ok, message } });
   });
 
   test('measures the message after CRLF normalisation', () => {
