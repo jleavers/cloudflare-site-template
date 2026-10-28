@@ -64,18 +64,27 @@ Windows and macOS need nothing. Ubuntu 23.10 and later restrict unprivileged use
 (`sysctl -n kernel.apparmor_restrict_unprivileged_userns` prints `1`), which the sandbox needs,
 unless an AppArmor profile grants them to the browser. `playwright-chromium.apparmor` in this
 folder is that profile, in the shape of Ubuntu's own for Google Chrome. The person installs it,
-once per machine, from the repository root (an agent never runs `sudo`):
+once per machine, from the repository root (an agent never runs `sudo`). The install writes the
+profile with `@{HOME}/` replaced by the installing account's own `$HOME/`, so the installed profile
+names that one account's folder and no other:
 
-    sudo install -m 0644 tools/screenshots/playwright-chromium.apparmor /etc/apparmor.d/playwright-chromium
+    sed "s|@{HOME}/|$HOME/|" tools/screenshots/playwright-chromium.apparmor | sudo tee /etc/apparmor.d/playwright-chromium >/dev/null
+    sudo chmod 0644 /etc/apparmor.d/playwright-chromium
     sudo apparmor_parser -r /etc/apparmor.d/playwright-chromium
 
-It names Playwright's default browser folder, `~/.cache/ms-playwright/`, where its `~` is AppArmor's
-`@{HOME}`, which is `/home/*/` and `/root/`, so an account whose home is elsewhere is not covered, and
-it does not cover browsers installed elsewhere, with `PLAYWRIGHT_BROWSERS_PATH` or under an `XDG_CACHE_HOME` of
-their own. The trade-off: it lets any program at those paths, which the person's own account can
-write, create user namespaces, so it gives back part of what Ubuntu's restriction takes away for
-that account. Without it, design screens are read as source on that machine. Chromium also
-refuses its sandbox to root, on any Linux: run as an ordinary user, not as root in a container.
+(`sed` runs as you, so `$HOME` is yours; `tee` writes the file as root, and no world-writable
+temporary file exists.) The tracked profile keeps AppArmor's `@{HOME}`, which is `/home/*/` and
+`/root/`, because a profile that names one account cannot be committed; the install narrows it.
+
+The installed profile names Playwright's default browser folder, `$HOME/.cache/ms-playwright/`, for
+the account that ran the install, so any other account, and an account whose home is elsewhere, is
+not covered. The profile has one name, so a second account on the same machine that runs the install
+replaces the first's: it is one account per machine. It does not cover browsers installed elsewhere,
+with `PLAYWRIGHT_BROWSERS_PATH` or under an `XDG_CACHE_HOME` of their own. The trade-off: it lets any
+program at those paths, which that account can write, create user namespaces, so it gives back part
+of what Ubuntu's restriction takes away for that account. Without it, design screens are read as
+source on that machine. Chromium also refuses its sandbox to root, on any Linux: run as an ordinary
+user, not as root in a container.
 CI's `e2e` job installs the same profile on a GitHub-hosted runner, and keeps the browsers in the
 folder it names; on a self-hosted runner without it, the design-fence tests refuse, and so deploys
 wait.

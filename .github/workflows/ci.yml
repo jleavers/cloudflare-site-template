@@ -131,7 +131,8 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: |
           if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then
-            sudo install -m 0644 tools/screenshots/playwright-chromium.apparmor /etc/apparmor.d/playwright-chromium
+            sed "s|@{HOME}/|$HOME/|" tools/screenshots/playwright-chromium.apparmor | sudo tee /etc/apparmor.d/playwright-chromium >/dev/null
+            sudo chmod 0644 /etc/apparmor.d/playwright-chromium
             sudo apparmor_parser -r /etc/apparmor.d/playwright-chromium
           fi
       # A free port, not a fixed one: a self-hosted VM runs other repositories' jobs alongside.

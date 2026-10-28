@@ -655,8 +655,10 @@ test('e2e lets Chromium start its sandbox on a GitHub-hosted runner, as tools/sc
   expect(at).toBeLessThan(all.findIndex((step) => runs(step) === 'npm run test:e2e'));
   expect(stepValue(all[at]!, 'if')).toBe("runner.environment == 'github-hosted'");
   const script = runs(all[at]!).split('\n');
-  const readme = read('tools/screenshots/README.md').split('\n').filter((line) => line.startsWith('    sudo ')).map((line) => line.trim());
-  expect(readme).toHaveLength(2);
+  const readme = read('tools/screenshots/README.md').split('\n').filter((line) => /^ {4}(sed|sudo) /.test(line)).map((line) => line.trim());
+  expect(readme).toHaveLength(3);
+  // The install narrows the tracked profile's @{HOME} to the installing account's own home.
+  expect(readme[0]).toBe('sed "s|@{HOME}/|$HOME/|" tools/screenshots/playwright-chromium.apparmor | sudo tee /etc/apparmor.d/playwright-chromium >/dev/null');
   expect(script).toEqual(['if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then', ...readme.map((line) => `  ${line}`), 'fi']);
   // The profile names Playwright's default folder, so the browser must land there whatever the
   // image sets: PLAYWRIGHT_BROWSERS_PATH, set before the install, wins over XDG_CACHE_HOME.

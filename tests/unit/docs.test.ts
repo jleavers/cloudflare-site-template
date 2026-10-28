@@ -346,6 +346,22 @@ describe('agent-facing documents', () => {
     },
   );
 
+  // Sweep shipped-text-4: the tracked profile names every account's home (@{HOME}), so the install
+  // narrows it to the installing account's, and the README says that one account is covered.
+  test("tools/screenshots/README.md installs the AppArmor profile for the installing account's home only", () => {
+    const text = read('tools/screenshots/README.md');
+    expect(text).toContain('sed "s|@{HOME}/|$HOME/|" tools/screenshots/playwright-chromium.apparmor | sudo tee /etc/apparmor.d/playwright-chromium >/dev/null');
+    expect(text).toContain('sudo chmod 0644 /etc/apparmor.d/playwright-chromium');
+    const sandbox = prose(section(text, "## Chromium's sandbox", '## What is not pinned'));
+    for (const fragment of [
+      "the installed profile names that one account's folder and no other",
+      'for the account that ran the install',
+      'it is one account per machine',
+    ]) {
+      expect(sandbox, fragment).toContain(fragment);
+    }
+  });
+
   // On a public repository a fork's pull request runs the fork's own workflow file, which can name a
   // self-hosted runner's label directly, so unsetting CI_LINUX_RUNNER protects nothing: the runner's
   // registration has to go before the flip (sweep run 20261027T190359Z, ci-workflow-2).
