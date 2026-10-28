@@ -5895,13 +5895,15 @@ R=jleavers/cloudflare-site-template
 gh secret list --env production --repo $R
 gh secret list --repo $R
 gh api repos/$R --jq '{is_template, visibility}'
+gh api repos/$R/actions/permissions/workflow --jq '{default_workflow_permissions, can_approve_pull_request_reviews}'
 ```
 Expected where the move is done (not Free):
 - the first lists `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, both dated on or after the roll;
 - the second lists neither;
-- `is_template` is `true` and `visibility` is `private`.
+- `is_template` is `true` and `visibility` is `private`;
+- the workflow permissions are `read`, with `can_approve_pull_request_reviews` `false`.
 
-Expected on Free, where the move waits for Step 3a: the second lists `CLOUDFLARE_API_TOKEN`, dated on or after the roll, and `CLOUDFLARE_ACCOUNT_ID`, the first is empty or errors, and `is_template` is `true` with `visibility` `private`.
+Expected on Free, where the move waits for Step 3a: the second lists `CLOUDFLARE_API_TOKEN`, dated on or after the roll, and `CLOUDFLARE_ACCOUNT_ID`, the first is empty or errors, `is_template` is `true` with `visibility` `private`, and the workflow permissions are as above.
 
 - [ ] **Step 3: Owner: go public**
 
@@ -5919,12 +5921,14 @@ gh api repos/$R/private-vulnerability-reporting --jq .enabled
 gh api repos/$R/actions/permissions/fork-pr-contributor-approval --jq .approval_policy
 gh ruleset list --repo $R
 gh api repos/$R/environments/production --jq .deployment_branch_policy
+gh api repos/$R/environments/production/deployment-branch-policies --jq '.branch_policies[].name'
 ```
 Expected, on every plan:
 - `true`;
 - `all_external_contributors` (after the Settings fallback, that control reads "Require approval for all external contributors" instead);
 - the `main` ruleset;
-- `custom_branch_policies` `true`, not `null`.
+- `custom_branch_policies` `true`, not `null`;
+- `main`, and nothing else.
 
 On Free, also run the first two read-backs of Step 2. Expected: the first lists both secrets dated on or after the roll, and the second lists neither.
 
