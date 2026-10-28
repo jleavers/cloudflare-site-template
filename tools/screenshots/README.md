@@ -69,8 +69,9 @@ once per machine, from the repository root (an agent never runs `sudo`):
     sudo install -m 0644 tools/screenshots/playwright-chromium.apparmor /etc/apparmor.d/playwright-chromium
     sudo apparmor_parser -r /etc/apparmor.d/playwright-chromium
 
-It names Playwright's default browser folder, `~/.cache/ms-playwright/`, so it does not cover
-browsers installed elsewhere, with `PLAYWRIGHT_BROWSERS_PATH` or under an `XDG_CACHE_HOME` of
+It names Playwright's default browser folder, `~/.cache/ms-playwright/`, where its `~` is AppArmor's
+`@{HOME}`, which is `/home/*/` and `/root/`, so an account whose home is elsewhere is not covered, and
+it does not cover browsers installed elsewhere, with `PLAYWRIGHT_BROWSERS_PATH` or under an `XDG_CACHE_HOME` of
 their own. The trade-off: it lets any program at those paths, which the person's own account can
 write, create user namespaces, so it gives back part of what Ubuntu's restriction takes away for
 that account. Without it, design screens are read as source on that machine. Chromium also

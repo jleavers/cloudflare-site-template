@@ -70,6 +70,26 @@ describe('resend', () => {
     const { ctx } = context(new TypeError('fetch failed'));
     await expect(providers.resend(submission, resendConfig, ctx)).rejects.toBeInstanceOf(DeliveryError);
   });
+
+  test("a thrown error's name never reaches the DeliveryError's text", async () => {
+    const odd = new Error('boom');
+    odd.name = 'FetchError https://hooks.example.org/secret-path?token=abc123';
+    const { ctx } = context(odd);
+    const failure = await providers.resend(submission, resendConfig, ctx).then(
+      () => undefined,
+      (thrown: unknown) => thrown as DeliveryError,
+    );
+    expect(failure).toBeInstanceOf(DeliveryError);
+    expect(failure?.message).toBe('Resend could not be reached (Error)');
+    expect(failure?.message).not.toMatch(/secret-path|abc123|hooks\.example\.org/);
+  });
+
+  test.each(['TypeError', 'TimeoutError', 'AbortError'])('keeps the allowed name %s', async (name) => {
+    const named = new Error('x');
+    named.name = name;
+    const { ctx } = context(named);
+    await expect(providers.resend(submission, resendConfig, ctx)).rejects.toThrow(`Resend could not be reached (${name})`);
+  });
 });
 
 describe('slack', () => {

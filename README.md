@@ -185,9 +185,9 @@ goes for your machines: **keep no Cloudflare login or API token on a machine tha
 build or dev server**, since any package the build runs could read it. That is also why Worker
 secrets are set in the dashboard. The CI token passes through your machine only once, into
 `gh secret set`, which prompts for it: paste it there, and don't save it in a file or your
-shell's environment. To clear an old login, run `npx --no wrangler logout` in an installed checkout of the template
-(`npm ci` first), so it uses the lockfile's wrangler and downloads none. It invalidates the
-OAuth token and deletes the stored credentials. Or delete Wrangler's saved login:
+shell's environment. To clear an old login, run `npx --no wrangler logout` in an installed
+checkout of the template (`npm ci` first), so it uses the lockfile's wrangler and downloads none.
+It invalidates the OAuth token and deletes the stored credentials. Or delete Wrangler's saved login:
 `~/.config/.wrangler/config/default.toml` on Linux,
 `~/Library/Preferences/.wrangler/config/default.toml` on macOS,
 `%APPDATA%\xdg.config\.wrangler\config\default.toml` on Windows, or
@@ -301,7 +301,7 @@ private Free repository there are no rulesets, so the agent's Contents write can
 | `npm run dev` | Astro's dev server, pages only |
 | `npm run preview` | the whole site and Worker locally, with Turnstile's test keys and `log` delivery |
 | `npm run verify` | type check, unit tests, build, contract tests on the build |
-| `npm run test:e2e` | the browser tests (Playwright, Chromium) |
+| `npm run test:e2e` | the browser tests (Playwright, Chromium). On Ubuntu 23.10 or later, install the AppArmor profile first (`tools/screenshots/README.md`, "Chromium's sandbox"), or its six design-fence tests refuse; where that isn't possible (no `sudo`), CI's e2e is the check |
 | `npm run lighthouse` | the Lighthouse budgets; performance must score 100 |
 | `npm run preflight` | is this checkout still the template, or does a built page still have a `[bracketed]` design placeholder? Example values are refused once the site is live: a custom domain, or `DELIVERY_PROVIDER` set to `resend`, `slack` or `teams` (CI runs it to decide whether a deploy may go ahead; build first) |
 
@@ -341,10 +341,12 @@ minutes are free. There is no other way to deploy ([why](#cloudflare-api-token))
 **Supply chain.** `.npmrc` sets `min-release-age=7`, the same seven days as the Dependabot
 cooldown, so a hand `npm install` takes no release younger than a week (`npm ci` installs what the
 lockfile says, whatever its age). The setting needs npm 11.10 or later: Node 22's bundled npm
-(10.x) doesn't know it and ignores it (silently: npm 10.9.9 printed no warning, and installed the newest versions), so use
-Node 24 (`.nvmrc`), whose bundled npm applies it: Node 24.14.1 is the first release that bundles npm 11.10 or later
-(24.14.0 bundles 11.9.0), and `.nvmrc` resolves to the newest. Don't upgrade npm itself from the registry, which
-is outside the lockfile and this `.npmrc`. Other npm 10 releases may warn
+(10.x) doesn't know it and ignores it (silently: npm 10.9.9 printed no warning, and installed the
+newest versions), so use Node 24 (`.nvmrc`), whose bundled npm applies it: Node 24.14.1 is the
+first release that bundles npm 11.10 or later (24.14.0 bundles 11.9.0). `nvm install` resolves
+`.nvmrc` to the newest, but `nvm use` picks the newest 24 already installed, so check that
+`node --version` prints 24.14.1 or later. Don't upgrade npm itself from the registry, which is
+outside the lockfile and this `.npmrc`. Other npm 10 releases may warn
 about an unknown config key; the floor is still not applied. CI's token jobs apply the same floor
 to wrangler-action's install (design spec §10).
 

@@ -1068,7 +1068,7 @@ describe('the token-job pin', () => {
 
 // ---------------------------------------------------------------------------------------------
 // Sweep 20261028T105259Z, cluster 3 (Ruling 108). What production serves rested on run metadata
-// that other actors can reproduce: a re-run of an older push run kept every test deploy's gate
+// that other actors can reproduce: a re-run of an older push run kept every test the deploy's gate
 // made, and a dispatch run shared main's concurrency group. So deploy asks GitHub what main's head
 // is now and deploys only that commit, and only main's own push runs share main's group.
 // ---------------------------------------------------------------------------------------------

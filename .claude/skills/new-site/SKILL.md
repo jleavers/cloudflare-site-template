@@ -320,8 +320,7 @@ with `file:line`, and say that production preflight (a custom domain, or `DELIVE
      user or a GitHub App installation), never your own credential or SSH key, with an HTTPS
      token without workflow permission (fine-grained, no Workflows and no Actions write; never a
      classic token, which can re-run workflows). Where the plan has rulesets, require one approval
-     on
-     `main` and keep that identity off the bypass list (same README section).
+     on `main` and keep that identity off the bypass list (same README section).
 4. **Secrets and HTTPS, once the Worker exists:**
    - Cloudflare dashboard → the Worker → Settings → Variables and Secrets → Add, type **Secret**:
      `TURNSTILE_SECRET_KEY` (from step 1) and `RESEND_API_KEY` (or `WEBHOOK_URL`), then Deploy.

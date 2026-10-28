@@ -16,6 +16,8 @@ const LOOPBACK_BYPASS = 'PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK';
  * Chromium's own. Playwright's words cover a host that refuses Chromium user namespaces, and root.
  */
 const SANDBOX_FAILED = /Chromium sandboxing failed!|No usable sandbox!/;
+/** The one line that says the sandbox failed; the rest of Playwright's banner offers launching without it, which this refusal never repeats. */
+const SANDBOX_LINE = /^.*(?:Chromium sandboxing failed!|No usable sandbox!).*$/m;
 const SANDBOX_REFUSAL =
   "Chromium's OS sandbox could not start on this machine, so the design screen was not rendered: design.mjs runs a screen's JavaScript only inside that sandbox, and never without it. On Ubuntu 23.10 and later, which restrict unprivileged user namespaces, the person can install the AppArmor profile tools/screenshots/playwright-chromium.apparmor, as tools/screenshots/README.md says (\"Chromium's sandbox\"), or, when running as root, run as an ordinary user; until then, read the screen's source as text instead.";
 
@@ -67,7 +69,10 @@ export async function shootDesign(screen, { bundle, width = 1440, height = 900, 
       args: ['--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--host-resolver-rules=MAP * ~NOTFOUND'],
     });
   } catch (error) {
-    if (SANDBOX_FAILED.test(String(error?.message))) throw new Error(SANDBOX_REFUSAL, { cause: error });
+    if (SANDBOX_FAILED.test(String(error?.message))) {
+      // The cause holds only that line, so Node, printing it under the refusal, shows no way round the sandbox.
+      throw new Error(SANDBOX_REFUSAL, { cause: new Error(String(error.message).match(SANDBOX_LINE)[0].trim()) });
+    }
     throw error;
   }
   try {

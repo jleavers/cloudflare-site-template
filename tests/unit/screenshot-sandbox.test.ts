@@ -59,7 +59,11 @@ test.each([
   for (const part of ['tools/screenshots/playwright-chromium.apparmor', 'tools/screenshots/README.md', 'when running as root, run as an ordinary user', "read the screen's source as text instead", 'never without it']) {
     expect(error?.message).toContain(part);
   }
-  expect(error?.cause).toBe(failure);
+  // Node prints the cause under the refusal, so nothing reachable through it offers the way round.
+  const reachable: string[] = [];
+  for (let e: unknown = error; e instanceof Error; e = e.cause) reachable.push(e.message, String(e.stack));
+  expect(reachable.join('\n')).not.toContain('chromiumSandbox');
+  expect((error?.cause as Error).message).toMatch(/Chromium sandboxing failed!|No usable sandbox!/);
   // No second launch: not without the sandbox, and not with JavaScript off.
   expect(launch).toHaveBeenCalledTimes(1);
 });

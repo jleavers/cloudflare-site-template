@@ -49,7 +49,7 @@ permissions:
 # an environment, which holds the token behind a branch rule or a reviewer where the plan allows
 # (README, "Cloudflare API token"). main's wrangler.jsonc is part of that trust root: its
 # assets.directory, rules and tsconfig steer what wrangler reads and uploads, so review a change
-# to it as you would a change to this file.
+# to it as you would a change to this file. Deploy also runs only while its commit is main's head.
 
 jobs:
   verify:

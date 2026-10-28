@@ -199,7 +199,7 @@ export function sourceUrl(text, { host } = {}) {
     confirmed = host.toLowerCase();
     if (!DNS_NAME.test(confirmed)) refuse(`--host ${show(host)} is not a plain DNS name`);
   }
-  const line = (text.replace(/^﻿/, '').split(/\r?\n/, 1)[0] ?? '').trim();
+  const line = (text.replace(/^\uFEFF/, '').split(/\r?\n/, 1)[0] ?? '').trim();
   if (!line) refuse('design/SOURCE.md has no URL on its first line');
   /** @type {URL} */
   let url;

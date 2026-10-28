@@ -23,6 +23,8 @@ const CODE_TYPES = new Set(['.js', '.mjs', '.jsx', '.ts', '.tsx', '.css', '.html
  * is 266 bytes.
  */
 const MIN_BYTES = 64;
+/** Raster images, which cannot import or link anything: a `design/bundle` string in their bytes is metadata, not a reference. */
+const RASTER_TYPES = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif']);
 /** Where the site is: what the build reads, and what is served as it is. */
 const SITE = ['src', 'public'];
 
@@ -51,15 +53,16 @@ function copiedFromBundle(base: string): string[] {
     const bundled = code.get(fingerprint(normalised(join(base, path))));
     if (bundled === undefined) return [];
     if (extname(bundled).toLowerCase() === '.svg') {
-      return [`${path} is a copy of ${bundled}. No SVG from the bundle is copied into the site, not even as an image: write the SVG from its shapes, yourself, with drawing elements only (new-site SKILL.md, step 6).`];
+      return [`${path} is a copy of ${bundled}. No SVG from the bundle is copied into the site, not even as an image: write the SVG from its shapes, yourself, with drawing elements only (new-site SKILL.md, step 6). If you did not copy it, the bundle holds a copy of this site's own file: tell the person, who can \`git rm\` it from design/bundle/; never rewrite src/contact/ or src/scripts/contact-form.ts to pass this check.`];
     }
-    return [`${path} is a copy of ${bundled}. No code from the bundle is copied into the site: write the code instead, yourself, from design/INVENTORY.md and the screens (new-site SKILL.md, step 6).`];
+    return [`${path} is a copy of ${bundled}. No code from the bundle is copied into the site: write the code instead, yourself, from design/INVENTORY.md and the screens (new-site SKILL.md, step 6). If you did not copy it, the bundle holds a copy of this site's own file: tell the person, who can \`git rm\` it from design/bundle/; never rewrite src/contact/ or src/scripts/contact-form.ts to pass this check.`];
   });
 }
 
-/** Each file under src/ or public/ whose bytes name design/bundle. */
+/** Each file under src/ or public/, but a raster image, whose bytes name design/bundle. */
 function namingTheBundle(base: string): string[] {
   return SITE.flatMap((dir) => filesUnder(base, dir))
+    .filter((path) => !RASTER_TYPES.has(extname(path).toLowerCase()))
     .filter((path) => readFileSync(join(base, path)).includes('design/bundle'))
     .map((path) => `${path} names design/bundle. The site never imports, links or points at the bundle: write the code yourself, and copy a raster image into src/assets/ (new-site SKILL.md, step 6).`);
 }
@@ -129,6 +132,7 @@ describe('the tripwire, on a fixture site', () => {
   write('src/env.d.ts', 'export {};\n');
 
   const WRITE_IT = 'No code from the bundle is copied into the site: write the code instead, yourself, from design/INVENTORY.md and the screens (new-site SKILL.md, step 6).';
+  const NOT_COPIED = " If you did not copy it, the bundle holds a copy of this site's own file: tell the person, who can `git rm` it from design/bundle/; never rewrite src/contact/ or src/scripts/contact-form.ts to pass this check.";
 
   test('a clean site passes both checks', () => {
     expect(copiedFromBundle(base)).toEqual([]);
@@ -137,13 +141,13 @@ describe('the tripwire, on a fixture site', () => {
 
   test('finds a bundle script copied into src/, whatever its name, line endings or trailing whitespace', () => {
     withFile('src/scripts/carousel.ts', `${carousel.replaceAll('\n', '  \r\n')}\r\n\t\r\n`, () => {
-      expect(copiedFromBundle(base)).toEqual([`src/scripts/carousel.ts is a copy of design/bundle/screens/site.js. ${WRITE_IT}`]);
+      expect(copiedFromBundle(base)).toEqual([`src/scripts/carousel.ts is a copy of design/bundle/screens/site.js. ${WRITE_IT}${NOT_COPIED}`]);
     });
   });
 
   test('finds a bundle stylesheet copied into public/', () => {
     withFile('public/styles/site.css', styles, () => {
-      expect(copiedFromBundle(base)).toEqual([`public/styles/site.css is a copy of design/bundle/styles/cards.css. ${WRITE_IT}`]);
+      expect(copiedFromBundle(base)).toEqual([`public/styles/site.css is a copy of design/bundle/styles/cards.css. ${WRITE_IT}${NOT_COPIED}`]);
     });
   });
 
@@ -152,8 +156,14 @@ describe('the tripwire, on a fixture site', () => {
   test('finds a bundle SVG copied in as an image, and says to write it from its shapes', () => {
     withFile('public/favicon.svg', logo, () => {
       expect(copiedFromBundle(base)).toEqual([
-        'public/favicon.svg is a copy of design/bundle/assets/logo.svg. No SVG from the bundle is copied into the site, not even as an image: write the SVG from its shapes, yourself, with drawing elements only (new-site SKILL.md, step 6).',
+        'public/favicon.svg is a copy of design/bundle/assets/logo.svg. No SVG from the bundle is copied into the site, not even as an image: write the SVG from its shapes, yourself, with drawing elements only (new-site SKILL.md, step 6).' + NOT_COPIED,
       ]);
+    });
+  });
+
+  test('a raster image whose bytes hold design/bundle passes', () => {
+    withFile('src/assets/photo.png', Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.from('tEXt Comment: exported from design/bundle/assets'), Buffer.from(png)]), () => {
+      expect(namingTheBundle(base)).toEqual([]);
     });
   });
 
