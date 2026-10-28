@@ -316,6 +316,21 @@ describe('agent-facing documents', () => {
     test('the README links design/BRIEFING.md', () => expect(read('README.md')).toContain('design/BRIEFING.md'));
   });
 
+  // Ruling 105: an Ubuntu 23.10+ host without the AppArmor profile refuses the design-fence tests, and
+  // so a self-hosted runner's e2e, which deploy needs. The fix is the person's, with sudo; no test changes.
+  eachDoc(
+    "%s says what to do when the design-fence tests refuse for want of Chromium's sandbox",
+    [
+      ['README.md', 'On an Ubuntu 23.10 or later runner, install the AppArmor profile on that machine once (`tools/screenshots/README.md`, "Chromium\'s sandbox"), or its design-fence tests refuse and deploys wait.'],
+      ['.claude/skills/new-site/SKILL.md', 'If the design-fence tests refuse with "Chromium\'s OS sandbox could not start", tell the person: the fix is theirs, with `sudo`', 'Change no test.'],
+      ['AGENTS.md', "If its design-fence tests refuse because Chromium's sandbox cannot start, tell the owner", 'and change no test'],
+    ],
+    (doc: string, ...fragments: string[]) => {
+      const text = prose(read(doc));
+      for (const fragment of fragments) expect(text, `${doc}: ${fragment}`).toContain(fragment);
+    },
+  );
+
   // On a public repository a fork's pull request runs the fork's own workflow file, which can name a
   // self-hosted runner's label directly, so unsetting CI_LINUX_RUNNER protects nothing: the runner's
   // registration has to go before the flip (sweep run 20261027T190359Z, ci-workflow-2).
@@ -600,7 +615,9 @@ describe('agent-facing documents', () => {
   describe.skipIf(!templateSecurity)('template SECURITY.md only', () => {
     test('SECURITY.md puts the design tools in scope', () => {
       const scope = prose(section(read('SECURITY.md'), '## In scope', '## Not in scope'));
-      for (const fragment of ['`tools/design-ingest/ingest.mjs`', '`tools/screenshots/design.mjs`', 'outside its bundle', 'any network']) expect(scope, fragment).toContain(fragment);
+      for (const fragment of ['`tools/design-ingest/ingest.mjs`', '`tools/screenshots/design.mjs`', 'outside its bundle', 'any network', "runs outside Chromium's OS sandbox", 'under a name an agent loads as instructions']) {
+        expect(scope, fragment).toContain(fragment);
+      }
     });
   });
 

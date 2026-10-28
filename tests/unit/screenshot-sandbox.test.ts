@@ -56,7 +56,7 @@ test.each([
     (thrown: unknown) => thrown as Error,
   );
   expect(error?.message).toMatch(/^Chromium's OS sandbox could not start on this machine, so the design screen was not rendered/);
-  for (const part of ['tools/screenshots/playwright-chromium.apparmor', 'tools/screenshots/README.md', "read the screen's source as text instead", 'never without it']) {
+  for (const part of ['tools/screenshots/playwright-chromium.apparmor', 'tools/screenshots/README.md', 'when running as root, run as an ordinary user', "read the screen's source as text instead", 'never without it']) {
     expect(error?.message).toContain(part);
   }
   expect(error?.cause).toBe(failure);

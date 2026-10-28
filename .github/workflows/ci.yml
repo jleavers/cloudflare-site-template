@@ -105,6 +105,11 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # The AppArmor profile below names Playwright's default browser folder under the home
+      # directory, so the browser goes there whatever the image sets (this wins over XDG_CACHE_HOME).
+      - name: Keep Playwright's browsers where the AppArmor profile looks
+        if: runner.environment == 'github-hosted'
+        run: echo "PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright" >> "$GITHUB_ENV"
       - name: Install Chromium with its system libraries
         if: runner.environment == 'github-hosted'
         run: npx playwright install --with-deps chromium

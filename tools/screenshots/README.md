@@ -61,20 +61,23 @@ required. Where the sandbox cannot start, `--only screen` and `--only design` re
 they never render without it.
 
 Windows and macOS need nothing. Ubuntu 23.10 and later restrict unprivileged user namespaces
-(`sysctl kernel.apparmor_restrict_unprivileged_userns` prints `1`), which the sandbox needs, unless
-an AppArmor profile grants them to the browser. `playwright-chromium.apparmor` in this folder is
-that profile, in the shape of Ubuntu's own for Google Chrome. The person installs it, once per
-machine, from the repository root (an agent never runs `sudo`):
+(`sysctl -n kernel.apparmor_restrict_unprivileged_userns` prints `1`), which the sandbox needs,
+unless an AppArmor profile grants them to the browser. `playwright-chromium.apparmor` in this
+folder is that profile, in the shape of Ubuntu's own for Google Chrome. The person installs it,
+once per machine, from the repository root (an agent never runs `sudo`):
 
     sudo install -m 0644 tools/screenshots/playwright-chromium.apparmor /etc/apparmor.d/playwright-chromium
     sudo apparmor_parser -r /etc/apparmor.d/playwright-chromium
 
 It names Playwright's default browser folder, `~/.cache/ms-playwright/`, so it does not cover
-browsers installed elsewhere with `PLAYWRIGHT_BROWSERS_PATH`. The trade-off: it lets any program at
-those paths, which the person's own account can write, create user namespaces, so it gives back
-part of what Ubuntu's restriction takes away for that account. Without it, design screens are read
-as source on that machine. CI's `e2e` job installs the same profile on a GitHub-hosted runner; on
-a self-hosted runner without it, the design-fence tests refuse.
+browsers installed elsewhere, with `PLAYWRIGHT_BROWSERS_PATH` or under an `XDG_CACHE_HOME` of
+their own. The trade-off: it lets any program at those paths, which the person's own account can
+write, create user namespaces, so it gives back part of what Ubuntu's restriction takes away for
+that account. Without it, design screens are read as source on that machine. Chromium also
+refuses its sandbox to root, on any Linux: run as an ordinary user, not as root in a container.
+CI's `e2e` job installs the same profile on a GitHub-hosted runner, and keeps the browsers in the
+folder it names; on a self-hosted runner without it, the design-fence tests refuse, and so deploys
+wait.
 
 ## What is not pinned
 

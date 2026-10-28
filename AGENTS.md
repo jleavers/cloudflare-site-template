@@ -86,7 +86,9 @@ change that needs one of those tests weakened is the wrong change.
 
 Before finishing any change, run `npm run verify` (type check, unit tests, build, dist
 contracts). After touching `ContactForm.astro`, `src/scripts/`, `src/worker.ts`, `src/contact/`
-or `tools/screenshots/`, also run `npm run test:e2e`. After a visual change, run `npm run lighthouse`.
+or `tools/screenshots/`, also run `npm run test:e2e`. If its design-fence tests refuse because
+Chromium's sandbox cannot start, tell the owner, whose fix it is (`tools/screenshots/README.md`),
+and change no test. After a visual change, run `npm run lighthouse`.
 
 ## Stamping out a new site
 

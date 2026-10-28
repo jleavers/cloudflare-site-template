@@ -11,10 +11,13 @@ import { allowedForDesign } from './fence.mjs';
 // Playwright sends loopback through the proxy unless this is set; with it set, a screen's requests
 // to this machine would skip the proxy.
 const LOOPBACK_BYPASS = 'PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK';
-/** What a launch error says when Chromium's sandbox cannot start: Playwright 1.64.0's words, or Chromium's own. */
+/**
+ * What a launch error says when Chromium's sandbox cannot start: Playwright 1.64.0's words, or
+ * Chromium's own. Playwright's words cover a host that refuses Chromium user namespaces, and root.
+ */
 const SANDBOX_FAILED = /Chromium sandboxing failed!|No usable sandbox!/;
 const SANDBOX_REFUSAL =
-  "Chromium's OS sandbox could not start on this machine, so the design screen was not rendered: design.mjs runs a screen's JavaScript only inside that sandbox, and never without it. On Ubuntu 23.10 and later, which restrict unprivileged user namespaces, the person can install the AppArmor profile tools/screenshots/playwright-chromium.apparmor, as tools/screenshots/README.md says (\"Chromium's sandbox\"); until then, read the screen's source as text instead.";
+  "Chromium's OS sandbox could not start on this machine, so the design screen was not rendered: design.mjs runs a screen's JavaScript only inside that sandbox, and never without it. On Ubuntu 23.10 and later, which restrict unprivileged user namespaces, the person can install the AppArmor profile tools/screenshots/playwright-chromium.apparmor, as tools/screenshots/README.md says (\"Chromium's sandbox\"), or, when running as root, run as an ordinary user; until then, read the screen's source as text instead.";
 
 /**
  * Photographs a design screen with its JavaScript on, confined to the files of its own bundle.

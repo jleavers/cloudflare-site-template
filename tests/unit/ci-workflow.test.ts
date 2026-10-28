@@ -615,7 +615,7 @@ test.each([
 // The design renderer refuses without Chromium's sandbox (tools/screenshots/design.mjs). On a
 // GitHub-hosted Ubuntu that restricts user namespaces, e2e installs the AppArmor profile as the
 // README tells a person to, before the browser tests; a self-hosted runner is left as it is.
-test('e2e lets Chromium start its sandbox on a GitHub-hosted runner, as tools/screenshots/README.md says', () => {
+test('e2e lets Chromium start its sandbox on a GitHub-hosted runner, as tools/screenshots/README.md says, with its browsers where the profile looks', () => {
   const all = steps(job('ci.yml:e2e'));
   const runs = (step: string) => scalar(step, 'run', 8) ?? '';
   const at = all.findIndex((step) => runs(step).includes('playwright-chromium.apparmor'));
@@ -628,6 +628,14 @@ test('e2e lets Chromium start its sandbox on a GitHub-hosted runner, as tools/sc
   const readme = read('tools/screenshots/README.md').split('\n').filter((line) => line.startsWith('    sudo ')).map((line) => line.trim());
   expect(readme).toHaveLength(2);
   expect(script).toEqual(['if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then', ...readme.map((line) => `  ${line}`), 'fi']);
+  // The profile names Playwright's default folder, so the browser must land there whatever the
+  // image sets: PLAYWRIGHT_BROWSERS_PATH, set before the install, wins over XDG_CACHE_HOME.
+  const browsers = all.findIndex((step) => runs(step).includes('PLAYWRIGHT_BROWSERS_PATH'));
+  expect(browsers, 'a step that keeps the browsers where the profile looks').toBeGreaterThanOrEqual(0);
+  expect(browsers).toBeLessThan(Math.min(...installed));
+  expect(stepValue(all[browsers]!, 'if')).toBe("runner.environment == 'github-hosted'");
+  expect(runs(all[browsers]!)).toBe('echo "PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright" >> "$GITHUB_ENV"');
+  expect(read('tools/screenshots/playwright-chromium.apparmor')).toContain('profile playwright-chromium @{HOME}/.cache/ms-playwright/');
 });
 
 test.each(['ci.yml:verify', 'ci.yml:preview-build'])("%s hands on its upload's artifact ID as a job output", (name) => {

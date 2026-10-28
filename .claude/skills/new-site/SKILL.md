@@ -228,6 +228,10 @@ Run, and fix until each passes:
 2. `npm run test:e2e`: the form end to end in Chromium, the 404 page, the mobile menu.
 3. `npm run lighthouse`: performance must be 1.
 
+If the design-fence tests refuse with "Chromium's OS sandbox could not start", tell the person:
+the fix is theirs, with `sudo` (`tools/screenshots/README.md`, "Chromium's sandbox"). Change no
+test.
+
 Then compare against the design. The design side of each comparison is the PNG of the matching
 screen from step 2's `--only screen` command: once at its default 1440 pixels wide, and once with
 `--width 390 --height 844`. For the site side, start `npm run preview`; if you have a browser

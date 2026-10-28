@@ -315,7 +315,9 @@ bundle would apply, or `containers`, whose image path could name a file in the d
 the pull request's `dist/`: the preview job refuses both ([why](#cloudflare-api-token)).
 
 **Short of GitHub Actions minutes?** CI's checks can run on a self-hosted runner (set
-`CI_LINUX_RUNNER`, private repositories only). Before the repository goes public, remove the
+`CI_LINUX_RUNNER`, private repositories only). On an Ubuntu 23.10 or later runner, install the
+AppArmor profile on that machine once (`tools/screenshots/README.md`, "Chromium's sandbox"), or its
+design-fence tests refuse and deploys wait. Before the repository goes public, remove the
 runner's registration (Settings → Actions → Runners), not only the variable: on a public
 repository a fork's pull request runs the fork's own workflow file, which can name the runner's
 `self-hosted` label directly. The deploy and preview jobs always run on
