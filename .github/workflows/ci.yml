@@ -12,7 +12,7 @@ on:
       - closed
   workflow_dispatch:
 
-# A newer push to a pull request makes an in-flight run obsolete; nothing else is ever cancelled.
+# Only a pull request's runs cancel one in progress, and only in that pull request's group.
 # The group says who may queue behind whom:
 # - A pull request is grouped by PR number, never by ref: when a PR is merged, its `closed` run
 #   reports github.ref as the base branch (refs/heads/main), so a ref-based group put it beside
@@ -184,8 +184,8 @@ jobs:
   # - deploy only main's current head. The gate below tests run metadata, which a re-run of an
   #   older push run keeps, so the first step asks GitHub what main's head is now, with the job's
   #   own GITHUB_TOKEN, and every later step waits for the answer to be this commit. A read that
-  #   fails fails the job: it never deploys on a check that did not happen. A newer push has its
-  #   own run, which deploys it.
+  #   fails fails the job: it never deploys on a check that did not happen. A newer push is
+  #   deployed by its own run: if that run did not deploy it, re-run that run.
   deploy:
     name: Deploy
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -216,7 +216,7 @@ jobs:
             echo "current=true" >> "$GITHUB_OUTPUT"
           else
             echo "current=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Deploy skipped::main's head is now $head, not $SHA; the run for $head deploys it"
+            echo "::notice title=Deploy skipped::main's head is now $head, not $SHA; deploy it from the run for $head, and re-run that run if it did not deploy"
           fi
       - name: Check out the trusted config
         if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'

@@ -241,7 +241,7 @@ const HEAD_CHECK = [
   '  echo "current=true" >> "$GITHUB_OUTPUT"',
   'else',
   '  echo "current=false" >> "$GITHUB_OUTPUT"',
-  '  echo "::notice title=Deploy skipped::main\'s head is now $head, not $SHA; the run for $head deploys it"',
+  '  echo "::notice title=Deploy skipped::main\'s head is now $head, not $SHA; deploy it from the run for $head, and re-run that run if it did not deploy"',
   'fi',
 ].join('\n');
 const TRUSTED_FILES = ['/.nvmrc', '/package.json', '/scripts/trusted-config.mjs', '/wrangler.jsonc'];
@@ -1247,7 +1247,7 @@ describe("deploy's head check", () => {
     expect(same.log).toBe('["api","repos/example-owner/example-repo/git/ref/heads/main","--jq",".object.sha"] with job-token\n');
     const newer = runHeadCheck(HEAD_CHECK, { head: SHA_B });
     expect(newer).toMatchObject({ status: 0, output: 'current=false\n' });
-    expect(newer.stdout).toBe(`::notice title=Deploy skipped::main's head is now ${SHA_B}, not ${SHA_A}; the run for ${SHA_B} deploys it\n`);
+    expect(newer.stdout).toBe(`::notice title=Deploy skipped::main's head is now ${SHA_B}, not ${SHA_A}; deploy it from the run for ${SHA_B}, and re-run that run if it did not deploy\n`);
     const failed = runHeadCheck(HEAD_CHECK, { fail: true });
     expect(failed.status).toBe(1);
     expect(failed.output).toBe('');
@@ -1256,9 +1256,9 @@ describe("deploy's head check", () => {
 
   test.each([
     ['the check is removed', (text: string) => mutated(text, /      - name: Stop unless this commit is main's head[\s\S]*?(?=      - name: Check out the trusted config)/.exec(text)![0], ''), 'deploy has no step with the id head'],
-    ['a failed read skips instead of failing', (text: string) => mutated(text, '            exit 1\n          fi\n          if [ "$head"', '            echo "current=false" >> "$GITHUB_OUTPUT"\n            exit 0\n          fi\n          if [ "$head"'), 'gh failing does not fail the job'],
+    ['a failed read skips instead of failing', (text: string) => mutated(text, '            exit 1\n          fi\n          if [ "$head"', '            echo "current=false" >> "$GITHUB_OUTPUT"\n            exit 0\n          fi\n          if [ "$head"'), BASH ? 'gh failing does not fail the job' : 'the head check is not the pinned script'],
     ['a failed read has a fallback', (text: string) => mutated(text, '--jq .object.sha)" || [ -z "$head" ]; then', '--jq .object.sha || true)" || [ -z "$head" ]; then'), 'the head check is not the pinned script'],
-    ['a different SHA still goes on', (text: string) => mutated(text, 'if [ "$head" = "$SHA" ]; then', 'if [ -n "$head" ]; then'), 'a different SHA does not skip with the notice'],
+    ['a different SHA still goes on', (text: string) => mutated(text, 'if [ "$head" = "$SHA" ]; then', 'if [ -n "$head" ]; then'), BASH ? 'a different SHA does not skip with the notice' : 'the head check is not the pinned script'],
     ['wrangler runs whatever the check found', (text: string) => mutated(text, `      - if: ${AT_HEAD}\n        uses: cloudflare/wrangler-action@`, `      - if: ${ENABLED}\n        uses: cloudflare/wrangler-action@`), 'does not wait for the head check'],
     ['the checkout comes before the check', reorderedHeadCheck, 'comes before the head check'],
     ['the token is interpolated into the script', (text: string) => mutated(text, 'gh api "repos/$REPO/', 'GH_TOKEN=${{ github.token }} gh api "repos/$REPO/'), 'the head check interpolates an expression into its script'],

@@ -222,13 +222,12 @@ passes `--no-bundle` and `--upload-source-maps=false`, and a preview runs with a
 `scripts/trusted-config.mjs` writes from `main`'s, with bundling, source maps and additional
 modules off. Both jobs also stop if the directory they upload from holds a symlink.
 
-**Anyone who can merge into `main`, or push a workflow change, can read the token**: every push
-to `main` deploys, running that commit's `scripts/trusted-config.mjs` before wrangler. A deploy
-runs only for the commit that is `main`'s head when its job starts: the job asks GitHub, with its
-own `GITHUB_TOKEN`, and skips (or, if it cannot ask, fails) otherwise, so re-running an older push
-run deploys nothing. Only `main`'s own push runs share its concurrency group; a manual run and a
-pull request each get a group of their own. Where you
-store the token decides who else can reach it:
+**Anyone who can merge into `main`, or push a workflow change, can read the token**: every push to
+`main` deploys, running that commit's `scripts/trusted-config.mjs` before wrangler. A deploy runs
+only for the commit that is `main`'s head when its job starts: the job asks GitHub, with its own
+`GITHUB_TOKEN`, and skips (or, if it cannot ask, fails) otherwise, so re-running an older push run
+deploys nothing. Only `main`'s own push runs share its concurrency group; a manual run and a pull
+request each get a group of their own. Where you store the token decides who else can reach it:
 
 - **Public repository (any plan), or private on GitHub Enterprise:** in Settings → Environments,
   open the environment `production` that CI's first run made (with no rules), or create it, and
@@ -238,16 +237,19 @@ store the token decides who else can reach it:
   command fails with a 404 until you create the environment. For previews, put the same two secrets
   in an environment `preview` with required reviewers. Then delete the repository-level copies
   (`gh secret delete CLOUDFLARE_API_TOKEN`, and the same for `CLOUDFLARE_ACCOUNT_ID`).
-- **Every public repository:** set Settings → Actions → General → "Approval for running fork pull request workflows from contributors" to **"Require approval for all external contributors"**, and read any change under `.github/workflows/`
-  in the pull request's diff before approving its run. A fork's pull request runs its own workflow
-  file, which can name the group that main's runs share and cancel a deploy that is waiting in it.
-  The workflow cannot stop that; this setting does.
 - **Private on Pro or Team:** the `production` environment as above. Leave previews off: these
   plans have no required reviewers for a private repository.
 - **Private on Free:** there are no environment secrets, so the token stays a repository secret
   (`gh secret set CLOUDFLARE_API_TOKEN`). The deploy still runs: its job names `production`, and
   the repository secret resolves there (checked on a private repository). There are no rulesets
   either, so any identity with Contents write can push to `main`.
+
+**On every public repository,** set Settings → Actions → General →
+"Approval for running fork pull request workflows from contributors" to
+**"Require approval for all external contributors"**, and read any change under
+`.github/workflows/` in the pull request's diff before approving its run. A fork's pull request
+runs its own workflow file, which can name the group that main's runs share and cancel or displace
+main's run and its deploy. The workflow cannot stop that; this setting does.
 
 The jobs that hold the token, and `verify` on each push to `main`, need GitHub-hosted minutes, so
 each push to `main` spends them twice. A private repository that has used up its minutes can't
@@ -262,15 +264,16 @@ its pull request closes. Previews don't inherit production secrets; don't add an
 Previews base config. A private site previews locally with `npm run preview` (`log` delivery,
 test keys).
 
-**Coding agents:** if an agent can push branches to the repository ([AGENTS.md](AGENTS.md#git-workflow)
-lets it), give it a **separate GitHub identity**, a machine user or a GitHub App installation,
-and **never your own credential**: with yours, an agent can approve nothing, but can merge
-whatever you could. Give that identity write access through an **HTTPS token without workflow
-permission**: fine-grained with Contents and Pull requests read and write, no Workflows and no Actions
-write (or a GitHub App with the same). Not a classic token: with repository access it can re-run
-workflows, and GitHub refuses a workflow change only from a token that lacks that permission.
-Don't give it an SSH key either: an SSH key, yours or a deploy key, can push anything. Then, where the plan has rulesets (a public repository, or a private one on a paid
-plan), require one approval on `main` in a ruleset (Settings → Rules → Rulesets), dismissing
+**Coding agents:** if an agent can push branches to the repository
+([AGENTS.md](AGENTS.md#git-workflow) lets it), give it a **separate GitHub identity**, a machine
+user or a GitHub App installation, and **never your own credential**: with yours, an agent can
+approve nothing, but can merge whatever you could. Give that identity write access through an
+**HTTPS token without workflow permission**: fine-grained with Contents and Pull requests read and
+write, no Workflows and no Actions write (or a GitHub App with the same). Not a classic token: with
+repository access it can re-run workflows. Don't give it an SSH key either: GitHub refuses a
+workflow change only from a token that lacks that permission, and an SSH key, yours or a deploy key,
+can push anything. Then, where the plan has rulesets (a public repository, or a private one on a
+paid plan), require one approval on `main` in a ruleset (Settings → Rules → Rulesets), dismissing
 approvals when new commits are pushed, and keep the agent's identity off its bypass list. On a
 private Free repository there are no rulesets, so the agent's Contents write can push to `main`.
 
