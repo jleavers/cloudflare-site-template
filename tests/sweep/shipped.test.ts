@@ -38,6 +38,7 @@ const AUDIT_PATTERNS = [
   'gh [a-z]+ (create|edit|close|comment|merge|delete)',
   '(-X|--method) (POST|PATCH|PUT|DELETE)',
   'git push',
+  'git (clone|fetch|pull|ls-remote)',
   '\\.dev\\.vars',
   '\\.wrangler',
   '\\.npmrc',
@@ -99,6 +100,32 @@ test('the shared lane rules, inside HANDS_OFF, keep a lane to a free port, an em
   for (const word of ['--userconfig', 'listen(0,', 'node_modules/.bin', '<title>', 'npx --userconfig']) {
     expect(handsOff, word).toContain(word);
   }
+});
+
+// Sweep run 20261028T185449Z: a lane ran `git ls-remote` and `git clone --mirror` over SSH, which
+// opens ~/.ssh by default, and two lanes read variable values and webhook URLs with a bare `gh api`.
+test('the shared lane rules, inside HANDS_OFF, keep a lane off git network commands and SSH, and on names for value-bearing settings', () => {
+  const source = readFileSync('.claude/workflows/security-sweep.js', 'utf8');
+  const start = source.indexOf('const HANDS_OFF = `');
+  const handsOff = source.slice(start).split(/[^\\]`\n/)[0].replace(/\s+/g, ' ');
+  for (const word of [
+    '**No git network commands, and no SSH.**',
+    '\\`git fetch\\`, \\`pull\\`, \\`push\\`, \\`clone\\` or \\`ls-remote\\`, and never \\`ssh\\`',
+    'an SSH client opens \\`~/.ssh\\` by default',
+    'Read anything else on GitHub through the GitHub CLI, which holds a read-only token',
+    '**Names only for settings that can hold a value.**',
+    'Repository, environment and organisation variables, webhooks and deploy keys are read by name and metadata only',
+    'with \\`--jq\\`',
+    'never by value and never \\`config\\`',
+  ]) {
+    expect(handsOff, word).toContain(word);
+  }
+});
+
+test('no public lane brief or read list tells a lane to clone, mirror, fetch or list remote refs with git', () => {
+  const source = readFileSync('.claude/workflows/security-sweep.js', 'utf8');
+  const lanes = source.slice(source.indexOf('const DISCLOSURE_READ_CALLS'));
+  expect(lanes).not.toMatch(/git ls-remote origin|git clone --mirror|mirror-clone/);
 });
 
 // The owner may review the run in another session, which starts from the run directory's path.

@@ -54,7 +54,9 @@ itself in its brief through a named read-only call list of its own (`DISCLOSURE_
 prefix; its `gh variable list --json name` is a projection that cannot return a variable's value,
 which GitHub serves to anyone with collaborator access. A webhook's URL can carry a credential,
 so that lane records the host and events, never the rest. `npm-supply-chain` has no
-`git clone --mirror`: a mirror fetches what a ref names, and it is after what none does.
+clone or mirror: a mirror fetches what a ref names, and it is after what none does. No lane runs a
+`git` network command or `ssh`, and none reads a variable's value or a webhook's URL: the shared
+rules (`HANDS_OFF`) say so, and the audit patterns below catch it.
 
 `gh api` must say `-X GET` every time, because its default method is not fixed: `gh api <path>
 -f body=...` is a `POST` that names no method at all. **The check that pins these lists reads
@@ -112,6 +114,7 @@ npm publish
 gh [a-z]+ (create|edit|close|comment|merge|delete)
 (-X|--method) (POST|PATCH|PUT|DELETE)
 git push
+git (clone|fetch|pull|ls-remote)
 \.dev\.vars
 \.wrangler
 \.npmrc
@@ -141,6 +144,10 @@ comes first: the list stops at 80 lines, so a count above 80 means it was cut, a
 grep -cEf "$RD/audit-patterns.txt" "$RD/audit-text.txt"
 grep -nEf "$RD/audit-patterns.txt" "$RD/audit-text.txt" | head -80
 ```
+
+The audit reads the lanes' tool calls only, never your own session's, so your phase 0 `git fetch
+origin` is not in it; a `git (clone|fetch|pull|ls-remote)` hit is a lane's, and a lane has no
+brief that explains one.
 
 Every hit must be explained by a lane's brief. A web lane's `WebFetch` of a documentation page is
 expected; anything else is a finding about the sweep.

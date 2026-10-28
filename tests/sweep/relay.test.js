@@ -471,8 +471,6 @@ const DISCLOSURE_READ_CALLS = [
   "gh run list",
   "gh run view --log",
   "gh api -X GET",
-  "git ls-remote origin",
-  "git clone --mirror",
 ];
 
 const OUTSIDERS_READ_CALLS = [
@@ -494,13 +492,13 @@ const OUTSIDERS_READ_CALLS = [
   "gh api -X GET repos/{owner}/{repo}/private-vulnerability-reporting",
 ];
 
-// No `git clone --mirror`: a mirror clone fetches what a ref names, and this lane is after what
-// none does.
+// No clone or mirror: a mirror clone fetches what a ref names, and this lane is after what none
+// does. No `git` network command in any list: the refs are `git/matching-refs` through `gh api`.
 const SUPPLY_CHAIN_READ_CALLS = [
   "gh api -X GET repos/{owner}/{repo}/activity",
   "gh api -X GET repos/{owner}/{repo}/events",
   "gh api -X GET repos/{owner}/{repo}/commits/{sha}",
-  "git ls-remote origin",
+  "gh api -X GET repos/{owner}/{repo}/git/matching-refs/{prefix}",
 ];
 
 // Every prompt that is handed a named list of GitHub-side reads, and which list. The keys are
