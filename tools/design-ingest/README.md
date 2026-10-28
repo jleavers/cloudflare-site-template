@@ -6,9 +6,21 @@
     node tools/design-ingest/ingest.mjs --source                  # the URL on design/SOURCE.md's first line
     node tools/design-ingest/ingest.mjs --source --host <name>    # another host, once the person confirms it
     node tools/design-ingest/ingest.mjs --archive design/<file>   # a .zip or .tar.gz
-    node tools/design-ingest/ingest.mjs --dir design/incoming     # a folder (gitignored staging)
+    node tools/design-ingest/ingest.mjs --dir "<a folder outside the repository>"   # a folder, or saved artifact files
 
 It is plain Node with no dependencies, so it runs the same from PowerShell or a POSIX shell.
+
+**A folder stays outside the repository.** The tool refuses a `--dir` folder inside the
+repository, before it reads anything in it: the folder's path, as given or through `realpath`,
+may not be at or below the repository's (the folder holding `tools/design-ingest/`, and the
+folder it writes `design/bundle/` under), compared without case. Editor extensions that scan the
+workspace (Tailwind CSS IntelliSense imports the `tailwindcss` nearest each stylesheet when it
+starts) can run code from raw design files there, and the tool checks only what it writes. So the
+person extracts or assembles a folder outside the repository, in their Downloads folder for
+example; the agent saves an artifact's files into a new folder in its session scratch directory
+or under the OS temp directory; and the person deletes the folder after ingest. An archive is one
+file, which no extension looks inside, so `--archive` takes one in `design/`. `.gitignore` keeps
+its `design/incoming/` line only so that a stray copy is never committed.
 
 **The URL never reaches a shell.** The tool reads it from `design/SOURCE.md` and parses it. It
 accepts only `https:` with no credentials and no port but 443, on `api.anthropic.com` or the
@@ -20,7 +32,8 @@ leading `./` on an entry's name is stripped first, and a `./` root folder is ski
 counts toward the cap), so `tar -C dir -czf x.tar.gz .` output is admitted. The whole bundle is
 refused, with a reason naming the entry, for:
 
-- a link or special file of any kind (in a `--dir` folder, a hard link too);
+- a link or special file of any kind (in a `--dir` folder, a hard link too), and a `--dir` folder
+  inside the repository (above);
 - an absolute path, a drive letter, a backslash, a `.`, `..` or empty segment, a control
   character, a format or line-separator character (a bidi override, a zero-width or tag
   character), invalid UTF-8, or a name Windows reserves or cannot hold;

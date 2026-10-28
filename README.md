@@ -101,7 +101,8 @@ You need: a Claude Design handoff (or an archive or artifact link), the facts in
    (see [Short of GitHub Actions minutes?](#development)), but every push to `main` builds and
    deploys on GitHub-hosted minutes, so until they return, deploys wait.
 2. Brief Claude Design with [`design/BRIEFING.md`](design/BRIEFING.md), put its design in
-   `design/` ([how](design/README.md)) and fill in `SITE_BRIEF.md`.
+   `design/`, or an extracted folder of it outside the repository ([how](design/README.md)), and
+   fill in `SITE_BRIEF.md`.
 3. In Claude Code, run `/new-site`. It rebuilds the pages to match the design, then runs every
    check. Review it with `npm run preview`.
 4. [One-off setup](#one-off-setup) for the account and domain, if you haven't done it before.

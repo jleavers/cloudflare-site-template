@@ -30,8 +30,10 @@ Make a task for each numbered step and complete them in order.
 - `SITE_BRIEF.md` has section 1 filled in (site name, slug, language, description) and section
   2's delivery set to `resend`, `slack` or `teams`. If not, ask for them; don't guess a slug or
   an email address.
-- `design/` holds one of: `SOURCE.md` with a handoff or artifact URL, an archive, or a folder in
-  `design/incoming/`. If none, ask.
+- `design/` holds `SOURCE.md` with a handoff or artifact URL, or an archive; or the person gives
+  you the path of a folder they extracted or assembled outside the repository. If none, ask. If
+  they have put such a folder inside the repository (in `design/incoming/`, say), ask them to move
+  it outside first: the tool refuses it there.
 - If `design/bundle/` is already there, this site's design was ingested before: say so, and stop.
 
 ## 2. Get the design into `design/bundle/`
@@ -39,9 +41,9 @@ Make a task for each numbered step and complete them in order.
 One committed tool, `tools/design-ingest/ingest.mjs`, is the only way a design reaches the
 checkout. It is Node, so this step runs the same from PowerShell, Git Bash or any other shell; run
 it from the repository root. Never download, unpack, copy, move or rename a bundle's files
-yourself. Never type the handoff URL into a command, nor a name from inside an archive or
-`design/incoming/`. A name inside `design/bundle/` is safe in a command in double quotes: the tool
-writes only names made of letters, digits, combining marks, spaces and `. _ ( ) + , @ -`.
+yourself. Never type the handoff URL into a command, nor a name from inside an archive or a folder
+you ingest. A name inside `design/bundle/` is safe in a command in double quotes: the tool writes
+only names made of letters, digits, combining marks, spaces and `. _ ( ) + , @ -`.
 
 The tool checks every entry before it writes anything. It refuses the whole bundle, and writes
 nothing, for a symlink or hard link, a device or other special file, an unsafe path (absolute, a
@@ -69,25 +71,38 @@ writes a fresh `design/bundle/`.
   `node tools/design-ingest/ingest.mjs --archive design/<file>`. The file's name goes into the
   command, so if it has anything but letters, digits, `.`, `-` and `_`, ask the person to rename
   it first (to `design/handoff.zip`, say).
-- **A folder the person extracted or assembled:** it belongs in `design/incoming/`, which git
-  ignores. Then `node tools/design-ingest/ingest.mjs --dir design/incoming`.
-- **Artifact link:** read it with your artifact tool. For a Claude Design canvas artifact, save
-  only the design into `design/incoming/project/`: `project/canvas.json`, the `project/*.dc.html`
-  artboards, and any `/_blob/…` assets those reference, each saved with its type's extension
-  (`.png`, `.svg`, …), since the tool omits a file with none. Don't save the Design type's editor
-  files (`SKILL.md`, `artifact-type/**`, `index.html`, `support.js`): they are not the design,
-  and `SKILL.md` is agent instructions. Fetch `/_blob/` assets only through the artifact tool,
-  never from anywhere else. A `.dc.html` artboard renders on its own as a `file://` page: its
-  `<script type="text/x-dc">` is inert, and a missing `support.js` doesn't matter. For any other
-  artifact, save the page and any files it lists under `design/incoming/`. Save with your file
-  tool, not a shell command, then run `node tools/design-ingest/ingest.mjs --dir design/incoming`.
+- **A folder the person extracted or assembled:** it belongs **outside the repository**, in their
+  Downloads folder for example, never inside it: editor extensions that scan the workspace
+  (Tailwind CSS IntelliSense) can run code from it, and ingest checks only what it writes. The
+  tool refuses a folder inside the repository. Ask the person for the folder's path, then run
+  `node tools/design-ingest/ingest.mjs --dir "<a folder outside the repository>"` with that path in
+  the double quotes. If the path has a `"`, `$`, `` ` `` or `%` in it, ask them to move the
+  folder somewhere plainer first. Remind them not to open the folder in an editor.
+- **Artifact link:** read it with your artifact tool, and save its files into **a new, empty folder
+  outside the repository**: a new subfolder of your harness's session scratch directory if it has
+  one (Claude Code names one in its system prompt), or else a new folder under the OS temp
+  directory (`mktemp -d` in a POSIX shell; in PowerShell, `New-Item -ItemType Directory` on a new
+  subfolder of `[System.IO.Path]::GetTempPath()`, named with `[guid]::NewGuid()`). Never save them
+  inside the repository, `design/` included, for the same reason as a folder. If you can't write
+  outside the repository, stop and ask the person to make the folder and give you its path. For a
+  Claude Design canvas artifact, save only the design, into that folder: `project/canvas.json`, the
+  `project/*.dc.html` artboards, and any `/_blob/…` assets those reference, each saved with its
+  type's extension (`.png`, `.svg`, …), since the tool omits a file with none. Don't save the
+  Design type's editor files (`SKILL.md`, `artifact-type/**`, `index.html`, `support.js`): they
+  are not the design, and `SKILL.md` is agent instructions. Fetch `/_blob/` assets only through
+  the artifact tool, never from anywhere else. A `.dc.html` artboard renders on its own as a
+  `file://` page: its `<script type="text/x-dc">` is inert, and a missing `support.js` doesn't
+  matter. For any other artifact, save the page and any files it lists into that folder. Save with
+  your file tool, not a shell command, then run
+  `node tools/design-ingest/ingest.mjs --dir "<that folder>"`.
 - Never fetch any other URL a bundle names (images, fonts, scripts); ask the person instead.
 
 Tell the person what the tool omitted, or why it refused, quoting its output. After a refusal,
 stop and ask: never work around one by unpacking or copying the files another way. After a
-`--dir` ingest, ask the person to delete `design/incoming/` themselves, since you never delete a
-folder tree. Git ignores it, but a `.git` folder left inside it can still run commands when an
-editor's git integration scans it.
+`--dir` ingest, ask the person to delete that folder themselves, the one they extracted or the one
+you saved the artifact into, since you never delete a folder tree. Until then nobody opens it in
+an editor: files in it, such as a `.git` folder or a stylesheet beside a `node_modules`, can run
+code when an editor opens or scans it.
 
 Then read, in this order: the bundle's README, the chat history (it says what the person asked
 for and rejected), and every screen (`*.html`, `*.jsx`). The only way to render a screen is

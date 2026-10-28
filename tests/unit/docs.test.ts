@@ -1,6 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
+// The brief test below runs ingest's own matcher over design/BRIEFING.md. A site that deletes
+// tools/design-ingest/ must keep ingest.mjs, or drop that one assertion with it.
+import { codeLoadingDirective } from '../../tools/design-ingest/ingest.mjs';
 
 // Some documents are the template's own until /new-site (SKILL.md §9a) replaces them: README.md and
 // SECURITY.md are rewritten for the site (SECURITY.md may be removed), SITE_BRIEF.md is filled in, and
@@ -97,7 +100,7 @@ describe('agent-facing documents', () => {
   // against hostile archives. This moves a safeguard into tested code; it does not weaken one.
   test('the new-site skill gets the design only through the committed ingest tool', () => {
     const skill = read('.claude/skills/new-site/SKILL.md');
-    for (const call of ['--source', '--archive design/', '--dir design/incoming']) expect(skill).toContain(`node tools/design-ingest/ingest.mjs ${call}`);
+    for (const call of ['--source', '--archive design/', '--dir "<a folder outside the repository>"']) expect(skill).toContain(`node tools/design-ingest/ingest.mjs ${call}`);
     const step2 = section(skill, '## 2.', '## 3.');
     expect(step2).toContain('tools/design-ingest/ingest.mjs');
     for (const command of ['curl ', 'wget ', 'Invoke-WebRequest', 'tar -', 'unzip ', 'Expand-Archive', '7z ', 'find design', 'mv ', 'cp -']) {
@@ -117,6 +120,30 @@ describe('agent-facing documents', () => {
     expect(prose(section(skill, '## 6.', '## 7.'))).toContain('in double quotes');
     expect(read('design/README.md')).toMatch(/50 MB/);
     expect(read('.gitignore').split(/\r?\n/)).toContain('design/incoming/');
+  });
+
+  // Ruling 99: raw design files never sit inside the repository, where editor extensions that scan
+  // the workspace can run code from them; the ingest tool refuses a --dir there
+  // (tests/unit/design-ingest.test.ts), and .gitignore's design/incoming/ line is only a safety net.
+  test('the skill, design/README.md and the ingest README keep a design folder outside the repository', () => {
+    const skill = read('.claude/skills/new-site/SKILL.md');
+    const readme = prose(read('design/README.md'));
+    for (const [doc, text] of [['SKILL.md', prose(skill)], ['design/README.md', readme]]) {
+      expect(text, doc).toContain('outside the repository');
+      expect(text, doc).toContain('editor extensions that scan the workspace (Tailwind CSS IntelliSense) can run code from it, and ingest checks only what it writes');
+      // The old staging instructions are gone; SKILL.md step 1 still names design/incoming/ as where not to put it.
+      expect(text, doc).not.toContain('--dir design/incoming');
+      expect(text, doc).not.toMatch(/(?:belongs in|into|under) `design\/incoming\//);
+    }
+    expect(readme).not.toContain('design/incoming/');
+    expect(readme).toContain('in your Downloads folder');
+    expect(prose(section(skill, '## 1.', '## 2.'))).toContain('outside the repository');
+    expect(read('tools/design-ingest/README.md')).toContain('node tools/design-ingest/ingest.mjs --dir "<a folder outside the repository>"');
+    expect(prose(read('tools/design-ingest/README.md'))).toContain('refuses a `--dir` folder inside the repository');
+    expect(prose(section(read(SPEC), '### 6.3', '### 6.4'))).toContain('outside the repository');
+    expect(prose(section(read(SPEC), '## 12.', '## 13.'))).not.toContain('design/incoming/');
+    const gitignore = read('.gitignore');
+    expect(prose(gitignore.slice(0, gitignore.indexOf('\ndesign/incoming/')))).toMatch(/ingest refuses[^.]*--dir[^.]*inside the repository/);
   });
 
   test('the new-site skill has frontmatter naming it', () => {
@@ -200,9 +227,24 @@ describe('agent-facing documents', () => {
   });
 
   // The ingest tool omits a SKILL.md that arrives anyway (tests/unit/design-ingest.test.ts).
-  test('the skill saves only a canvas design, into design/incoming/', () => {
+  test('the skill saves only a canvas design, into a new folder outside the repository', () => {
     const skill = read('.claude/skills/new-site/SKILL.md');
-    for (const fragment of ['canvas.json', '.dc.html', 'SKILL.md', 'design/incoming/project/', '/_blob/']) expect(skill).toContain(fragment);
+    for (const fragment of ['canvas.json', '.dc.html', 'SKILL.md', '/_blob/']) expect(skill).toContain(fragment);
+    const artifact = prose(skill.slice(skill.indexOf('- **Artifact link:**'), skill.indexOf('- Never fetch any other URL')));
+    for (const fragment of [
+      'a new, empty folder outside the repository',
+      'session scratch directory',
+      '`mktemp -d`',
+      '[System.IO.Path]::GetTempPath()',
+      'stop and ask the person to make the folder',
+      '`project/canvas.json`',
+      'node tools/design-ingest/ingest.mjs --dir "<that folder>"',
+    ]) {
+      expect(artifact, fragment).toContain(fragment);
+    }
+    expect(artifact).not.toContain('design/incoming');
+    // The agent never deletes a folder tree, so the person deletes the one it saved into.
+    expect(prose(section(skill, '## 2.', '## 3.'))).toMatch(/ask the person to delete that folder themselves[^.]*since you never delete a folder tree/);
   });
 
   test('design/README.md says Claude artifacts have no handoff option', () => {
@@ -216,7 +258,17 @@ describe('agent-facing documents', () => {
     expect(briefing).toContain('[Bracketed');
     expect(briefing).toContain('design/SOURCE.md');
     // Task 20l: the brief asks for plain CSS tokens, not a stylesheet that makes Tailwind run code.
-    expect(prose(section(briefing, '```markdown', '**Handoff:**'))).toContain('plain CSS, with design tokens as `@theme` variables; no `@plugin` or `@config`');
+    expect(prose(section(briefing, '```markdown', '**Handoff:**'))).toContain('plain CSS, with design tokens as `@theme` variables, and no Tailwind plugins or JavaScript config files');
+  });
+
+  // Ruling 100: the person pastes the brief into Claude Design, so a bundle's chat history records
+  // it, and its README or a stylesheet comment may echo it. Ingest omits any file whose bytes name a
+  // code-loading directive, so the brief must name none, read as a stylesheet too (the escape rule).
+  // BRIEFING.md is the template's only text meant to be pasted into Claude Design.
+  test('design/BRIEFING.md trips none of ingest\'s content rules, so a bundle that echoes it keeps its chat history', () => {
+    const bytes = new Uint8Array(readFileSync(fileURLToPath(new URL('../../design/BRIEFING.md', import.meta.url))));
+    expect(codeLoadingDirective(bytes)).toBeNull();
+    expect(codeLoadingDirective(bytes, { stylesheet: true })).toBeNull();
   });
 
   // Task 20l: Tailwind 4's @plugin and @config run a module in every build, so a design never adds
@@ -509,10 +561,10 @@ describe('agent-facing documents', () => {
     });
   });
 
-  // The person, not the agent, puts a folder in design/incoming/, so design/README.md tells them what SKILL.md tells the agent.
-  test('design/README.md says what may go in design/incoming/, and what to do with it', () => {
+  // The person, not the agent, extracts a folder, so design/README.md tells them what SKILL.md tells the agent.
+  test('design/README.md says where an extracted folder goes, and what to do with it', () => {
     const readme = prose(read('design/README.md'));
-    for (const fragment of ['not a git clone', "don't open its files in your editor", 'delete it afterwards']) expect(readme, fragment).toContain(fragment);
+    for (const fragment of ['outside the repository', 'not a git clone', "don't open it or its files in your editor", 'delete it after ingest']) expect(readme, fragment).toContain(fragment);
   });
 
   // gh secret set --env production fails with a 404 until the environment exists.

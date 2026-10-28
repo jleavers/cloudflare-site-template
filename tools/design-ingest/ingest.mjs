@@ -1,21 +1,23 @@
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { crc32, gunzipSync, inflateRawSync } from 'node:zlib';
 
 // The only way a Claude Design bundle reaches the checkout (the new-site skill, step 2). It reads
-// the handoff URL from design/SOURCE.md itself, or a local .zip or .tar.gz, or a staging folder,
-// checks every entry against one allow-list, and only then writes a fresh design/bundle/. The
-// allow-list judges an entry by its path and type, and a file also by its bytes, since a design
-// file type can still be code to a tool: a stylesheet's @plugin makes Tailwind run a module. Nothing
-// it reads is ever put into a command line, and nothing is renamed in place: an entry outside the
-// allow-list is refused (the whole bundle) or omitted (that entry), never moved aside. It imports
-// only node: modules, so it needs no install, and it runs the same on Windows and Linux.
+// the handoff URL from design/SOURCE.md itself, or a local .zip or .tar.gz, or a folder outside the
+// repository, checks every entry against one allow-list, and only then writes a fresh
+// design/bundle/. The allow-list judges an entry by its path and type, and a file also by its bytes,
+// since a design file type can still be code to a tool: a stylesheet's @plugin makes Tailwind run a
+// module. Nothing it reads is ever put into a command line, and nothing is renamed in place: an
+// entry outside the allow-list is refused (the whole bundle) or omitted (that entry), never moved
+// aside. It imports only node: modules, so it needs no install, and it runs the same on Windows and
+// Linux.
 //
 //   node tools/design-ingest/ingest.mjs --source [--host <name>]   the URL in design/SOURCE.md
 //   node tools/design-ingest/ingest.mjs --archive design/<file>     a .zip or .tar.gz
-//   node tools/design-ingest/ingest.mjs --dir design/incoming       a folder (or saved artifact files)
+//   node tools/design-ingest/ingest.mjs --dir "<a folder outside the repository>"
+//                                                 a folder, or saved artifact files; never inside it
 //
 // tests/unit/design-ingest.test.ts holds the hostile shapes it refuses.
 
@@ -1001,7 +1003,46 @@ export function plan(entries, limits) {
 // Writing
 
 const BUNDLE_EXISTS =
-  "design/bundle already exists, so this site's design was ingested before, and the tool writes only a fresh one. A folder you supplied yourself belongs in design/incoming/, for --dir design/incoming";
+  "design/bundle already exists, so this site's design was ingested before, and the tool writes only a fresh one. A folder you extracted yourself belongs outside the repository, in your Downloads folder for example, and its path goes to --dir";
+
+/** The repository this tool belongs to: the folder that holds tools/design-ingest/. */
+const TOOL_REPOSITORY = fileURLToPath(new URL('../../', import.meta.url));
+
+/**
+ * Refuses a --dir folder inside the repository, before anything in it is read (Ruling 99). Raw
+ * design files never sit in the repository: editor extensions that scan the workspace can run code
+ * from them (Tailwind CSS IntelliSense imports the `tailwindcss` nearest each stylesheet when it
+ * starts), and this tool checks only what it writes. The repository is the folder holding
+ * tools/design-ingest/ and the folder design/bundle/ is written under (`cwd`), one folder in a
+ * site. The folder is inside if its path, as typed or as realpath gives it, is at or below either of
+ * theirs, as typed or real. Paths are compared folded, since Windows, macOS and WSL's Windows drives
+ * ignore case. A folder that does not exist is left to readDir to refuse.
+ *
+ * @param {string} given the --dir argument, as typed
+ * @param {string} dir that argument resolved against `cwd`
+ * @param {string} cwd
+ */
+function refuseInsideRepository(given, dir, cwd) {
+  /** @param {string} path @returns {string[]} */
+  const both = (path) => {
+    try {
+      return [resolve(path), realpathSync.native(path)];
+    } catch {
+      return [resolve(path)];
+    }
+  };
+  const roots = [...both(TOOL_REPOSITORY), ...both(cwd)];
+  for (const path of both(dir)) {
+    for (const root of roots) {
+      const rest = relative(fold(root), fold(path));
+      if (rest === '' || !(rest === '..' || rest.startsWith(`..${sep}`) || isAbsolute(rest))) {
+        refuse(
+          `${show(given)} is inside the repository (${show(root)}), and the tool reads a folder only from outside it: editor extensions that scan the workspace (Tailwind CSS IntelliSense) can run code from raw design files there, and the tool checks only what it writes. Extract or save the folder outside the repository instead, in your Downloads folder or a new temporary folder for example, run again with --dir and that folder's path, and delete the folder after ingest`,
+        );
+      }
+    }
+  }
+}
 
 /** @param {string} path */
 function present(path) {
@@ -1091,6 +1132,7 @@ export async function ingest(input, deps = {}) {
     from = show(input.archive);
   } else {
     const dir = /** @type {string} */ (input.dir);
+    refuseInsideRepository(dir, resolve(cwd, dir), cwd);
     entries = readDir(resolve(cwd, dir), caps);
     from = show(dir);
   }

@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
@@ -31,6 +31,8 @@ import { longName, pax, tar, tgz, zip, type TarEntry, type ZipEntry } from './de
 // take the shapes of the security sweep's probes (design-ingest-1, -2, -4 and -6).
 
 const TOOL = fileURLToPath(new URL('../../tools/design-ingest/ingest.mjs', import.meta.url));
+/** The repository this test runs in: the one holding tools/design-ingest/. */
+const REPOSITORY = fileURLToPath(new URL('../../', import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), 'design-ingest-'));
 let workspaces = 0;
 
@@ -1036,7 +1038,7 @@ describe('writing design/bundle/', () => {
       throw error;
     }
     const before = tree(cwd);
-    await refusesAsync(() => ingest({ archive: 'design/h.zip' }, { cwd }), /design\/bundle already exists.*design\/incoming\//s);
+    await refusesAsync(() => ingest({ archive: 'design/h.zip' }, { cwd }), /design\/bundle already exists.*outside the repository.*--dir/s);
     expect(tree(cwd)).toEqual(before);
   });
 
@@ -1189,9 +1191,10 @@ describe('the sweep’s probes', () => {
 });
 
 describe('--dir, a folder the person supplies', () => {
+  /** A folder the person extracted, outside the test's fake repository (Ruling 99), holding a home page and a screen. */
   function incoming() {
     const space = workspace();
-    const root = join(space.design, 'incoming');
+    const root = join(scratch, `incoming-${workspaces}`);
     mkdirSync(join(root, 'screens'), { recursive: true });
     writeFileSync(join(root, 'index.html'), html('Home'));
     writeFileSync(join(root, 'screens', 'home.html'), html('Screen'));
@@ -1206,7 +1209,7 @@ describe('--dir, a folder the person supplies', () => {
     writeFileSync(join(root, 'CLAUDE.md'), 'x');
     writeFileSync(join(root, 'run.sh'), 'x');
     const before = tree(root);
-    const summary = await ingest({ dir: 'design/incoming' }, { cwd });
+    const summary = await ingest({ dir: root }, { cwd });
     expect(tree(bundle)).toEqual(['index.html', 'screens/', 'screens/home.html']);
     expect(readFileSync(join(bundle, 'screens', 'home.html'), 'utf8')).toBe(html('Screen'));
     expect(summary.omitted.map((entry) => entry.name).sort()).toEqual(['.DS_Store', '.git', '.git/config', 'CLAUDE.md', 'run.sh']);
@@ -1225,19 +1228,20 @@ describe('--dir, a folder the person supplies', () => {
       if ((error as NodeJS.ErrnoException).code === 'EPERM') return context.skip();
       throw error;
     }
-    await refusesAsync(() => ingest({ dir: 'design/incoming' }, { cwd }), /symbolic link/);
+    await refusesAsync(() => ingest({ dir: root }, { cwd }), /symbolic link/);
     expect(exists(bundle)).toBe(false);
   });
 
   test('refuses a folder that is itself a symlink', async (context) => {
-    const { cwd, root, design, bundle } = incoming();
+    const { cwd, root, bundle } = incoming();
+    const linked = `${root}-linked`;
     try {
-      symlinkSync(root, join(design, 'linked'), 'dir');
+      symlinkSync(root, linked, 'dir');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'EPERM') return context.skip();
       throw error;
     }
-    await refusesAsync(() => ingest({ dir: 'design/linked' }, { cwd }), /not a real folder/);
+    await refusesAsync(() => ingest({ dir: linked }, { cwd }), /not a real folder/);
     expect(exists(bundle)).toBe(false);
   });
 
@@ -1249,28 +1253,28 @@ describe('--dir, a folder the person supplies', () => {
       if (['EPERM', 'ENOTSUP', 'EXDEV'].includes((error as NodeJS.ErrnoException).code ?? '')) return context.skip();
       throw error;
     }
-    await refusesAsync(() => ingest({ dir: 'design/incoming' }, { cwd }), /"screens\/copy\.html" is a hard link \(it has 2 names\)/);
+    await refusesAsync(() => ingest({ dir: root }, { cwd }), /"screens\/copy\.html" is a hard link \(it has 2 names\)/);
     expect(exists(bundle)).toBe(false);
   });
 
   test.skipIf(process.platform === 'win32')('refuses a FIFO inside the folder', async (context) => {
     const { cwd, root, bundle } = incoming();
     if (spawnSync('mkfifo', [join(root, 'pipe.html')]).status !== 0) return context.skip();
-    await refusesAsync(() => ingest({ dir: 'design/incoming' }, { cwd }), /FIFO/);
+    await refusesAsync(() => ingest({ dir: root }, { cwd }), /FIFO/);
     expect(exists(bundle)).toBe(false);
   });
 
   test.skipIf(process.platform !== 'linux')('refuses a name that is not valid UTF-8', async () => {
     const { cwd, root, bundle } = incoming();
     writeFileSync(Buffer.concat([Buffer.from(`${root}${sep}a`), Buffer.from([0xff]), Buffer.from('.html')]), 'x');
-    await refusesAsync(() => ingest({ dir: 'design/incoming' }, { cwd }), /not valid UTF-8/);
+    await refusesAsync(() => ingest({ dir: root }, { cwd }), /not valid UTF-8/);
     expect(exists(bundle)).toBe(false);
   });
 
   test.skipIf(process.platform === 'win32')('applies the path checks: a Windows device name refuses', async () => {
     const { cwd, root, bundle } = incoming();
     writeFileSync(join(root, 'screens', 'nul.html'), 'x');
-    await refusesAsync(() => ingest({ dir: 'design/incoming' }, { cwd }), /Windows reserves/);
+    await refusesAsync(() => ingest({ dir: root }, { cwd }), /Windows reserves/);
     expect(exists(bundle)).toBe(false);
   });
 
@@ -1279,6 +1283,85 @@ describe('--dir, a folder the person supplies', () => {
     expect(readDir(root).map((entry) => entry.name).sort()).toEqual(['index.html', 'screens', 'screens/home.html']);
     refuses(() => readDir(root, { maxEntries: 2 }), /more than 2 entries/);
     refuses(() => readDir(root, { maxBytes: 20 }), /more than 20 bytes/);
+  });
+
+  // Ruling 99: raw design files never sit inside the repository, where editor extensions that scan
+  // the workspace (Tailwind CSS IntelliSense imports the tailwindcss nearest a stylesheet when it
+  // starts) can run code from them, while ingest checks only what it writes. The repository is the
+  // one holding tools/design-ingest/, and the fake one each test writes design/bundle/ into.
+  describe('a folder inside the repository is refused, before anything in it is read', () => {
+    const INSIDE = /is inside the repository .*outside the repository/s;
+
+    test('refuses the repository root: the one holding tools/design-ingest/, and the one it writes into', async () => {
+      const { cwd, bundle } = workspace();
+      // Read, the real root would refuse for something else: a symlink under node_modules/.bin, or the entry cap.
+      await refusesAsync(() => ingest({ dir: REPOSITORY }, { cwd }), INSIDE);
+      writeFileSync(join(cwd, 'index.html'), html('Home'));
+      await refusesAsync(() => ingest({ dir: '.' }, { cwd }), INSIDE);
+      await refusesAsync(() => ingest({ dir: cwd }, { cwd }), INSIDE);
+      expect(exists(bundle)).toBe(false);
+    });
+
+    test('refuses design/incoming, and says why and where the folder goes instead', async () => {
+      const { cwd, design, bundle } = workspace();
+      const staged = join(design, 'incoming');
+      mkdirSync(staged);
+      writeFileSync(join(staged, 'index.html'), html('Home'));
+      writeFileSync(join(staged, 'tokens.css'), '@import "tailwindcss";\n');
+      await refusesAsync(() => ingest({ dir: 'design/incoming' }, { cwd }), INSIDE);
+      expect(exists(bundle)).toBe(false);
+      expect(tree(staged)).toEqual(['index.html', 'tokens.css']);
+      const result = spawnSync(process.execPath, [TOOL, '--dir', 'design/incoming'], { cwd, encoding: 'utf8' });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/^design-ingest: refused, and wrote nothing: "design\/incoming" is inside the repository/);
+      for (const why of ['editor extensions that scan the workspace (Tailwind CSS IntelliSense) can run code', 'checks only what it writes', 'outside the repository', 'Downloads folder', 'delete the folder after ingest']) {
+        expect(result.stderr, why).toContain(why);
+      }
+      expect(exists(bundle)).toBe(false);
+    });
+
+    test('refuses a path inside the repository reached through a symlink from outside', async (context) => {
+      const { cwd, design, bundle } = workspace();
+      mkdirSync(join(design, 'incoming'));
+      writeFileSync(join(design, 'incoming', 'index.html'), html('Home'));
+      const intoFake = join(scratch, `into-fake-${workspaces}`);
+      const intoReal = join(scratch, `into-real-${workspaces}`);
+      try {
+        symlinkSync(cwd, intoFake, 'dir');
+        symlinkSync(REPOSITORY, intoReal, 'dir');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EPERM') return context.skip();
+        throw error;
+      }
+      // The folder itself is a real directory; a folder above it is the link, so only its realpath shows where it is.
+      await refusesAsync(() => ingest({ dir: join(intoFake, 'design', 'incoming') }, { cwd }), INSIDE);
+      await refusesAsync(() => ingest({ dir: join(intoReal, 'design') }, { cwd }), INSIDE);
+      expect(exists(bundle)).toBe(false);
+    });
+
+    test('refuses a link inside the repository, even to a folder outside it', async (context) => {
+      const { cwd, root, design, bundle } = incoming();
+      try {
+        symlinkSync(root, join(design, 'linked'), 'dir');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EPERM') return context.skip();
+        throw error;
+      }
+      await refusesAsync(() => ingest({ dir: 'design/linked' }, { cwd }), INSIDE);
+      expect(exists(bundle)).toBe(false);
+    });
+
+    test('admits a folder under the OS temp directory, beside the repository, whose name the repository\'s starts', async () => {
+      const { cwd, bundle } = workspace();
+      // A sibling such as <repo>-incoming shares the repository's path as a prefix, but is not inside it.
+      const beside = `${cwd}-incoming`;
+      mkdirSync(beside);
+      writeFileSync(join(beside, 'index.html'), html('Home'));
+      expect(realpathSync(beside).startsWith(realpathSync(tmpdir()))).toBe(true);
+      const summary = await ingest({ dir: beside }, { cwd });
+      expect(summary.files).toEqual(['index.html']);
+      expect(tree(bundle)).toEqual(['index.html']);
+    });
   });
 });
 

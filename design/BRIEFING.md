@@ -28,7 +28,8 @@ avoid>.
   while sending, after success, and with an error under a field.
 - Type: at most two Google Fonts families (one display, one body), with as few weights as
   you need.
-- Styles: plain CSS, with design tokens as `@theme` variables; no `@plugin` or `@config`.
+- Styles: plain CSS, with design tokens as `@theme` variables, and no Tailwind plugins or
+  JavaScript config files.
 - Colour: a small palette, each colour with a stated role: page background, card or field
   surface, text, muted text, brand, text on brand, accent, borders, error. Text must meet
   WCAG AA contrast.

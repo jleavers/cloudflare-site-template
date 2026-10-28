@@ -3,17 +3,20 @@
 The Claude Design output this site is built from. It is committed so the site's provenance stays
 with it, and it is never part of the build: `tsconfig.json` and Astro both ignore this folder.
 
-Put the design here in **one** of three forms:
+Put the design here, or point the skill at it, in **one** of three forms:
 
 1. **A handoff link.** Standalone Claude Design's "Handoff to Claude Code" gives a prompt
    containing a URL. Claude Design inside Claude artifacts has no handoff option, so this form
    exists only for standalone Claude Design. Put that URL on the first line of `design/SOURCE.md`. The `new-site` skill downloads the
    bundle into `design/bundle/`.
 2. **A downloaded archive** (the `.zip` "Project archive", or a handoff `.tar.gz`). Leave the
-   archive in this folder, or put a folder you extracted from it in `design/incoming/`, which git
-   ignores; the skill ingests either into `design/bundle/`. Put an extracted folder there, not a
-   git clone, don't open its files in your editor before the skill ingests it, and delete it
-   afterwards: files in it, such as a `.git` or `.vscode` folder or a tool's config, can run
+   archive in this folder, as one file, or extract it, or assemble a folder of the design's files,
+   **outside the repository**, in your Downloads folder for example, and give the skill that
+   folder's path; it ingests either into `design/bundle/`. Never put the folder inside the
+   repository: editor extensions that scan the workspace (Tailwind CSS IntelliSense) can run code
+   from it, and ingest checks only what it writes, so the skill refuses a folder there. Make it an
+   extracted folder, not a git clone, don't open it or its files in your editor, and delete it
+   after ingest: files in it, such as a `.git` or `.vscode` folder or a tool's config, can run
    commands when an editor opens or scans the folder. Opening a folder you don't know in VS Code's
    Restricted Mode is the safe default: Tailwind CSS IntelliSense, and every other extension that
    has not declared itself safe there, stays off until you trust the folder. Don't create
@@ -22,7 +25,8 @@ Put the design here in **one** of three forms:
    extraction writes, and a folder that holds more than 50 MB.
 3. **A Claude artifact link** (`https://claude.ai/…/artifact/…`), the usual path now. In the
    artifact, Share → copy private link gives the URL. Put it on the first line of
-   `design/SOURCE.md`; the skill reads it with the agent's artifact tool.
+   `design/SOURCE.md`; the skill reads it with the agent's artifact tool, saves its files into a
+   new folder outside the repository, and asks you to delete that folder after ingest.
 
 Standalone claude.ai/design closes on 14 December 2026. After that, designs live as Claude
 artifacts, so option 3 becomes the usual one.
