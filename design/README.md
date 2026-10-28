@@ -38,7 +38,10 @@ stylesheet's `@plugin` or `@config` makes Tailwind's build and its editor extens
 JavaScript module, and so can a tool's config or a `node_modules` folder. The ingest tool leaves
 out the kinds of such file that [its README](../tools/design-ingest/README.md) lists. The
 skill never carries such a directive into the site, and a test fails the build checks if one
-reaches `src/` without the owner's approval.
+reaches `src/` without the owner's approval. Nor does the skill carry any of the bundle's code into
+the site: it writes every script, style, component and SVG itself from what the design shows, and
+copies only raster images. A test fails if a file under `src/` or `public/` is a copy of a code
+file in `design/bundle/`, or names `design/bundle`.
 
 [BRIEFING.md](BRIEFING.md) is a brief to give Claude Design before it starts, so the design maps
 cleanly onto the template.
