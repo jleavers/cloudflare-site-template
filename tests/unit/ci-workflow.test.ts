@@ -612,6 +612,24 @@ test.each([
   expect(scalar(uploads[0]!, 'path', 10)).toBe(paths);
 });
 
+// The design renderer refuses without Chromium's sandbox (tools/screenshots/design.mjs). On a
+// GitHub-hosted Ubuntu that restricts user namespaces, e2e installs the AppArmor profile as the
+// README tells a person to, before the browser tests; a self-hosted runner is left as it is.
+test('e2e lets Chromium start its sandbox on a GitHub-hosted runner, as tools/screenshots/README.md says', () => {
+  const all = steps(job('ci.yml:e2e'));
+  const runs = (step: string) => scalar(step, 'run', 8) ?? '';
+  const at = all.findIndex((step) => runs(step).includes('playwright-chromium.apparmor'));
+  const installed = all.map((step, i) => (runs(step).startsWith('npx playwright install') ? i : -1)).filter((i) => i >= 0);
+  expect(installed).toHaveLength(2);
+  expect(at).toBeGreaterThan(Math.max(...installed));
+  expect(at).toBeLessThan(all.findIndex((step) => runs(step) === 'npm run test:e2e'));
+  expect(stepValue(all[at]!, 'if')).toBe("runner.environment == 'github-hosted'");
+  const script = runs(all[at]!).split('\n');
+  const readme = read('tools/screenshots/README.md').split('\n').filter((line) => line.startsWith('    sudo ')).map((line) => line.trim());
+  expect(readme).toHaveLength(2);
+  expect(script).toEqual(['if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then', ...readme.map((line) => `  ${line}`), 'fi']);
+});
+
 test.each(['ci.yml:verify', 'ci.yml:preview-build'])("%s hands on its upload's artifact ID as a job output", (name) => {
   const uploads = steps(job(name)).filter((step) => action(step) === 'actions/upload-artifact');
   expect(stepValue(uploads[0]!, 'id')).toBe('upload');

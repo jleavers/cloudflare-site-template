@@ -1,0 +1,11 @@
+# Lets Playwright's Chromium start its sandbox on Ubuntu 23.10 and later, which restrict
+# unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns = 1). Same shape as
+# Ubuntu's own profile for Google Chrome: it confines nothing, it only grants userns.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile playwright-chromium @{HOME}/.cache/ms-playwright/chromium{,_headless_shell}-[0-9]*/chrome-*/{chrome,chrome-headless-shell} flags=(unconfined) {
+  userns,
+
+  include if exists <local/playwright-chromium>
+}

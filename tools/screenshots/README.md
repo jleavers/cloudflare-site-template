@@ -42,16 +42,39 @@ bundle's folder, which must hold the screen. It defaults to the screen's own fol
 bundle's root when the screen uses files in a sibling folder (`../assets/`).
 
 A design screen is untrusted. `--only screen` and `--only design` render it with JavaScript on,
-in a browser of its own (`design.mjs`), where it may load only files inside `--bundle`, judged by
-resolved path with symlinks followed, and reaches no network at all: no `https:` or `http:` URL,
-no WebSocket, WebTransport or WebRTC, no speculative prefetch. Its browser resolves no host name
-or address and has only a proxy that goes nowhere, and it refuses to run if
-`PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK` is set. A screen that loads React or Babel
-from a CDN renders without them. `tests/e2e/design-fence.spec.ts` attacks the renderer with a
-hostile screen, behind that proxy and behind a live one.
+only inside Chromium's OS sandbox (below), in a browser of its own (`design.mjs`). There it may
+load only files inside `--bundle`, judged by resolved path with symlinks followed, and reaches no
+network at all: no `https:` or `http:` URL, no WebSocket, WebTransport or WebRTC, no speculative
+prefetch. Its browser resolves no host name or address and has only a proxy that goes nowhere,
+and it refuses to run if `PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK` is set. A screen
+that loads React or Babel from a CDN renders without them. `tests/e2e/design-fence.spec.ts`
+attacks the renderer with a hostile screen, behind that proxy and behind a live one.
 
 **The social preview is uploaded by hand**: GitHub takes it only through the web interface, under
 Settings → General → Social preview.
+
+## Chromium's sandbox
+
+The OS sandbox is the boundary: the fences above live inside Chromium, and stop nothing once a
+screen's script finds a bug in the renderer. So `design.mjs` launches Chromium with its sandbox
+required. Where the sandbox cannot start, `--only screen` and `--only design` refuse and say why;
+they never render without it.
+
+Windows and macOS need nothing. Ubuntu 23.10 and later restrict unprivileged user namespaces
+(`sysctl kernel.apparmor_restrict_unprivileged_userns` prints `1`), which the sandbox needs, unless
+an AppArmor profile grants them to the browser. `playwright-chromium.apparmor` in this folder is
+that profile, in the shape of Ubuntu's own for Google Chrome. The person installs it, once per
+machine, from the repository root (an agent never runs `sudo`):
+
+    sudo install -m 0644 tools/screenshots/playwright-chromium.apparmor /etc/apparmor.d/playwright-chromium
+    sudo apparmor_parser -r /etc/apparmor.d/playwright-chromium
+
+It names Playwright's default browser folder, `~/.cache/ms-playwright/`, so it does not cover
+browsers installed elsewhere with `PLAYWRIGHT_BROWSERS_PATH`. The trade-off: it lets any program at
+those paths, which the person's own account can write, create user namespaces, so it gives back
+part of what Ubuntu's restriction takes away for that account. Without it, design screens are read
+as source on that machine. CI's `e2e` job installs the same profile on a GitHub-hosted runner; on
+a self-hosted runner without it, the design-fence tests refuse.
 
 ## What is not pinned
 

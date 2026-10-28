@@ -1,5 +1,7 @@
 // The one sanctioned way to run an untrusted design screen's JavaScript: capture.mjs's
-// `--only screen` and `--only design` use it, and tests/e2e/design-fence.spec.ts attacks it.
+// `--only screen` and `--only design` use it, and tests/e2e/design-fence.spec.ts attacks it. The
+// boundary is Chromium's OS sandbox, which the launch requires: where it cannot start, nothing is
+// rendered. The fences below live inside Chromium's own network stack, and are defence in depth.
 import { statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -9,12 +11,18 @@ import { allowedForDesign } from './fence.mjs';
 // Playwright sends loopback through the proxy unless this is set; with it set, a screen's requests
 // to this machine would skip the proxy.
 const LOOPBACK_BYPASS = 'PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK';
+/** What a launch error says when Chromium's sandbox cannot start: Playwright 1.64.0's words, or Chromium's own. */
+const SANDBOX_FAILED = /Chromium sandboxing failed!|No usable sandbox!/;
+const SANDBOX_REFUSAL =
+  "Chromium's OS sandbox could not start on this machine, so the design screen was not rendered: design.mjs runs a screen's JavaScript only inside that sandbox, and never without it. On Ubuntu 23.10 and later, which restrict unprivileged user namespaces, the person can install the AppArmor profile tools/screenshots/playwright-chromium.apparmor, as tools/screenshots/README.md says (\"Chromium's sandbox\"); until then, read the screen's source as text instead.";
 
 /**
  * Photographs a design screen with its JavaScript on, confined to the files of its own bundle.
  *
- * JavaScript stays on because some screens draw themselves in script. What the script can reach is
- * the bundle and nothing else:
+ * JavaScript stays on because some screens draw themselves in script, so the screen runs only inside
+ * Chromium's OS sandbox (chromiumSandbox): a renderer bug then still has the sandbox to escape. A
+ * host where the sandbox cannot start gets a refusal that says how to fix it, never a render without
+ * it. Inside the browser, what the script can reach is the bundle and nothing else:
  * - route() lets a request through only when fence.mjs finds its resolved path inside the bundle,
  *   so no other file and no URL on any network loads;
  * - some channels never pass through route(): speculation-rules prefetch and prerender,
@@ -23,7 +31,7 @@ const LOOPBACK_BYPASS = 'PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK';
  *   connect to resolves, the proxy included. And its only proxy is a dead one, should the rule
  *   ever miss. WebRTC may send no UDP outside that proxy;
  * - the page's own WebSockets are closed before they connect.
- * Defence in depth, not under test: service workers are blocked (a file: page cannot register one
+ * Also, not under test: service workers are blocked (a file: page cannot register one
  * anyway), downloads are refused, and the browser is its own, with no storage state.
  * A Claude artifact's `.dc.html` artboard renders fully this way. A handoff prototype that loads
  * React or Babel from a CDN renders without them, so it may draw little or nothing: read its source.
@@ -48,10 +56,17 @@ export async function shootDesign(screen, { bundle, width = 1440, height = 900, 
   const url = pathToFileURL(file).href;
   if (!allowedForDesign(url, bundleDir)) throw new Error(`the screen ${screen} is not inside the bundle ${bundleDir}`);
 
-  const browser = await chromium.launch({
-    proxy: { server: proxy },
-    args: ['--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--host-resolver-rules=MAP * ~NOTFOUND'],
-  });
+  let browser;
+  try {
+    browser = await chromium.launch({
+      chromiumSandbox: true,
+      proxy: { server: proxy },
+      args: ['--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--host-resolver-rules=MAP * ~NOTFOUND'],
+    });
+  } catch (error) {
+    if (SANDBOX_FAILED.test(String(error?.message))) throw new Error(SANDBOX_REFUSAL, { cause: error });
+    throw error;
+  }
   try {
     const context = await browser.newContext({ viewport: { width, height }, serviceWorkers: 'block', acceptDownloads: false });
     await context.route('**', (route) => (allowedForDesign(route.request().url(), bundleDir) ? route.continue() : route.abort()));

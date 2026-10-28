@@ -111,6 +111,16 @@ jobs:
       - name: Install Chromium (the self-hosted VM has its libraries already)
         if: runner.environment != 'github-hosted'
         run: npx playwright install chromium
+      # The design renderer runs only inside Chromium's sandbox, which an Ubuntu that restricts user
+      # namespaces lets start only under an AppArmor profile (tools/screenshots/README.md). A
+      # self-hosted runner gets no step: without the profile its design-fence tests refuse.
+      - name: Let Chromium start its sandbox where Ubuntu restricts user namespaces
+        if: runner.environment == 'github-hosted'
+        run: |
+          if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then
+            sudo install -m 0644 tools/screenshots/playwright-chromium.apparmor /etc/apparmor.d/playwright-chromium
+            sudo apparmor_parser -r /etc/apparmor.d/playwright-chromium
+          fi
       # A free port, not a fixed one: a self-hosted VM runs other repositories' jobs alongside.
       - name: Pick a free port
         run: >-

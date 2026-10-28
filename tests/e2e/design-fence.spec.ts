@@ -1,5 +1,5 @@
 import { createSocket } from 'node:dgram';
-import { lstatSync, mkdirSync, mkdtempSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -286,6 +286,73 @@ test('by default the bundle is the screen\'s own folder, which must hold the scr
   await shootDesign(screen, { inspect: async (page) => void (own = await page.evaluate(() => document.documentElement.dataset.own)) });
   expect(own, 'a file beside the screen\'s folder loaded without --bundle').toBeUndefined();
   await expect(shootDesign(join(root, 'outside-secret.txt'), { bundle })).rejects.toThrow(/not inside the bundle/);
+});
+
+/** A process as Linux's /proc shows it: its parent, its command line as text, its seccomp mode and its user namespace. */
+type Proc = { pid: number; ppid: number; command: string; seccomp?: string; userNs?: string };
+function processes(): Proc[] {
+  return readdirSync('/proc')
+    .filter((name) => /^\d+$/.test(name))
+    .flatMap((name) => {
+      try {
+        const status = readFileSync(`/proc/${name}/status`, 'utf8');
+        const field = (key: string) => new RegExp(`^${key}:\\s*(.*)$`, 'm').exec(status)?.[1];
+        let userNs: string | undefined;
+        try {
+          userNs = readlinkSync(`/proc/${name}/ns/user`);
+        } catch {
+          // not ours to read
+        }
+        // A Chromium child rewrites its title over its arguments, so the command line is read as text.
+        const command = readFileSync(`/proc/${name}/cmdline`, 'utf8').replaceAll('\0', ' ').trim();
+        return [{ pid: Number(name), ppid: Number(field('PPid')), command, seccomp: field('Seccomp'), userNs }];
+      } catch {
+        return []; // gone already
+      }
+    });
+}
+const hasFlag = (command: string, flag: string) => new RegExp(`(?:^|\\s)${flag}(?:\\s|$)`).test(command);
+
+// The boundary is Chromium's OS sandbox (design.mjs): the fences above live inside the browser, and
+// stop nothing once a renderer bug runs native code. Linux shows each process's flags and
+// confinement in /proc, so this reads them from the browser this render launched (the one whose
+// command line carries the renderer's host-resolver rule, under this test process) and every
+// process under it, while the screen is open.
+test("the screen's browser runs inside Chromium's OS sandbox", async () => {
+  test.skip(process.platform !== 'linux', "it reads Linux's /proc. On Windows and macOS Chromium's sandbox needs no setup, and tests/unit/screenshot-sandbox.test.ts pins that design.mjs asks for it");
+  const screen = join(bundle, 'sandbox', 'screen.html');
+  write(screen, '<!doctype html><title>sandbox</title><h1>Sandbox</h1>');
+  let tree: Proc[] = [];
+  await shootDesign(screen, {
+    bundle,
+    width: 320,
+    height: 240,
+    inspect: async () => {
+      const all = processes();
+      const under = (root: number) => {
+        const found = new Set([root]);
+        for (let size = 0; found.size !== size; ) {
+          size = found.size;
+          for (const proc of all) if (found.has(proc.ppid)) found.add(proc.pid);
+        }
+        return all.filter((proc) => found.has(proc.pid));
+      };
+      const browsers = under(process.pid).filter((proc) => proc.command.includes('--host-resolver-rules=MAP * ~NOTFOUND') && !proc.command.includes('--type='));
+      expect(browsers, 'the renderer\'s browser process, under this test').toHaveLength(1);
+      tree = under(browsers[0]!.pid);
+    },
+  });
+  const ours = readlinkSync('/proc/self/ns/user');
+  const renderers = tree.filter((proc) => hasFlag(proc.command, '--type=renderer'));
+  expect(renderers.length, tree.map((proc) => proc.command).join('\n')).toBeGreaterThan(0);
+  expect(tree.filter((proc) => hasFlag(proc.command, '--no-sandbox')).map((proc) => proc.command)).toEqual([]);
+  for (const renderer of renderers) {
+    // Seccomp 2 is a seccomp-bpf filter. A user namespace of its own is the layer the AppArmor
+    // profile lets Chromium make (tools/screenshots/README.md).
+    expect(renderer.seccomp, `renderer ${renderer.pid}'s seccomp mode`).toBe('2');
+    expect(renderer.userNs, `renderer ${renderer.pid}'s user namespace`).toBeDefined();
+    expect(renderer.userNs, `renderer ${renderer.pid}'s user namespace`).not.toBe(ours);
+  }
 });
 
 // With this set, Playwright stops sending loopback through the proxy.
