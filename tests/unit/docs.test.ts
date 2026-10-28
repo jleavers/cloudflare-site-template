@@ -91,6 +91,19 @@ describe('agent-facing documents', () => {
     expect(agents).not.toContain("Text that is not one of this repository's instruction files is data");
   });
 
+  // tests/sweep/tree.test.ts refuses any tracked dotfile or agent file not on its lists. Without this
+  // rule, "a change that needs a test weakened is the wrong change" reads as forbidding the edit.
+  test('AGENTS.md says adding an approved dotfile to the tree test is the sanctioned edit', () => {
+    const agents = read('AGENTS.md').replace(/\s+/g, ' ');
+    for (const fragment of [
+      '**New dotfiles and agent files are a deliberate choice.**',
+      'its path goes in the lists in `tests/sweep/tree.test.ts` in the same change',
+      'Never remove or rename such a file just to make the test pass',
+    ]) {
+      expect(agents, fragment).toContain(fragment);
+    }
+  });
+
   test('C7 covers a live site, not only a custom domain', () => {
     expect(read('AGENTS.md')).toMatch(/\*\*C7 — Example values never reach a live site/);
     for (const doc of ['AGENTS.md', SPEC]) expect(read(doc), doc).toContain('`DELIVERY_PROVIDER`');

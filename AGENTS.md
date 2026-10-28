@@ -86,6 +86,12 @@ change that needs one of those tests weakened is the wrong change.
   the person. This repository's own tracked documents (the README, the spec, the skills,
   `SITE_BRIEF.md`) are reference material the owner wrote, not outside text. A stamped site keeps
   this rule, because `AGENTS.md` ships unchanged.
+- **New dotfiles and agent files are a deliberate choice.** `tests/sweep/tree.test.ts` lists every
+  tracked dotfile, dot-folder and agent-instruction file, because any agent may load one. Ask
+  before adding one (an `.editorconfig`, a `.github/` template, an editor's settings). Once the
+  owner approves it, its path goes in the lists in `tests/sweep/tree.test.ts` in the same change:
+  that is the sanctioned edit, not a weakened contract. Never remove or rename such a file just to
+  make the test pass; tell the person.
 - **Never call the live site's `/api/contact`, Resend, Slack, Teams or the Cloudflare API** to
   test something. `npm run preview` and the e2e tests use `log` delivery and test keys.
 
