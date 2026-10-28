@@ -5879,30 +5879,39 @@ The owner reviews and merges.
 
 Owner-driven. The executor prepares commands and checks results.
 
-- [ ] **Step 1: Confirm the Cloudflare secrets are the demo account's**
+- [ ] **Step 1: Run the spec's §15 steps 4, 4a, 4b and 5, in order, up to the flip**
 
-`gh secret list --repo jleavers/cloudflare-site-template` shows `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` with Task 14's dates. **Owner** confirms that the token is the demo account's, and that no main-account token was ever stored here. If one was, revoke it in Cloudflare now.
+Spec §15 is the one go-public checklist; this task adds nothing to it. The executor prepares each command and reads its result back. The **owner** runs every command that needs write access, and everything in Cloudflare. The flip itself is Step 3. Before it, on every plan:
+- 4: remove the jl-dev-02 runners and `CI_LINUX_RUNNER` together, confirm the secrets belong to the demo account, and revoke any main-account token ever stored here;
+- 4a: the security sweep, `baseline` and then `public`;
+- 4b: the roll (a new token stored and its date read back, the old token revoked last), the owner's checks that go with it, the repository settings, the agent identity and the `main` ruleset;
+- 4b, where the plan gives a private repository environment secrets (Pro, Team, Enterprise): also the move into `production`, limited to `main`;
+- 5, up to the flip: the edit histories, then the template flag.
 
-- [ ] **Step 2: Repository settings, before the flip**
+- [ ] **Step 2: Read the result back, before the flip**
 
 ```bash
 R=jleavers/cloudflare-site-template
-gh api -X PUT repos/$R/private-vulnerability-reporting
-gh api -X PUT repos/$R/actions/permissions/workflow -f default_workflow_permissions=read -F can_approve_pull_request_reviews=false
-gh api -X PUT repos/$R/actions/permissions/fork-pr-contributor-approval -f approval_policy=all_external_contributors
+gh secret list --env production --repo $R
+gh secret list --repo $R
 gh api repos/$R --jq '{is_template, visibility}'
 ```
-Expected: `is_template` is `true`, from Task 17.
+Expected where the move is done (not Free):
+- the first lists `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, both dated on or after the roll;
+- the second lists neither;
+- `is_template` is `true` and `visibility` is `private`.
 
-If the fork-approval endpoint returns 404, set "Require approval for all external contributors" under Settings → Actions → General instead.
-
-**Owner** decides on a ruleset for `main`. The recommendation: require a pull request, and the `Verify` and `Browser tests` checks.
+Expected on Free, where the move waits for Step 3a: the second lists `CLOUDFLARE_API_TOKEN` dated on or after the roll, the first is empty or errors, and `is_template` is `true` with `visibility` `private`.
 
 - [ ] **Step 3: Owner: go public**
 
 ```bash
 gh repo edit jleavers/cloudflare-site-template --visibility public --accept-visibility-change-consequences
 ```
+
+- [ ] **Step 3a: Owner, GitHub Free only: the move into `production`**
+
+Straight after Step 3, before anything else merges into `main`: spec §15 step 4b's last bullet. Limit `production` to `main`, set both secrets in it with the token already rolled, delete the repository-level copies, then run the first two read-backs of Step 2. Expected: the first lists both secrets dated on or after the roll, and the second lists neither.
 
 - [ ] **Step 4: CI on GitHub-hosted runners, and the demo**
 
@@ -5914,20 +5923,13 @@ Expected: `Verify` and `Browser tests` pass on `ubuntu-latest`.
 
 The next push to `main` (any merged PR) must show `Deploy` redeploying the demo. Confirm it on the first one.
 
-- [ ] **Step 5: Owner: the social preview, and the Deploy button**
+- [ ] **Step 5: Owner: the social preview**
 
-1. Upload `docs/images/social-preview.png` under Settings → General → Social preview.
-2. **Deploy button (§16.8):** from the public README, click **Deploy to Cloudflare** while logged in to the **demo** Cloudflare account. Confirm:
-   - it prompts for no secrets;
-   - the copy builds with `npm run build` and deploys with `npm run deploy`;
-   - the copy's site is live and its form works.
-
-   Note how it applied the chosen Worker name. Then delete the copy's GitHub repository and Worker.
-3. If the button needed anything the README doesn't say, fix the README in a follow-up PR.
+Upload `docs/images/social-preview.png` under Settings → General → Social preview.
 
 - [ ] **Step 6: Done**
 
-The template is public, its CI is green on hosted runners, the demo redeploys from `main`, and the README's media, links and button work. Report to the owner, in a short summary:
+The template is public, its CI is green on hosted runners, the demo redeploys from `main`, and the README's media and links work. Report to the owner, in a short summary:
 - the final state;
 - anything held from the sweep;
 - the runbook timings from Task 17.
