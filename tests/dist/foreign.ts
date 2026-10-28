@@ -297,7 +297,8 @@ export function repeatedAttributes(raw: string): string[] {
  * Where a `<meta http-equiv="refresh">` sends the page, read as the HTML spec's shared declarative
  * refresh steps read its content: a time, then `;` or `,`, then a URL with or without `url=`, in
  * quotes or not. Undefined when it navigates nowhere else: no URL (the page reloads itself), or a
- * content the steps give up on.
+ * content the steps give up on. A `Refresh` header's value is read by the same steps
+ * (tests/dist/headers.ts names its target this way).
  */
 export function refreshUrl(content: string): string | undefined {
   let i = 0;
@@ -380,19 +381,28 @@ function htmlReferences(html: string): { references: Reference[]; repeated: stri
   return { references, repeated };
 }
 
+/** Where a reference leads from `base`, as a browser resolves it, or undefined when it is not a URL. */
+export function resolveUrl(reference: string, base: string): URL | undefined {
+  try {
+    return new URL(reference, base);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether a resolved URL is on site.url's origin, which every reference must be but for the few exceptions below; tests/dist/headers.ts uses it too. */
+export const onSiteOrigin = (url: URL, siteUrl: string) => url.origin === new URL(siteUrl).origin;
+
 function violations(references: Reference[], options: Options, where: string): string[] {
-  const site = new URL(options.siteUrl);
   const problems: string[] = [];
   for (const reference of references) {
-    let url: URL;
-    try {
-      url = new URL(reference.url, options.page);
-    } catch {
+    const url = resolveUrl(reference.url, options.page);
+    if (!url) {
       problems.push(`${where}: <${reference.element}> ${reference.attribute}="${reference.url}" is not a URL`);
       continue;
     }
     const allowed =
-      url.origin === site.origin ||
+      onSiteOrigin(url, options.siteUrl) ||
       (url.protocol === 'data:' && reference.image) ||
       (reference.script && url.origin === 'https://challenges.cloudflare.com') ||
       (reference.script && url.origin === 'https://static.cloudflareinsights.com' && Boolean(options.analyticsToken));

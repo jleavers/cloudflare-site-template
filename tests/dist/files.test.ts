@@ -29,5 +29,5 @@ test('the sitemap lists the site origin only, without the 404 page', () => {
 // C2/C3's backstop in the browser: every CSP in the built _headers, on any path, directive by
 // directive against tests/dist/headers.ts's allow-list, and the security headers beside it on /*.
 test('_headers holds every CSP and security header to the allow-list', () => {
-  expect(headersProblems(readDist('_headers'), { analyticsToken: site.analytics.cloudflareToken })).toEqual([]);
+  expect(headersProblems(readDist('_headers'), { siteUrl: site.url, analyticsToken: site.analytics.cloudflareToken })).toEqual([]);
 });

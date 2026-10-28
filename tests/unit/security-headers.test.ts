@@ -23,6 +23,11 @@ function edit(...pairs: [string, string][]): string {
 }
 /** BASE with another block after it. */
 const plus = (block: string) => `${BASE}${block}\n`;
+/** BASE with one more header on /*, before its first. */
+const onRoot = (line: string) => edit(['  X-Content-Type-Options', `  ${line}\n  X-Content-Type-Options`]);
+
+/** site.url: a Link target must be relative or on its origin. */
+const SITE = { siteUrl: 'https://example.com' };
 
 const SCRIPT_SRC = "script-src 'self' https://challenges.cloudflare.com";
 const WITH_ANALYTICS = edit(
@@ -93,16 +98,31 @@ describe('headersProblems refuses', () => {
     ['a CSP line over 2,000 characters', edit(["img-src 'self' data:", `img-src 'self' data:${" 'self'".repeat(300)}`])],
     ['a "!" with no space, which Cloudflare ignores', edit(['/_astro/*', '  !Cache-Control\n/_astro/*'])],
     ['more than 100 rules', plus(Array.from({ length: 100 }, (_, i) => `/p${i}/*\n  X-Robots-Tag: noindex`).join('\n'))],
+    // Ruling 127: base-uri may be 'none', but form-action stays 'self' for C5's no-JavaScript post.
+    ["form-action 'none'", edit(["form-action 'self'", "form-action 'none'"])],
+    // A restriction with no value is not one (final review 5).
+    ['a bare webrtc', edit([SCRIPT_SRC, `${SCRIPT_SRC}; webrtc`])],
+    ['a bare require-trusted-types-for', edit([SCRIPT_SRC, `${SCRIPT_SRC}; require-trusted-types-for`])],
+    // No Refresh on any rule, and no Link target off site.url's origin (final review 5).
+    ['a Refresh header to another origin', onRoot('Refresh: 0; url=https://evil.example/')],
+    ['a Refresh header with no URL', onRoot('Refresh: 5')],
+    ['a Link preload from another origin', onRoot('Link: <https://evil.example/x.css>; rel=preload; as=style')],
+    ['a scheme-relative Link target on another path', plus('/blog/*\n  Link: <//evil.example/x.css>; rel=preload; as=style')],
+    ['a foreign Link target after a same-origin one', onRoot('Link: </a.css>; rel=preload; as=style, <https://evil.example/b.css>; rel=preload; as=style')],
+    ['a foreign Link target after a "<" in a quoted parameter', onRoot('Link: </a.css>; rel=preload; as=style; title="<", <https://evil.example/b.css>; rel=preload; as=style')],
+    ['a Link preload with an imagesrcset', onRoot('Link: </a.png>; rel=preload; as=image; imagesrcset="https://evil.example/a.png 2x"')],
+    ['a Link with no <target>', onRoot('Link: https://evil.example/x.css; rel=preload; as=style')],
+    ['a Link whose last < has no >, as when Cloudflare joins it to another rule\'s', onRoot('Link: </a.css>; rel=preload; as=style; title="<https://evil.example/"')],
   ])('%s', (_name, text) => {
-    expect(headersProblems(text)).not.toEqual([]);
+    expect(headersProblems(text, SITE)).not.toEqual([]);
   });
 
   test('a token without the analytics hosts', () => {
-    expect(headersProblems(BASE, { analyticsToken: 'tok' })).not.toEqual([]);
+    expect(headersProblems(BASE, { ...SITE, analyticsToken: 'tok' })).not.toEqual([]);
   });
 
   test('names the line, the path, the directive and the source', () => {
-    const problems = headersProblems(plus(`/blog/*\n  Content-Security-Policy: ${BASE_CSP.replace("connect-src 'self'", "connect-src 'self' https://evil.example")}`));
+    const problems = headersProblems(plus(`/blog/*\n  Content-Security-Policy: ${BASE_CSP.replace("connect-src 'self'", "connect-src 'self' https://evil.example")}`), SITE);
     expect(problems).toEqual([
       '_headers:10 (/blog/*): Content-Security-Policy: connect-src allows https://evil.example, which is not in its list; anything wider than the lists in tests/dist/headers.ts breaks contract C2 or C3, which only the owner can change',
     ]);
@@ -118,8 +138,9 @@ describe('headersProblems refuses', () => {
     ['a wider Permissions-Policy', edit(['camera=()', 'camera=*'])],
     ['a shorter HSTS', edit(['max-age=31536000\n', 'max-age=300\n'])],
     ['a missing X-Content-Type-Options', edit(['  X-Content-Type-Options: nosniff\n', ''])],
+    ['a foreign Link target', onRoot('Link: <https://evil.example/x.css>; rel=preload; as=style')],
   ])('names tests/dist/headers.ts and the owner on %s, and invites no edit', (_name, text) => {
-    const problems = headersProblems(text);
+    const problems = headersProblems(text, SITE);
     expect(problems).not.toEqual([]);
     for (const problem of problems) {
       expect(problem).toContain('tests/dist/headers.ts');
@@ -149,12 +170,16 @@ describe('headersProblems allows', () => {
     ['upgrade-insecure-requests', edit([SCRIPT_SRC, `${SCRIPT_SRC}; upgrade-insecure-requests`])],
     ["require-trusted-types-for 'script'", edit([SCRIPT_SRC, `${SCRIPT_SRC}; require-trusted-types-for 'script'`])],
     ["webrtc 'block'", edit([SCRIPT_SRC, `${SCRIPT_SRC}; webrtc 'block'`])],
+    // Ruling 127: stricter, and the site sets no <base>.
+    ["base-uri 'none'", edit(["base-uri 'self'", "base-uri 'none'"])],
+    ['a same-origin Link preload', onRoot('Link: </fonts/x.woff2>; rel=preload; as=font; crossorigin')],
+    ["a Link preload on site.url's origin", onRoot('Link: <https://example.com/a.css>; rel=preload; as=style')],
   ])('%s', (_name, text) => {
-    expect(headersProblems(text)).toEqual([]);
+    expect(headersProblems(text, SITE)).toEqual([]);
   });
 
   test('the analytics hosts, with a token', () => {
-    expect(headersProblems(WITH_ANALYTICS, { analyticsToken: 'tok' })).toEqual([]);
+    expect(headersProblems(WITH_ANALYTICS, { ...SITE, analyticsToken: 'tok' })).toEqual([]);
   });
 });
 

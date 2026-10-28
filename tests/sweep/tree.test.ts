@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, test } from 'vitest';
 // A site that deletes tools/design-ingest/ must keep agent-files.mjs, or move the predicate into this file.
-import { namesAgentInstructions } from '../../tools/design-ingest/agent-files.mjs';
+import { fold, namesAgentInstructions } from '../../tools/design-ingest/agent-files.mjs';
 
 // An agent session in this tree takes instructions only from a fixed, enumerated set of tracked
 // files. Both lists below are exact. Adding to one is a deliberate change the owner approves: any
@@ -11,7 +11,7 @@ import { namesAgentInstructions } from '../../tools/design-ingest/agent-files.mj
 /** Tracked paths with a segment that names agent instructions (ingest's own list and folding). */
 const INSTRUCTION_FILES = ['.claude/skills/new-site/SKILL.md', '.claude/skills/security-sweep/SKILL.md', 'AGENTS.md', 'CLAUDE.md'];
 
-/** Tracked paths with a segment that starts with a dot (ingest's own dot rule). */
+/** Tracked paths with a segment that starts with a dot once folded (ingest's own dot rule and folding). */
 const DOT_PATHS = [
   '.claude/README.md',
   '.claude/agents/sweep-lane-web.md',
@@ -41,7 +41,7 @@ function problems(paths: string[]): string[] {
     if (segments.some(namesAgentInstructions) && !INSTRUCTION_FILES.includes(path)) {
       out.push(`${path} names agent instructions: ${WHY}`);
     }
-    if (segments.some((s) => s.startsWith('.')) && !DOT_PATHS.includes(path)) {
+    if (segments.some((s) => fold(s).startsWith('.')) && !DOT_PATHS.includes(path)) {
       out.push(`${path} is a dotfile or sits in a dot-folder (agent and tool configuration lives there): ${WHY}`);
     }
   }
@@ -50,9 +50,14 @@ function problems(paths: string[]): string[] {
 
 const tracked = () => execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean);
 
+/** U+FF0E FULLWIDTH FULL STOP, which NFKC folds to `.`; written as its code point. */
+const FULLWIDTH_FULL_STOP = String.fromCodePoint(0xff0e);
+
 describe('no agent-instruction or dot path outside the lists, anywhere in the tree', () => {
   test('the tracked tree passes', () => {
-    expect(problems(tracked())).toEqual([]);
+    const paths = tracked();
+    expect(paths.length).toBeGreaterThan(0);
+    expect(problems(paths)).toEqual([]);
   });
 
   test('both lists name only tracked files', () => {
@@ -69,6 +74,13 @@ describe('no agent-instruction or dot path outside the lists, anywhere in the tr
     ['an editor setting', '.vscode/settings.json'],
     ['Agents.MD in a subfolder (folded)', 'src/pages/Agents.MD'],
     ['a rules file with a fullwidth name', 'docs/ＣＬＡＵＤＥ.md'],
+    // Agent configurations that need no dot, and can launch MCP servers (Ruling 129).
+    ['opencode.json at the root', 'opencode.json'],
+    ['crush.json in a subfolder', 'tools/crush.json'],
+    // An instruction name anywhere in the path, a folder included, as ingest reads it.
+    ['an instruction name as a folder', 'CLAUDE.md/x'],
+    // The dot rule folds first, as ingest's does: NFKC takes a fullwidth full stop to a dot.
+    ['a name that starts with a fullwidth full stop', `${FULLWIDTH_FULL_STOP}mcp.json`],
   ])('refuses %s', (_name, path) => {
     const found = problems([...tracked(), path]);
     expect(found.length).toBeGreaterThan(0);

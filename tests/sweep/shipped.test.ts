@@ -37,8 +37,9 @@ const AUDIT_PATTERNS = [
   'npm publish',
   'gh [a-z]+ (create|edit|close|comment|merge|delete)',
   '(-X|--method) (POST|PATCH|PUT|DELETE)',
-  'git push',
-  'git (clone|fetch|pull|ls-remote)',
+  '(actions/variables|environments/[^/ ]+/variables|/hooks|/keys)([^[:alnum:]_-]|$)',
+  'git( +-[cC] +[^ ]+| +--[a-z-]+((=| +)[^ -][^ ]*)?)* +(push|clone|fetch|pull|ls-remote|remote +update|submodule +update)',
+  '(^|[^[:alnum:]_.-])(ssh|scp|sftp)([[:space:]]|$)',
   '\\.dev\\.vars',
   '\\.wrangler',
   '\\.npmrc',
@@ -62,6 +63,38 @@ const AUDIT_PATTERNS = [
 
 test('the sweep skill’s audit-patterns block is exactly this repository’s dangerous-call list', () => {
   expect(auditPatterns().trim().split('\n')).toEqual(AUDIT_PATTERNS);
+});
+
+// The audit's lines are POSIX extended regular expressions. With their bracket classes spelled out,
+// JavaScript reads these three the same, so what each one catches is shown here.
+const asRegExp = (line: string) => new RegExp(line.replaceAll('[:alnum:]', 'A-Za-z0-9').replaceAll('[:space:]', '\\s'));
+const auditLine = (start: string) => asRegExp(AUDIT_PATTERNS.find((line) => line.startsWith(start)) ?? '(?!)');
+
+// The forms a lane may write: options before git's subcommand, a bare ssh, a bare `gh api` on a value-bearing endpoint.
+test('the audit catches a git network command with options before it, a bare ssh, scp or sftp, and a read of a value-bearing endpoint', () => {
+  const git = auditLine('git');
+  for (const call of ['git push origin HEAD', 'git -C /tmp/w fetch origin', 'git -c core.sshCommand=x clone git@github.com:o/r', 'git --git-dir=/tmp/w/.git fetch', 'git --git-dir /tmp/w/.git fetch', 'git --no-pager pull', 'git ls-remote origin', 'git remote update', 'git -C w submodule update --init']) {
+    expect(call, call).toMatch(git);
+  }
+  for (const call of ['git log -p --all', 'git -C /tmp/w rev-list --objects --all', 'git ls-files -z', 'gh api -X GET repos/o/r/git/matching-refs/pull']) expect(call, call).not.toMatch(git);
+  const ssh = auditLine('(^|[^[:alnum:]_.-])(ssh');
+  for (const call of ['ssh -T git@github.com', 'scp a host:b', 'sftp host', 'GIT_SSH_COMMAND=ssh -v', 'command -v ssh']) expect(call, call).toMatch(ssh);
+  for (const call of ['ssh-add -l', 'cat ~/.ssh/config', 'apt show openssh-client']) expect(call, call).not.toMatch(ssh);
+  const values = auditLine('(actions/variables');
+  for (const call of ['gh api -X GET repos/o/r/actions/variables', 'gh api -X GET repos/o/r/environments/production/variables', 'gh api -X GET repos/o/r/hooks', "gh api -X GET repos/o/r/hooks --jq '.[] | {id, events}'", 'gh api -X GET repos/o/r/keys?per_page=100']) {
+    expect(call, call).toMatch(values);
+  }
+  for (const call of ['gh api -X GET repos/o/r/actions/permissions', 'gh api -X GET repos/o/r/environments', 'gh api -X GET repos/o/r/hooksmith']) expect(call, call).not.toMatch(values);
+  // The second pass, which lists the GitHub-side calls, names pull too.
+  expect(skillText()).toContain('git (ls-remote|clone|fetch|pull|push))');
+});
+
+// A bare read of a webhook or a variable has already put its value in the transcripts.
+test('the audit calls a value-bearing read clean only with a --jq projection that names no value, and the skill says the outsiders lane projects metadata', () => {
+  const skill = skillText().replace(/\s+/g, ' ');
+  expect(skill).toContain('clean only with a `--jq` projection that names no value, `config` or `url`');
+  expect(skill).not.toContain('records the host and events');
+  expect(skill).toContain('projects metadata only, with `--jq`');
 });
 
 test('the post-run audit extracts tool calls first and reads its patterns from a file', () => {
@@ -122,10 +155,12 @@ test('the shared lane rules, inside HANDS_OFF, keep a lane off git network comma
   }
 });
 
+// Any mention at all, a ban included: the ban lives in HANDS_OFF, above the read lists, and every lane is handed it.
 test('no public lane brief or read list tells a lane to clone, mirror, fetch or list remote refs with git', () => {
   const source = readFileSync('.claude/workflows/security-sweep.js', 'utf8');
-  const lanes = source.slice(source.indexOf('const DISCLOSURE_READ_CALLS'));
-  expect(lanes).not.toMatch(/git ls-remote origin|git clone --mirror|mirror-clone/);
+  const start = source.indexOf('const DISCLOSURE_READ_CALLS');
+  expect(start, 'the read lists').toBeGreaterThanOrEqual(0);
+  expect(source.slice(start)).not.toMatch(/\bgit\s+(fetch|clone|pull|ls-remote)\b|mirror/i);
 });
 
 // The owner may review the run in another session, which starts from the run directory's path.

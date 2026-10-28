@@ -53,8 +53,9 @@ These entries are **omitted**, and listed in the output with the reason:
 - anything under a name that starts with a dot (`.git`, `.claude`, `.github`, `.vscode`,
   `.mcp.json`, …);
 - agent instructions (`CLAUDE.md`, `AGENTS.md`, `AGENTS.override.md`, `SKILL.md`, `*.mdc` and the
-  like, compared folded). Markdown under any other name is renamed instead (below), so a context
-  file of a tool this list does not name is inert too;
+  like, compared folded), and the two agent configurations that need no dot, `opencode.json` and
+  `crush.json`, which can launch MCP servers. Markdown under any other name is renamed instead
+  (below), so a context file of a tool this list does not name is inert too;
 - tool configurations, compared folded. An editor or build tool finds one by looking upward from a
   file, or across the whole workspace, and a configuration can run code or name code to run:
   - `*.config.js`, `.mjs`, `.cjs`, `.ts`, `.mts` or `.cts`: ESLint, Prettier, Stylelint, PostCSS,

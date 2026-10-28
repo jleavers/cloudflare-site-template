@@ -3,14 +3,16 @@
  * Content-Security-Policy on any path, directive by directive, and the sibling headers on `/*`.
  * The CSP is the browser's backstop for C2 and C3: it is what stops a bundled module, or a CSS
  * URL form the dist scan misses, from loading a third-party script that reads the contact form
- * and sends it out. Pure, so it can be tested on strings (tests/unit/security-headers.test.ts);
+ * and sends it out. No rule sets `Refresh`, and every `Link` target is relative or on site.url's
+ * origin. Pure, so it can be tested on strings (tests/unit/security-headers.test.ts);
  * tests/dist/files.test.ts applies it to dist/_headers.
  *
  * The sources below are the allow-list. They are not read back from public/_headers, because
  * this is what judges that file.
  */
-// Directive names, keywords, schemes and hosts compare ASCII case-insensitively.
-import { asciiLower } from './foreign';
+// Directive names, keywords, schemes and hosts compare ASCII case-insensitively; a header's URLs
+// are read and judged as the built pages' are.
+import { asciiLower, onSiteOrigin, refreshUrl, resolveUrl } from './foreign';
 
 /** CSP's whitespace: ASCII only. */
 const CSP_SPACE = /[\t\n\f\r ]+/;
@@ -61,6 +63,13 @@ const NONE = "'none'";
  * `frame-ancestors` have no `default-src` fallback, so leaving one out allows everything.
  */
 const CSP_EXACT = ['object-src', 'base-uri', 'form-action', 'frame-ancestors'];
+
+/**
+ * The one other exact value one of those may have: `base-uri 'none'`, stricter still, since the
+ * site sets no `<base>`. `form-action` has none: the contact form's no-JavaScript post goes to
+ * /api/contact (C5), so it stays `'self'`.
+ */
+const CSP_EXACT_ALSO: Readonly<Record<string, string>> = { 'base-uri': NONE };
 
 /**
  * The end of every message about a widening: what judges it, and whose decision it is. None of
@@ -149,6 +158,29 @@ export interface Options {
   analyticsToken?: string;
 }
 
+export interface HeadersOptions extends Options {
+  /** site.url: a `Link` target must be relative or on its origin. */
+  siteUrl: string;
+}
+
+/**
+ * A `Link` header's candidate targets: from every `<` to the next `>`, or to the end of the line
+ * when none follows, overlapping. A browser's target is one of these (RFC 8288's
+ * `<URI-Reference>`), so a `<` inside a quoted parameter, or inside a target, can only add a
+ * candidate here, never hide one, and so can a line that Cloudflare joins to another rule's.
+ */
+function linkTargets(value: string): string[] {
+  const targets: string[] = [];
+  for (let open = value.indexOf('<'); open !== -1; open = value.indexOf('<', open + 1)) {
+    const close = value.indexOf('>', open + 1);
+    targets.push(value.slice(open + 1, close === -1 ? undefined : close).trim());
+  }
+  return targets;
+}
+
+/** What judges a `Link` target, and whose decision it is. */
+const OFF_SITE = "a Link target must be relative or on site.url's origin: anything else breaks contract C2 or C3, which only the owner can change (tests/dist/headers.ts)";
+
 /** One policy's directives, as a browser parses them (CSP3 2.2.1): names folded, a repeat dropped. */
 function parsePolicy(policy: string): { directives: Map<string, string[]>; repeated: string[] } {
   const directives = new Map<string, string[]>();
@@ -182,12 +214,16 @@ export function cspProblems(value: string, options: Options = {}): string[] {
         continue;
       }
       for (const source of sources) if (!known.has(asciiLower(source))) add(`${name} allows ${source}, which is not in its list; ${BREAKS}`);
+      // A restriction that takes a value restricts nothing without it: a browser ignores it.
+      if (RESTRICTIONS.has(name) && sources.length === 0 && CSP_ALLOW_LIST[name]!.length > 0) {
+        add(`${name} has no value, so a browser ignores it; it must be ${name} ${CSP_ALLOW_LIST[name]!.join(' ')}`);
+      }
     }
     for (const name of CSP_EXACT) {
-      const expected = CSP_ALLOW_LIST[name]!.join(' ');
+      const expected = [CSP_ALLOW_LIST[name]!.join(' '), ...(CSP_EXACT_ALSO[name] ? [CSP_EXACT_ALSO[name]] : [])];
       const sources = directives.get(name);
-      if (!sources) add(`${name} is missing, and must be ${name} ${expected}; ${BREAKS}`);
-      else if (sources.map(asciiLower).join(' ') !== expected) add(`${name} must be exactly ${expected}, not ${sources.join(' ') || '(empty)'}; ${BREAKS}`);
+      if (!sources) add(`${name} is missing, and must be ${name} ${expected[0]}; ${BREAKS}`);
+      else if (!expected.includes(sources.map(asciiLower).join(' '))) add(`${name} must be exactly ${expected.join(' or ')}, not ${sources.join(' ') || '(empty)'}; ${BREAKS}`);
     }
     for (const name of CSP_REQUIRED) if (!directives.has(name)) add(`${name} is missing; ${BREAKS}`);
     for (const [name, sources] of Object.entries(mustList)) {
@@ -219,7 +255,7 @@ export interface HeaderRule {
 // "! " removes a header. A line it ignores, a line over 2,000 characters, and every rule after the
 // 100th are problems here. Where this is stricter it fails closed: Cloudflare's path validation
 // and normalisation are not copied, so only a rule written exactly `/*` counts as `/*`, and the
-// CSP is checked on every rule, whether Cloudflare would apply that rule or not.
+// CSP, Refresh and Link are checked on every rule, whether Cloudflare would apply that rule or not.
 const PATH_LINE = /^([^\s]+:\/\/|\/)/;
 const MAX_LINE = 2000;
 const MAX_RULES = 100;
@@ -264,7 +300,7 @@ export function parseHeaders(text: string): { rules: HeaderRule[]; problems: str
 }
 
 /** Every problem with a `_headers` file, each naming its line. Empty when the file passes. */
-export function headersProblems(text: string, options: Options = {}): string[] {
+export function headersProblems(text: string, options: HeadersOptions): string[] {
   const { rules, problems } = parseHeaders(text);
   const at = (rule: HeaderRule, line: number) => `_headers:${line} (${rule.path})`;
   for (const rule of rules) {
@@ -274,6 +310,21 @@ export function headersProblems(text: string, options: Options = {}): string[] {
     }
     for (const { line, name, value } of rule.set) {
       if (name === CSP) for (const problem of cspProblems(value, options)) problems.push(`${at(rule, line)}: Content-Security-Policy: ${problem}`);
+      // A page that navigates by header, wherever to, is one no check of the built pages sees.
+      if (name === 'refresh') {
+        const target = refreshUrl(value);
+        problems.push(`${at(rule, line)}: Refresh makes every page it applies to ${target === undefined ? 'reload' : `navigate to ${target}`}, and no rule may set it (tests/dist/headers.ts)`);
+      }
+      if (name === 'link') {
+        const targets = linkTargets(value);
+        if (targets.length === 0) problems.push(`${at(rule, line)}: Link has no <target> to judge; ${OFF_SITE}`);
+        for (const target of targets) {
+          const url = resolveUrl(target, options.siteUrl);
+          if (!url || !onSiteOrigin(url, options.siteUrl)) problems.push(`${at(rule, line)}: Link names ${target}${url ? `, which reaches ${url.origin}` : ', which is not a URL'}; ${OFF_SITE}`);
+        }
+        // imagesrcset's URLs are fetched like a target's, and are not in <>.
+        if (/imagesrcset/i.test(value)) problems.push(`${at(rule, line)}: Link has an imagesrcset, whose URLs this check does not read; ${OFF_SITE}`);
+      }
     }
   }
   const root = rules.filter((rule) => rule.path === '/*');

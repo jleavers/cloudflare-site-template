@@ -646,6 +646,9 @@ describe('omitting, not writing', () => {
     ['fold3/copilot-in\ufb06ructions.md', /agent instructions/],
     ['fold4/\uff21\uff27\uff25\uff2e\uff34\uff33.md', /agent instructions/],
     ['AGENTS.override.md', /agent instructions/],
+    // Ruling 129: agent configurations that need no dot, and can launch MCP servers.
+    ['opencode.json', /agent instructions/],
+    ['cfg7/Crush.JSON', /agent instructions/],
     // Ruling 89, I1: only names safe in a double-quoted shell word are written.
     ['hero`id`.png', /name has a character outside the allowed set/],
     ['assets/hero$(touch${IFS}pwned).png', /name has a character outside the allowed set/],

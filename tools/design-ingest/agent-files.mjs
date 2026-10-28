@@ -13,8 +13,13 @@
  */
 export const fold = (/** @type {string} */ name) => name.normalize('NFKC').toLowerCase().toUpperCase().toLowerCase();
 
-/** Agent-instruction file names, compared lower-cased; so is the `.mdc` suffix. */
-export const INSTRUCTIONS = new Set(['claude.md', 'claude.local.md', 'agents.md', 'agents.override.md', 'agent.md', 'skill.md', 'gemini.md', 'copilot-instructions.md']);
+/**
+ * Agent-instruction file names, compared lower-cased; so is the `.mdc` suffix. With them, the two
+ * agent configurations a tool loads under a name with no dot, `opencode.json` and `crush.json`,
+ * since each can launch MCP servers. The `.md` context-file names other tools load (`QWEN.md` and
+ * the like) are not listed: ingest renames every such file, and the tests pin that.
+ */
+export const INSTRUCTIONS = new Set(['claude.md', 'claude.local.md', 'agents.md', 'agents.override.md', 'agent.md', 'skill.md', 'gemini.md', 'copilot-instructions.md', 'opencode.json', 'crush.json']);
 
 /** True when one path segment names agent instructions: a name in INSTRUCTIONS, or a `.mdc` file, both folded. */
 export const namesAgentInstructions = (/** @type {string} */ segment) => {

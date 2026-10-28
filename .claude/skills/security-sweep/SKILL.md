@@ -43,7 +43,7 @@ different reasons:
   listing would remove precisely the evidence.
 - `outsiders` (`public`) reads repository state, which lives in no checkout: Actions permissions,
   fork pull request approval, runners, environments, rulesets, collaborators, deploy keys,
-  webhook hosts, the names of secrets and variables.
+  webhooks' metadata, the names of secrets and variables.
 - `npm-supply-chain` (`baseline`) reads the repository activity endpoint, because GitHub serves
   a force-pushed-over commit by SHA after no ref names it.
 
@@ -53,7 +53,8 @@ itself in its brief through a named read-only call list of its own (`DISCLOSURE_
 `coverage`. `outsiders`' `gh api` entries each name a path, and an entry is a path and not a
 prefix; its `gh variable list --json name` is a projection that cannot return a variable's value,
 which GitHub serves to anyone with collaborator access. A webhook's URL can carry a credential,
-so that lane records the host and events, never the rest. `npm-supply-chain` has no
+so for webhooks and deploy keys that lane projects metadata only, with `--jq` (`id`, `name`,
+`events`, `active`; `id`, `title`, `read_only`), never `config` or `url`. `npm-supply-chain` has no
 clone or mirror: a mirror fetches what a ref names, and it is after what none does. No lane runs a
 `git` network command or `ssh`, and none reads a variable's value or a webhook's URL: the shared
 rules (`HANDS_OFF`) say so, and the audit patterns below catch it.
@@ -113,8 +114,9 @@ wrangler (deploy|preview|secret|delete|login)
 npm publish
 gh [a-z]+ (create|edit|close|comment|merge|delete)
 (-X|--method) (POST|PATCH|PUT|DELETE)
-git push
-git (clone|fetch|pull|ls-remote)
+(actions/variables|environments/[^/ ]+/variables|/hooks|/keys)([^[:alnum:]_-]|$)
+git( +-[cC] +[^ ]+| +--[a-z-]+((=| +)[^ -][^ ]*)?)* +(push|clone|fetch|pull|ls-remote|remote +update|submodule +update)
+(^|[^[:alnum:]_.-])(ssh|scp|sftp)([[:space:]]|$)
 \.dev\.vars
 \.wrangler
 \.npmrc
@@ -146,17 +148,22 @@ grep -nEf "$RD/audit-patterns.txt" "$RD/audit-text.txt" | head -80
 ```
 
 The audit reads the lanes' tool calls only, never your own session's, so your phase 0 `git fetch
-origin` is not in it; a `git (clone|fetch|pull|ls-remote)` hit is a lane's, and a lane has no
-brief that explains one.
+origin` is not in it. A hit on the `git` line (a push, clone, fetch, pull, `ls-remote`, `remote
+update` or `submodule update`, with or without options such as `-C <dir>` before it) is a lane's,
+and so is one on the `ssh`, `scp` or `sftp` line; no lane has a brief that explains either.
 
 Every hit must be explained by a lane's brief. A web lane's `WebFetch` of a documentation page is
-expected; anything else is a finding about the sweep.
+expected; anything else is a finding about the sweep. A GitHub read that hits the
+`actions/variables`, `environments/<name>/variables`, `/hooks` or `/keys` line (a local
+`.git/hooks/` path hits it too, and is not one) is clean only with a `--jq` projection that
+names no value, `config` or `url`, and only from a lane whose brief names it: a bare call has
+already put a variable's value or a webhook's URL in the transcripts.
 
 A second pass for the GitHub-side question, over the same tool calls, which is expected to print
 lines:
 
 ```bash
-grep -ohE '(gh (api|issue|pr|repo|ruleset|run|search|release|workflow|cache|secret|variable)|git (ls-remote|clone|fetch|push))( [-a-zA-Z0-9@:/{}._]+)*' "$RD/audit-text.txt" | sort | uniq -c | sort -rn | head -40
+grep -ohE '(gh (api|issue|pr|repo|ruleset|run|search|release|workflow|cache|secret|variable)|git (ls-remote|clone|fetch|pull|push))( [-a-zA-Z0-9@:/{}._]+)*' "$RD/audit-text.txt" | sort | uniq -c | sort -rn | head -40
 ```
 
 Read it against the `coverage` records of the three lanes with a read list: a call no record
