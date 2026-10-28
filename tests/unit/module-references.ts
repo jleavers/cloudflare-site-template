@@ -49,6 +49,8 @@ export function moduleReferences(source: string, fileName: string): ModuleRefere
       else if (ts.isPropertyAccessExpression(callee) && isImportMeta(callee.expression) && /^glob/.test(callee.name.text)) add('import.meta.glob()', node, node.arguments[0]);
     }
     // JSDoc is not a child to forEachChild, but in a .js file its types are what the compiler checks.
+    // `jsDoc` is internal to TypeScript. If it ever goes, the rows "find a JSDoc import() type in a
+    // .js file" and "find a JSDoc @import in a .js file" (tests/unit/portability.test.ts) fail.
     for (const doc of (node as { jsDoc?: ts.Node[] }).jsDoc ?? []) visit(doc);
     ts.forEachChild(node, visit);
   };
@@ -60,12 +62,24 @@ export function moduleReferences(source: string, fileName: string): ModuleRefere
 }
 
 /**
- * C6 for one file under `root` (src/contact): every module reference must be a string literal,
- * relative, and resolve inside `root`. One message per refused reference, naming the file and line.
+ * The file's syntax errors, from the compiler's public API. An unterminated template or comment
+ * swallows the rest of a file, and the walk would see none of the references in it.
+ */
+function syntaxErrors(source: string, fileName: string): { line: number; message: string }[] {
+  const { diagnostics = [] } = ts.transpileModule(source, { fileName, reportDiagnostics: true });
+  return diagnostics.flatMap(({ file, start, messageText }) =>
+    file && start !== undefined ? [{ line: file.getLineAndCharacterOfPosition(start).line + 1, message: ts.flattenDiagnosticMessageText(messageText, ' ') }] : [],
+  );
+}
+
+/**
+ * C6 for one file under `root` (src/contact): the file must parse, and every module reference must
+ * be a string literal, relative, and resolve inside `root`. One message per problem, naming the
+ * file and line.
  */
 export function portabilityProblems(source: string, file: string, root: string): string[] {
   const name = relative(root, file).split(sep).join('/');
-  const problems: string[] = [];
+  const problems = syntaxErrors(source, file).map(({ line, message }) => `${name}:${line}: the compiler cannot parse this file: ${message}`);
   for (const { line, form, specifier, written } of moduleReferences(source, file)) {
     const at = `${name}:${line}`;
     if (specifier === undefined) problems.push(`${at}: ${form} names its module with ${written}, not a string literal`);

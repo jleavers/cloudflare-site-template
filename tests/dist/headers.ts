@@ -9,9 +9,9 @@
  * The sources below are the allow-list. They are not read back from public/_headers, because
  * this is what judges that file.
  */
+// Directive names, keywords, schemes and hosts compare ASCII case-insensitively.
+import { asciiLower } from './foreign';
 
-/** Directive names, keywords, schemes and hosts compare ASCII case-insensitively. */
-const asciiLower = (text: string) => text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
 /** CSP's whitespace: ASCII only. */
 const CSP_SPACE = /[\t\n\f\r ]+/;
 
@@ -22,11 +22,12 @@ export const TURNSTILE = 'https://challenges.cloudflare.com';
 export const ANALYTICS = { 'script-src': 'https://static.cloudflareinsights.com', 'connect-src': 'https://cloudflareinsights.com' } as const;
 
 /**
- * Every directive a policy may set, and every source each may list: the template's policy. A
- * subset passes, so a site may drop a source or a directive (one that falls back to `default-src`
- * gets `'self'` at most). Anything else fails, which is how no wildcard, bare scheme (but
- * `img-src`'s `data:`), `'unsafe-eval'`, `'unsafe-hashes'` or `'strict-dynamic'` gets in. A site
- * that genuinely needs another source adds it here, and that edit is the change a reviewer sees.
+ * Every directive a policy may set, and every source each may list: the template's policy, plus
+ * three directives that only restrict. A subset passes, so a site may drop a source or a directive
+ * (one that falls back to `default-src` gets `'self'` at most), or add a restriction. Anything
+ * else fails, which is how no wildcard, bare scheme (but `img-src`'s `data:`), `'unsafe-eval'`,
+ * `'unsafe-hashes'` or `'strict-dynamic'` gets in. A source outside these lists breaks contract
+ * C2 or C3, and only the owner changes a contract.
  */
 export const CSP_ALLOW_LIST: Readonly<Record<string, readonly string[]>> = {
   'default-src': ["'self'"],
@@ -40,24 +41,32 @@ export const CSP_ALLOW_LIST: Readonly<Record<string, readonly string[]>> = {
   'form-action': ["'self'"],
   'frame-ancestors': ["'none'"],
   'object-src': ["'none'"],
+  // Restrictions only: each forbids something the template's policy allows.
+  'upgrade-insecure-requests': [],
+  'require-trusted-types-for': ["'script'"],
+  webrtc: ["'block'"],
 };
 
+/** The directives above that take no source list. */
+const RESTRICTIONS = new Set(['upgrade-insecure-requests', 'require-trusted-types-for', 'webrtc']);
+
 /**
- * `'none'` is allowed in every directive too. Alone it matches nothing, and beside other sources
- * a browser ignores it, so it never widens one.
+ * `'none'` is allowed in every directive that takes sources, too. Alone it matches nothing, and
+ * beside other sources a browser ignores it, so it never widens one.
  */
 const NONE = "'none'";
 
 /**
- * Present in every policy, with exactly this source list. `base-uri`, `form-action` and
+ * Present in every policy, with exactly its source list above. `base-uri`, `form-action` and
  * `frame-ancestors` have no `default-src` fallback, so leaving one out allows everything.
  */
-const CSP_EXACT: Readonly<Record<string, readonly string[]>> = {
-  'object-src': ["'none'"],
-  'base-uri': ["'self'"],
-  'form-action': ["'self'"],
-  'frame-ancestors': ["'none'"],
-};
+const CSP_EXACT = ['object-src', 'base-uri', 'form-action', 'frame-ancestors'];
+
+/**
+ * The end of every message about a widening: what judges it, and whose decision it is. None of
+ * them suggests changing the lists, because a wider policy is a contract change.
+ */
+const BREAKS = 'anything wider than the lists in tests/dist/headers.ts breaks contract C2 or C3, which only the owner can change';
 
 /** Present in every policy, with sources the allow-list passes. */
 const CSP_REQUIRED = ['default-src', 'script-src', 'connect-src'];
@@ -73,7 +82,7 @@ function cspMustList(analyticsToken: string | undefined): Record<string, string[
 }
 
 function cspAllowed(analyticsToken: string | undefined): Map<string, Set<string>> {
-  const allowed = new Map(Object.entries(CSP_ALLOW_LIST).map(([name, sources]) => [name, new Set([...sources, NONE])]));
+  const allowed = new Map(Object.entries(CSP_ALLOW_LIST).map(([name, sources]) => [name, new Set(RESTRICTIONS.has(name) ? sources : [...sources, NONE])]));
   if (analyticsToken) for (const [name, source] of Object.entries(ANALYTICS)) allowed.get(name)!.add(source);
   return allowed;
 }
@@ -98,13 +107,36 @@ function hstsProblem(value: string): string | undefined {
   return undefined;
 }
 
-const exactly = (expected: string) => (value: string) => (value === expected ? undefined : `must be ${expected}, not ${value}`);
+/** The template's policy, and the three that are stricter still. One value: in a list, a browser takes the last it knows. */
+const REFERRER_POLICIES = ['no-referrer', 'same-origin', 'strict-origin', 'strict-origin-when-cross-origin'];
 
-/** The headers that sit beside the CSP on `/*`: each is set there once, with this value. */
+/** Features the template denies; a site may deny more. */
+const DENIED_FEATURES = ['camera', 'microphone', 'geolocation'];
+/** One structured-field dictionary member (RFC 9651) that denies a feature to every origin: a lower-case key and an empty inner list. */
+const DENIAL = /^([a-z*][a-z0-9_\-.*]*)=\( *\)$/;
+
+function permissionsProblem(value: string): string | undefined {
+  // Members are separated by commas with optional spaces or tabs around them, in any order. A
+  // member a browser cannot parse voids the whole header, and anything but () allows something.
+  const denied = new Set<string>();
+  for (const part of value.split(',')) {
+    const member = part.replace(/^[\t ]+|[\t ]+$/g, '');
+    const match = DENIAL.exec(member);
+    if (!match) return `has ${JSON.stringify(member)}, but every member must deny a feature with (), as camera=() does`;
+    denied.add(match[1]!);
+  }
+  const missing = DENIED_FEATURES.filter((feature) => !denied.has(feature));
+  return missing.length ? `must deny ${missing.join(', ')} with ()` : undefined;
+}
+
+/** The headers that sit beside the CSP on `/*`: each is set there once, with a value that passes. */
 const SIBLINGS: Readonly<Record<string, { name: string; problem: (value: string) => string | undefined }>> = {
   'x-content-type-options': { name: 'X-Content-Type-Options', problem: (value) => (asciiLower(value) === 'nosniff' ? undefined : `must be nosniff, not ${value}`) },
-  'referrer-policy': { name: 'Referrer-Policy', problem: exactly('strict-origin-when-cross-origin') },
-  'permissions-policy': { name: 'Permissions-Policy', problem: exactly('camera=(), microphone=(), geolocation=()') },
+  'referrer-policy': {
+    name: 'Referrer-Policy',
+    problem: (value) => (REFERRER_POLICIES.includes(value) ? undefined : `must be one of ${REFERRER_POLICIES.slice(0, -1).join(', ')} or ${REFERRER_POLICIES.at(-1)}, not ${JSON.stringify(value)}`),
+  },
+  'permissions-policy': { name: 'Permissions-Policy', problem: permissionsProblem },
   'strict-transport-security': { name: 'Strict-Transport-Security', problem: hstsProblem },
 };
 
@@ -146,20 +178,21 @@ export function cspProblems(value: string, options: Options = {}): string[] {
     for (const [name, sources] of directives) {
       const known = allowed.get(name);
       if (!known) {
-        add(`${name} is not a directive the allow-list knows`);
+        add(`${name} is not a directive the lists know; ${BREAKS}`);
         continue;
       }
-      for (const source of sources) if (!known.has(asciiLower(source))) add(`${name} allows ${source}, which the allow-list does not`);
+      for (const source of sources) if (!known.has(asciiLower(source))) add(`${name} allows ${source}, which is not in its list; ${BREAKS}`);
     }
-    for (const [name, expected] of Object.entries(CSP_EXACT)) {
+    for (const name of CSP_EXACT) {
+      const expected = CSP_ALLOW_LIST[name]!.join(' ');
       const sources = directives.get(name);
-      if (!sources) add(`${name} is missing; it must be ${name} ${expected.join(' ')}`);
-      else if (sources.map(asciiLower).join(' ') !== expected.join(' ')) add(`${name} must be exactly ${expected.join(' ')}, not ${sources.join(' ') || '(empty)'}`);
+      if (!sources) add(`${name} is missing, and must be ${name} ${expected}; ${BREAKS}`);
+      else if (sources.map(asciiLower).join(' ') !== expected) add(`${name} must be exactly ${expected}, not ${sources.join(' ') || '(empty)'}; ${BREAKS}`);
     }
-    for (const name of CSP_REQUIRED) if (!directives.has(name)) add(`${name} is missing`);
+    for (const name of CSP_REQUIRED) if (!directives.has(name)) add(`${name} is missing; ${BREAKS}`);
     for (const [name, sources] of Object.entries(mustList)) {
       const listed = (directives.get(name) ?? []).map(asciiLower);
-      for (const source of sources) if (!listed.includes(source)) add(`${name} must allow ${source}`);
+      for (const source of sources) if (!listed.includes(source)) add(`${name} must allow ${source}, ${source === TURNSTILE ? "for the contact form's Turnstile widget (C5)" : 'since the analytics token is set'}`);
     }
   });
   return problems;
@@ -180,11 +213,13 @@ export interface HeaderRule {
   unset: { line: number; name: string }[];
 }
 
-// Cloudflare's own reading of the file (workers-shared's parseHeaders, which wrangler and
+// Cloudflare's rules for what it applies (workers-shared's parseHeaders, which wrangler and
 // miniflare bundle): lines are trimmed, so indentation means nothing; a line that starts with `/`
 // or has a `scheme://` before any space starts a rule; a header's name runs to the first colon;
 // "! " removes a header. A line it ignores, a line over 2,000 characters, and every rule after the
-// 100th are problems here, so what this reads is what Cloudflare applies.
+// 100th are problems here. Where this is stricter it fails closed: Cloudflare's path validation
+// and normalisation are not copied, so only a rule written exactly `/*` counts as `/*`, and the
+// CSP is checked on every rule, whether Cloudflare would apply that rule or not.
 const PATH_LINE = /^([^\s]+:\/\/|\/)/;
 const MAX_LINE = 2000;
 const MAX_RULES = 100;
@@ -235,21 +270,21 @@ export function headersProblems(text: string, options: Options = {}): string[] {
   for (const rule of rules) {
     for (const { line, name } of rule.unset) {
       const header = SECURITY_HEADERS.get(name);
-      if (header) problems.push(`${at(rule, line)}: "! ${header}" removes a security header`);
+      if (header) problems.push(`${at(rule, line)}: "! ${header}" removes a security header; ${BREAKS}`);
     }
     for (const { line, name, value } of rule.set) {
       if (name === CSP) for (const problem of cspProblems(value, options)) problems.push(`${at(rule, line)}: Content-Security-Policy: ${problem}`);
     }
   }
   const root = rules.filter((rule) => rule.path === '/*');
-  if (!root.some((rule) => rule.set.some(({ name }) => name === CSP))) problems.push('_headers: /* sets no Content-Security-Policy');
+  if (!root.some((rule) => rule.set.some(({ name }) => name === CSP))) problems.push(`_headers: /* sets no Content-Security-Policy; ${BREAKS}`);
   for (const [key, { name, problem }] of Object.entries(SIBLINGS)) {
     const lines = rules.flatMap((rule) => rule.set.filter((header) => header.name === key).map((header) => ({ rule, ...header })));
-    if (!root.some((rule) => lines.some((line) => line.rule === rule))) problems.push(`_headers: /* sets no ${name}`);
+    if (!root.some((rule) => lines.some((line) => line.rule === rule))) problems.push(`_headers: /* sets no ${name}; ${BREAKS}`);
     lines.forEach(({ rule, line, value }, index) => {
-      if (rule.path !== '/*' || index > 0) problems.push(`${at(rule, line)}: ${name} belongs once on /* and nowhere else, since Cloudflare joins every value that applies to a response`);
+      if (rule.path !== '/*' || index > 0) problems.push(`${at(rule, line)}: ${name} belongs once on /* and nowhere else, since Cloudflare joins every value that applies to a response; ${BREAKS}`);
       const wrong = problem(value);
-      if (wrong) problems.push(`${at(rule, line)}: ${name} ${wrong}`);
+      if (wrong) problems.push(`${at(rule, line)}: ${name} ${wrong}; ${BREAKS}`);
     });
   }
   return problems;

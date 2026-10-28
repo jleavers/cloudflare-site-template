@@ -33,6 +33,7 @@ type CssToken =
   | { type: '(' | ')' | 'whitespace' | 'other' };
 
 const REPLACEMENT = String.fromCodePoint(0xfffd);
+const NUL = String.fromCodePoint(0);
 const isCssSpace = (char: string | undefined) => char === ' ' || char === '\t' || char === '\n';
 const isNameStart = (char: string | undefined) => char !== undefined && (/[A-Za-z_]/.test(char) || char.charCodeAt(0) >= 0x80);
 const isNameChar = (char: string | undefined) => isNameStart(char) || (char !== undefined && /[0-9-]/.test(char));
@@ -40,17 +41,21 @@ const isNonPrintable = (char: string) => {
   const code = char.charCodeAt(0);
   return code <= 0x08 || code === 0x0b || (code >= 0x0e && code <= 0x1f) || code === 0x7f;
 };
-const asciiLower = (text: string) => text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+/** ASCII letters only, as HTML and CSS fold names; tests/dist/headers.ts uses it too. */
+export const asciiLower = (text: string) => text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
 
 /**
  * The tokens of a stylesheet that can name a URL, read as CSS Syntax 3 section 4 reads them.
  * Escapes (a backslash, then 1 to 6 hex digits and one optional whitespace, or any other
  * character) are decoded inside names, strings and unquoted url()s, so `\75 rl(` is `url(`, and
  * an escaped quote or parenthesis stays part of its value, as it does in a browser. Comments go;
- * numbers, hashes and delimiters are "other", which can only add a match, never hide one.
+ * numbers, hashes and delimiters are "other". For the text it is given, that can only add a match,
+ * never hide one; which text a browser parses is the caller's to give it (an HTML <style> both as
+ * written and entity-decoded, since its element decides).
  */
 function cssTokens(source: string): CssToken[] {
-  const css = source.replace(/\r\n?|\f/g, '\n');
+  // CSS Syntax 3 section 3.3: CR, FF and CRLF become LF, and NUL becomes U+FFFD.
+  const css = source.replace(/\r\n?|\f/g, '\n').replaceAll(NUL, REPLACEMENT);
   const tokens: CssToken[] = [];
   let i = 0;
   const validEscape = (at: number) => css[at] === '\\' && css[at + 1] !== '\n';
@@ -266,7 +271,7 @@ export function attributeNames(raw: string): string[] {
     // A name may start with "=" (a parse error that the tokeniser keeps in the name).
     const start = i++;
     while (i < raw.length && !TAG_SPACE.test(raw[i]!) && !'/>='.includes(raw[i]!)) i++;
-    names.push(raw.slice(start, i).replace(/[A-Z]/g, (letter) => letter.toLowerCase()));
+    names.push(asciiLower(raw.slice(start, i)));
     skipSpace();
     if (raw[i] !== '=') continue;
     i++;
@@ -366,7 +371,11 @@ function htmlReferences(html: string): { references: Reference[]; repeated: stri
       const target = refreshUrl(get('content') ?? '');
       if (target !== undefined) add('content', target);
     }
-    if (tag === 'style') for (const url of cssUrls(element.text)) references.push({ element: tag, attribute: 'text', url, image: true, script: false });
+    // An HTML <style> is raw text, its entities left as written; an SVG <style> is foreign content,
+    // its entities decoded. node-html-parser cannot say which, so both readings are scanned.
+    if (tag === 'style') {
+      for (const url of new Set([...cssUrls(element.rawText), ...cssUrls(element.text)])) references.push({ element: tag, attribute: 'text', url, image: true, script: false });
+    }
   }
   return { references, repeated };
 }

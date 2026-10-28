@@ -115,6 +115,10 @@ describe('portabilityProblems refuses', () => {
     ['a triple-slash path out of src/contact', '/// <reference path="../worker.ts" />\nexport {};'],
     ['import.meta.glob() out of src/contact', "const all = import.meta.glob('../config/*.ts');"],
     ['a quoted import out of src/contact', "import { site } from '../config/site';"],
+    // A file the compiler cannot parse hides what follows the error (20r round 1).
+    ['an unterminated template literal before an import()', "const s = `abc\nconst m = await import('node:fs');"],
+    ['an unterminated comment before an import()', "/* abc\nconst m = await import('node:fs');"],
+    ['a syntax error before an import()', "const x = ;\nconst m = await import('./ok');"],
   ])('%s', (_name, source) => {
     expect(problemsIn(source)).not.toEqual([]);
   });
@@ -123,6 +127,7 @@ describe('portabilityProblems refuses', () => {
     expect(problemsIn('const ok = 1;\nconst m = await import(name);')).toEqual(['fixture.ts:2: import() names its module with name, not a string literal']);
     expect(problemsIn("const ok = 1;\n\nimport { site } from '../config/site';")).toEqual(['fixture.ts:3: ../config/site leaves src/contact']);
     expect(problemsIn('const ok = 1;\nconst x = require(`x`);')).toEqual(['fixture.ts:2: x is not a relative import']);
+    expect(problemsIn('const ok = 1;\nconst s = `abc;')).toEqual(['fixture.ts:2: the compiler cannot parse this file: Unterminated template literal.']);
   });
 });
 

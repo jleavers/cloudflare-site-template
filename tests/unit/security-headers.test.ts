@@ -70,6 +70,17 @@ describe('headersProblems refuses', () => {
     ['X-Content-Type-Options missing', edit(['  X-Content-Type-Options: nosniff\n', ''])],
     ['Referrer-Policy widened', edit(['strict-origin-when-cross-origin', 'unsafe-url'])],
     ['Permissions-Policy widened', edit(['camera=()', 'camera=*'])],
+    // Tightening passes, widening never does (20r round 1).
+    ['a Referrer-Policy list that ends in a wider policy', edit(['strict-origin-when-cross-origin', 'no-referrer, unsafe-url'])],
+    ['a Permissions-Policy feature allowed to self', edit(['geolocation=()', 'geolocation=(), payment=(self)'])],
+    ['a Permissions-Policy feature allowed to all', edit(['geolocation=()', 'geolocation=(), usb=*'])],
+    ['a Permissions-Policy feature repeated wider', edit(['geolocation=()', 'geolocation=(), camera=*'])],
+    ['a Permissions-Policy without geolocation', edit([', geolocation=()', ''])],
+    ['a Permissions-Policy a browser cannot parse (spaces around =)', edit(['camera=()', 'camera = ()'])],
+    ['a Permissions-Policy a browser cannot parse (a capital)', edit(['camera=()', 'Camera=()'])],
+    ['a Permissions-Policy a browser cannot parse (a trailing comma)', edit(['geolocation=()', 'geolocation=(),'])],
+    ["webrtc 'allow'", edit([SCRIPT_SRC, `${SCRIPT_SRC}; webrtc 'allow'`])],
+    ['upgrade-insecure-requests with a value', edit([SCRIPT_SRC, `${SCRIPT_SRC}; upgrade-insecure-requests https://evil.example`])],
     ['HSTS missing', edit(['  Strict-Transport-Security: max-age=31536000\n', ''])],
     ['HSTS with max-age twice', edit(['max-age=31536000\n', 'max-age=31536000; max-age=300\n'])],
     ['HSTS set again on another path', plus('/blog/*\n  Strict-Transport-Security: max-age=31536000')],
@@ -92,7 +103,29 @@ describe('headersProblems refuses', () => {
 
   test('names the line, the path, the directive and the source', () => {
     const problems = headersProblems(plus(`/blog/*\n  Content-Security-Policy: ${BASE_CSP.replace("connect-src 'self'", "connect-src 'self' https://evil.example")}`));
-    expect(problems).toEqual(['_headers:10 (/blog/*): Content-Security-Policy: connect-src allows https://evil.example, which the allow-list does not']);
+    expect(problems).toEqual([
+      '_headers:10 (/blog/*): Content-Security-Policy: connect-src allows https://evil.example, which is not in its list; anything wider than the lists in tests/dist/headers.ts breaks contract C2 or C3, which only the owner can change',
+    ]);
+  });
+
+  // A stamped site's agent reads these: each names what judges it and that the contract is the owner's.
+  test.each([
+    ['a source outside the list', edit([SCRIPT_SRC, `${SCRIPT_SRC} https://evil.example`])],
+    ['an unknown directive', edit([SCRIPT_SRC, `${SCRIPT_SRC}; script-src-elem https://evil.example`])],
+    ['a missing object-src', edit(["; object-src 'none'", ''])],
+    ['a removed CSP', plus('/blog/*\n  ! Content-Security-Policy')],
+    ['a wider Referrer-Policy', edit(['strict-origin-when-cross-origin', 'unsafe-url'])],
+    ['a wider Permissions-Policy', edit(['camera=()', 'camera=*'])],
+    ['a shorter HSTS', edit(['max-age=31536000\n', 'max-age=300\n'])],
+    ['a missing X-Content-Type-Options', edit(['  X-Content-Type-Options: nosniff\n', ''])],
+  ])('names tests/dist/headers.ts and the owner on %s, and invites no edit', (_name, text) => {
+    const problems = headersProblems(text);
+    expect(problems).not.toEqual([]);
+    for (const problem of problems) {
+      expect(problem).toContain('tests/dist/headers.ts');
+      expect(problem).toContain('breaks contract C2 or C3, which only the owner can change');
+      expect(problem).not.toMatch(/\b(add|edit|extend|widen)\b/i);
+    }
   });
 });
 
@@ -107,6 +140,15 @@ describe('headersProblems allows', () => {
     ['comments, blank lines and CRLF', `# Security headers\r\n\r\n${BASE.replaceAll('\n', '\r\n')}`],
     ['a longer HSTS with includeSubDomains and preload', edit(['max-age=31536000\n', 'max-age=63072000; includeSubDomains; preload\n'])],
     ['a "!" line that removes another header', plus('/blog/*\n  ! Cache-Control')],
+    // Tightening passes (20r round 1).
+    ['Referrer-Policy: no-referrer', edit(['strict-origin-when-cross-origin', 'no-referrer'])],
+    ['Referrer-Policy: same-origin', edit(['strict-origin-when-cross-origin', 'same-origin'])],
+    ['Referrer-Policy: strict-origin', edit(['strict-origin-when-cross-origin', 'strict-origin'])],
+    ['a reordered, respaced Permissions-Policy', edit(['camera=(), microphone=(), geolocation=()', 'geolocation=(),camera=( ),\tmicrophone=()'])],
+    ['more Permissions-Policy features denied', edit(['geolocation=()', 'geolocation=(), payment=(), usb=()'])],
+    ['upgrade-insecure-requests', edit([SCRIPT_SRC, `${SCRIPT_SRC}; upgrade-insecure-requests`])],
+    ["require-trusted-types-for 'script'", edit([SCRIPT_SRC, `${SCRIPT_SRC}; require-trusted-types-for 'script'`])],
+    ["webrtc 'block'", edit([SCRIPT_SRC, `${SCRIPT_SRC}; webrtc 'block'`])],
   ])('%s', (_name, text) => {
     expect(headersProblems(text)).toEqual([]);
   });

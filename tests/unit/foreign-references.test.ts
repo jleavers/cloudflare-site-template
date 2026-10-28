@@ -38,6 +38,13 @@ describe('foreignInHtml refuses', () => {
     ['an image whose src is repeated in capitals', '<img src="https://evil.example.net/x.png" SRC="/favicon.svg">'],
     ['a script whose src is repeated in capitals', '<script src="https://evil.example.net/x.js" SRC="/_astro/x.js"></script>'],
     ['a repeated name even when the first copy is on the site', '<img src="/favicon.svg" src="https://evil.example.net/x.png">'],
+    // An HTML <style> is raw text in a browser: an entity there is not decoded, so it can neither
+    // open a string nor close a comment (20r round 1).
+    ["a <style> url() between two &#39; entities", '<style>a{b:&#39;} c{d:url(https://evil.example/x)} e{f:&#39;}</style>'],
+    ['a <style> url() between two &quot; entities', '<style>a{b:&quot;} c{d:url(https://evil.example/x)} e{f:&quot;}</style>'],
+    ['a <style> url() between entity-encoded comment markers', '<style>&#47;*{} a{background:url(https://evil.example/x)} *&#47;{}</style>'],
+    // In SVG the same element is foreign content, and its entities are decoded.
+    ['an SVG <style> url() whose quotes are entities', '<svg><style>a{b:url(&quot;https://evil.example/x&quot;)}</style></svg>'],
   ])('%s', (_name, markup) => {
     expect(html(markup)).not.toEqual([]);
   });
@@ -124,6 +131,8 @@ describe('foreignInCss', () => {
     ['@import with a comment before its string', "@import/**/'https://evil.example/x.css';"],
     ['an escaped @import', String.raw`@\69 mport "https://evil.example/x.css";`],
     ['a url() string followed by a modifier', 'a{background:url("https://evil.example/x" cross-origin(anonymous))}'],
+    // CSS reads a NUL as U+FFFD before it tokenizes (20r round 1).
+    ['a NUL in an unquoted url()', `a{b:url(https://evil.example/a${String.fromCodePoint(0)}b)}`],
   ])('refuses %s', (_name, source) => {
     expect(css(source)).not.toEqual([]);
   });
