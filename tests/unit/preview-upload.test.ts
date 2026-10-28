@@ -82,6 +82,36 @@ const ROUTES: [string, RegExp, () => { status: number; body: string }][] = [
 ];
 const API = `/client/v4/accounts/${FAKE_ACCOUNT_ID}/workers`;
 
+// ROUTES answers one wrangler version's requests, and wrangler changes them between releases, so the
+// preview runs below hold only for the version they were written for (Ruling 103). After an update,
+// the template fails here until someone re-checks the preview path and updates ROUTES and this
+// version. A site stamped from the template, whose monthly dependency pull request would otherwise
+// stay red until its owner rewrote the stub, skips the preview runs instead; its previews then rest
+// on trusted-config.mjs's settings and the workflow pins (trusted-config and ci-workflow tests).
+const STUB_WRANGLER = '4.149.0';
+const INSTALLED_WRANGLER = (JSON.parse(readFileSync(root('node_modules/wrangler/package.json'), 'utf8')) as { version: string }).version;
+const STUB_MATCHES = INSTALLED_WRANGLER === STUB_WRANGLER;
+// The marker docs.test.ts uses: a stamped site replaces README.md (new-site step 9a).
+const TEMPLATE_REPOSITORY = (() => {
+  try {
+    return readFileSync(root('README.md'), 'utf8').split(/\r?\n/, 1)[0] === '# cloudflare-site-template';
+  } catch {
+    return false;
+  }
+})();
+
+describe.runIf(TEMPLATE_REPOSITORY)('the API stub, in the template', () => {
+  test("answers the installed wrangler's requests", () => {
+    expect(
+      INSTALLED_WRANGLER,
+      `ROUTES answers wrangler ${STUB_WRANGLER}'s preview requests, and ${INSTALLED_WRANGLER} is installed: re-check what its preview command reads and uploads (cli.js previewHandler, buildWorker's no-bundle path), then update ROUTES and STUB_WRANGLER so the RED and GREEN runs below pass`,
+    ).toBe(STUB_WRANGLER);
+  });
+});
+if (!STUB_MATCHES && !TEMPLATE_REPOSITORY) {
+  test.skip(`the preview upload runs were written for wrangler ${STUB_WRANGLER}, and this site has ${INSTALLED_WRANGLER}: previews rest on the trusted-config and ci-workflow tests`, () => {});
+}
+
 const server = createServer((request, response) => {
   const chunks: Buffer[] = [];
   request.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -224,7 +254,7 @@ async function preview(dir: string, config: string) {
 const worker = (dir: string) => readFileSync(join(dir, 'bundle', 'worker.js'));
 const holdsSecret = (bytes: Buffer) => bytes.includes(SECRET);
 
-describe('RED: what wrangler uploads from a config that leaves it a way to read the runner', () => {
+describe.runIf(STUB_MATCHES)('RED: what wrangler uploads from a config that leaves it a way to read the runner', () => {
   test(
     'with the trusted wrangler.jsonc copied in, as the job did, wrangler bundles the imported file into worker.js',
     async () => {
@@ -252,7 +282,7 @@ describe('RED: what wrangler uploads from a config that leaves it a way to read 
   );
 });
 
-describe('GREEN: what wrangler uploads from the config trusted-config.mjs writes', () => {
+describe.runIf(STUB_MATCHES)('GREEN: what wrangler uploads from the config trusted-config.mjs writes', () => {
   /** worker.js byte for byte, dist/_headers (which wrangler sends as a module), and nothing else; no request carries the secret. */
   function expectOnlyWorker(dir: string, run: Awaited<ReturnType<typeof preview>>) {
     expect([...run.uploads.keys()].sort()).toEqual(['_headers', 'worker.js']);
