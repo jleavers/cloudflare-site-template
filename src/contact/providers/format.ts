@@ -30,8 +30,11 @@ export function slackEscape(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/** A visitor field for Slack code: escaped, and with each backtick a quote, so it cannot close its code early. */
-const slackCode = (text: string): string => slackEscape(text).replace(/`/g, "'");
+/** U+02CB, the modifier letter grave accent: it looks like a backtick, is distinct from an apostrophe, and closes no code. */
+const SLACK_BACKTICK = String.fromCodePoint(0x2cb);
+
+/** A visitor field for Slack code: escaped, and with each backtick shown as U+02CB, so it cannot close its code early. */
+const slackCode = (text: string): string => slackEscape(text).replace(/`/g, SLACK_BACKTICK);
 
 /** Slack: each visitor field in code, which "will not use any other formatting" (Slack, Formatting message text). */
 export function formatSlack(submission: Submission, siteHost: string) {
@@ -67,6 +70,8 @@ export function formatTeams(submission: Submission, siteHost: string) {
       { type: 'TextBlock', text: `New enquiry via ${siteHost}`, weight: 'Bolder', size: 'Medium', wrap: true },
       teamsField('Name', submission.name),
       teamsField('Email', submission.email),
+      // One block for the whole message: a block per line could pass Teams' card size limit for a
+      // 5,000-character message of short lines. Its text is literal either way.
       { type: 'RichTextBlock', inlines: teamsRuns(submission.message) },
     ],
   };

@@ -14,7 +14,18 @@ export const LIMITS = { name: 100, email: 254, message: 5000 } as const;
 
 /** ZWNJ and ZWJ (U+200C, U+200D) are the Cf characters Persian and Indic names need. */
 const NAME_REFUSES = /[\p{Cc}\p{Zl}\p{Zp}]|(?![\u200C\u200D])\p{Cf}/u;
+/**
+ * Default-ignorable code points render as nothing (U+034F, the Hangul fillers, unassigned ones),
+ * but for ZWNJ, ZWJ, the variation selectors (emoji presentation; CJK ideographic variants in
+ * Japanese names) and the Mongolian free variation selectors.
+ */
+const NAME_IGNORABLE = /(?![\u180B-\u180F\u200C\u200D\uFE00-\uFE0F\u{E0100}-\u{E01EF}])\p{Default_Ignorable_Code_Point}/u;
+/** No script stacks more than 8 combining marks on one letter. */
+const MARK_PILE = /\p{M}{9}/u;
+const LETTER = /\p{L}/u;
 const EMAIL_REFUSES = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+/** "=?" opens an RFC 2047 encoded-word, which a mail client decodes in a header. No name or address needs it. */
+const ENCODED_WORD = /=\?/;
 /** Stripped, not refused, so a long message is never lost to an invisible character. */
 const MESSAGE_STRIPS = /(?![\t\n])\p{Cc}|[\p{Zl}\p{Zp}\u202A-\u202E\u2066-\u2069]/gu;
 
@@ -39,12 +50,15 @@ export function validate(input: {
 
   if (name === '') errors.name = 'Please enter your name.';
   else if (name.length > LIMITS.name) errors.name = `Please keep your name to ${LIMITS.name} characters or fewer.`;
-  else if (NAME_REFUSES.test(name)) errors.name = 'Your name contains characters we can’t accept.';
+  else if ([NAME_REFUSES, NAME_IGNORABLE, MARK_PILE, ENCODED_WORD].some((rule) => rule.test(name)) || !LETTER.test(name)) {
+    errors.name = 'Your name contains characters we can’t accept.';
+  }
 
-  // A control, format or separator character gets its own error: the address it hides in can look valid.
+  // A refused character gets its own error: the address it hides in can look valid.
   if (email === '') errors.email = 'Please enter your email address.';
-  else if (EMAIL_REFUSES.test(email)) errors.email = 'Your email address contains characters we can’t accept.';
-  else if (email.length > LIMITS.email || !BARE_ADDRESS.test(email)) errors.email = 'Please enter a valid email address.';
+  else if (EMAIL_REFUSES.test(email) || ENCODED_WORD.test(email)) {
+    errors.email = 'Your email address contains characters we can’t accept.';
+  } else if (email.length > LIMITS.email || !BARE_ADDRESS.test(email)) errors.email = 'Please enter a valid email address.';
 
   if (message === '') errors.message = 'Please enter a message.';
   else if (message.length > LIMITS.message) {

@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from 'vitest';
 import type { ContactConfig, ProviderName } from '../../../src/contact/config';
 import { handleContact } from '../../../src/contact/handler';
 import type { Logger } from '../../../src/contact/logger';
-import { formatText, redactEmail, slackEscape } from '../../../src/contact/providers/format';
+import { formatSlack, formatText, redactEmail, slackEscape } from '../../../src/contact/providers/format';
 import { providers } from '../../../src/contact/providers/index';
 import { RESEND_URL } from '../../../src/contact/providers/resend';
 import { DeliveryError, postJson, type DeliveryContext } from '../../../src/contact/providers/types';
@@ -88,6 +88,13 @@ describe('slack', () => {
   test('slackEscape handles the three control characters', () => {
     expect(slackEscape('a & <b> c')).toBe('a &amp; &lt;b&gt; c');
   });
+
+  test("shows a backtick as U+02CB, so o'neill and o`neill stay distinct", () => {
+    const apostrophe = formatSlack({ ...submission, email: "o'neill@example.com" }, host).text;
+    const backtick = formatSlack({ ...submission, email: 'o`neill@example.com' }, host).text;
+    expect(apostrophe).toContain("*Email:* `o'neill@example.com`");
+    expect(backtick).toContain(`*Email:* \`o${String.fromCodePoint(0x2cb)}neill@example.com\``);
+  });
 });
 
 describe('teams', () => {
@@ -163,6 +170,12 @@ export interface CorpusEntry {
   after?: string | null;
 }
 
+/** A string from code points: an editor or tool cannot turn these into the invisible characters themselves. */
+const cp = (...points: number[]) => String.fromCodePoint(...points);
+
+/** How Slack shows a visitor's backtick: U+02CB, visible and distinct from an apostrophe (Ruling 114). */
+const SLACK_BACKTICK = cp(0x2cb);
+
 /**
  * One corpus, through validate() and then through every provider in `providers`, every field of
  * every delivery checked by that provider's entry in LITERAL. A provider added later fails the
@@ -188,6 +201,19 @@ export const HOSTILE_CORPUS: readonly CorpusEntry[] = [
   { field: 'name', label: 'a soft hyphen', value: 'Ada\u00ADLovelace', after: null },
   { field: 'name', label: 'a Persian name with ZWNJ', value: 'علی\u200Cرضا' },
   { field: 'name', label: 'an accented name', value: 'Zoë Ångström' },
+  // Ruling 112: an RFC 2047 encoded-word, which a mail client decodes in the subject (this one is an RLO).
+  { field: 'name', label: 'an RFC 2047 encoded-word', value: '=?UTF-8?B?4oCu?=', after: null },
+  // Ruling 113: default-ignorable code points, a name with no letter, and an impossible stack of marks.
+  { field: 'name', label: 'a Hangul filler', value: cp(0x3164), after: null },
+  { field: 'name', label: 'a combining grapheme joiner', value: `Ada${cp(0x34f)}Lovelace`, after: null },
+  { field: 'name', label: 'an unassigned default-ignorable', value: `Ada${cp(0x2065)}Lovelace`, after: null },
+  { field: 'name', label: 'only ZWNJ', value: cp(0x200c), after: null },
+  { field: 'name', label: 'a letter with 9 combining marks', value: `Ada${cp(0x301).repeat(9)}`, after: null },
+  { field: 'name', label: 'an emoji with a variation selector', value: `Ada ${cp(0x2764, 0xfe0f)}` },
+  { field: 'name', label: 'a Japanese name with an ideographic variation selector', value: `葛${cp(0xe0100)}城 花子` },
+  { field: 'name', label: 'a Mongolian name with a free variation selector', value: cp(0x182a, 0x180b, 0x1820, 0x1832, 0x1824) },
+  { field: 'name', label: 'a Vietnamese name with its marks decomposed', value: 'Nguyễn Thị Ánh'.normalize('NFD') },
+  { field: 'name', label: 'a Tibetan name with a stack of marks', value: cp(0xf66, 0xf92, 0xfb2, 0xf7c, 0xf63, 0xf0b, 0xf58) },
 
   // The email keeps what a dot-atom allows, and refuses invisible characters and anything that is
   // not a bare address.
@@ -208,6 +234,7 @@ export const HOSTILE_CORPUS: readonly CorpusEntry[] = [
   { field: 'email', label: 'a soft hyphen', value: 'ada@exam\u00ADple.com', after: null },
   { field: 'email', label: 'a + address', value: 'ada+enquiries@example.com' },
   { field: 'email', label: 'non-ASCII letters', value: 'zoë@bücher.example' },
+  { field: 'email', label: 'an RFC 2047 encoded-word', value: '=?UTF-8?B?4oCu?=@example.com', after: null },
 
   // The message keeps markup and strips invisible controls; it is never refused for a character.
   { field: 'message', label: 'triple backticks', value: 'Hi\n```\n*out of the fence*\n```' },
@@ -302,8 +329,8 @@ const LITERAL: Record<ProviderName, (sent: Delivery, s: Submission) => void> = {
     expect(fields, text).not.toBeNull();
     // No unescaped < or >, so no mention or link, and every & begins one of the three entities.
     expect(text).not.toMatch(/[<>]|&(?!amp;|lt;|gt;)/);
-    // What Slack displays is the visitor's text, with each backtick shown as a quote.
-    expect(fields?.slice(1).map(slackDisplays)).toEqual([s.name, s.email, s.message].map((field) => field.replace(/`/g, "'")));
+    // What Slack displays is the visitor's text, with each backtick shown as U+02CB.
+    expect(fields?.slice(1).map(slackDisplays)).toEqual([s.name, s.email, s.message].map((field) => field.replace(/`/g, SLACK_BACKTICK)));
   },
   teams(sent, s) {
     const message = sentBody(sent);

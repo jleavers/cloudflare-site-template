@@ -3,6 +3,9 @@ import { LIMITS, validate } from '../../../src/contact/validate';
 
 const ok = { name: 'Ada Lovelace', email: 'ada@example.com', message: 'Hello there.' };
 
+/** A string from code points: an editor or tool cannot turn these into the invisible characters themselves. */
+const cp = (...points: number[]) => String.fromCodePoint(...points);
+
 function errorsFor(input: Parameters<typeof validate>[0]): string[] {
   const result = validate(input);
   return result.ok ? [] : Object.keys(result.errors).sort();
@@ -36,9 +39,10 @@ describe('validate', () => {
 
   // Review focus 1: the browser's maxlength counts UTF-16 code units, so the server must too,
   // or a form the browser accepted comes back rejected.
+  // A name needs a letter (Ruling 113), so two of the 100 code units are letters.
   test('counts length in UTF-16 code units, as maxlength does', () => {
-    expect(errorsFor({ ...ok, name: '😀'.repeat(LIMITS.name / 2) })).toEqual([]);
-    expect(errorsFor({ ...ok, name: `${'😀'.repeat(LIMITS.name / 2)}x` })).toEqual(['name']);
+    expect(errorsFor({ ...ok, name: `Ad${'😀'.repeat(LIMITS.name / 2 - 1)}` })).toEqual([]);
+    expect(errorsFor({ ...ok, name: `Ad${'😀'.repeat(LIMITS.name / 2 - 1)}x` })).toEqual(['name']);
   });
 
   test.each(['Zoë Ångström', '山田太郎', 'Siân O’Neill', 'José-María', 'مريم'])('accepts the name %s', (name) => {
@@ -79,6 +83,40 @@ describe('validate', () => {
     expect(validate({ ...ok, name })).toEqual({ ok: true, value: { ...ok, name } });
   });
 
+  // Ruling 112: "=?" opens an RFC 2047 encoded-word, which a mail client decodes in the subject.
+  // Ruling 113: default-ignorable code points render as nothing, and no script stacks 9 marks.
+  test.each([
+    ['an RFC 2047 encoded-word', '=?UTF-8?B?4oCu?='],
+    ['a Q-encoded word', 'Ada =?utf-8?q?=E2=80=AE?= Lovelace'],
+    ['a Hangul filler', `Ada${cp(0x3164)}Lovelace`],
+    ['a halfwidth Hangul filler', `Ada${cp(0xffa0)}Lovelace`],
+    ['a combining grapheme joiner', `Ada${cp(0x34f)}Lovelace`],
+    ['an unassigned default-ignorable', `Ada${cp(0x2065)}Lovelace`],
+    ['nine combining marks in a row', `Ada${cp(0x301).repeat(9)}`],
+  ])('refuses %s in the name', (_label, name) => {
+    expect(validate({ ...ok, name })).toEqual({ ok: false, errors: { name: 'Your name contains characters we can’t accept.' } });
+  });
+
+  test.each([
+    ['a Hangul filler alone', cp(0x3164)],
+    ['ZWNJ alone', cp(0x200c)],
+    ['ZWNJ and ZWJ', cp(0x200c, 0x200d)],
+    ['digits and punctuation', '1234 !'],
+    ['emoji', '😀😀'],
+  ])('refuses a name with no letter: %s', (_label, name) => {
+    expect(validate({ ...ok, name })).toEqual({ ok: false, errors: { name: 'Your name contains characters we can’t accept.' } });
+  });
+
+  test.each([
+    ['an ideographic variation selector, in a Japanese name', `葛${cp(0xe0100)}城 花子`],
+    ['a Mongolian free variation selector', cp(0x182a, 0x180b, 0x1820, 0x1832, 0x1824)],
+    ['Vietnamese marks, decomposed', 'Nguyễn Thị Ánh'.normalize('NFD')],
+    ['a Tibetan stack of three marks', cp(0xf66, 0xf92, 0xfb2, 0xf7c, 0xf63, 0xf0b, 0xf58)],
+    ['eight combining marks in a row', `Ada${cp(0x301).repeat(8)}`],
+  ])('accepts %s in the name', (_label, name) => {
+    expect(validate({ ...ok, name })).toEqual({ ok: true, value: { ...ok, name } });
+  });
+
   test.each([
     'ada@example.com\r\nBcc: x@example.com',
     'ada lovelace@example.com',
@@ -100,6 +138,7 @@ describe('validate', () => {
     ['ZWNJ', 'ada\u200C@example.com'],
     ['a soft hyphen', 'ada@exam\u00ADple.com'],
     ['a tag character', 'ada@example.com\u{E0041}'],
+    ['an RFC 2047 encoded-word', '=?UTF-8?B?4oCu?=@example.com'],
   ])('refuses %s in the email, saying so', (_label, email) => {
     expect(validate({ ...ok, email })).toEqual({ ok: false, errors: { email: 'Your email address contains characters we can’t accept.' } });
   });
@@ -124,11 +163,12 @@ describe('validate', () => {
     expect(validate({ ...ok, email })).toEqual({ ok: false, errors: { email: 'Please enter a valid email address.' } });
   });
 
+  // Every atext symbol, with "=" kept apart from "?": together they open an encoded-word (Ruling 112).
   test.each([
     'ada+enquiries@example.com',
     'ada.lovelace@mail.example.co.uk',
     "o'neill@example.com",
-    "!#$%&'*+/=?^_`{|}~-@example.com",
+    "!#$%&'*+/=^_`{|}~?-@example.com",
     'zoë@bücher.example',
   ])('accepts the bare address %s', (email) => {
     expect(validate({ ...ok, email })).toEqual({ ok: true, value: { ...ok, email } });
