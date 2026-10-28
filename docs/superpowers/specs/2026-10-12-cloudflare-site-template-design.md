@@ -167,7 +167,7 @@ Every stamped-out site must satisfy these, whatever its design. AGENTS.md states
 | C3 | No client framework. No third-party scripts except Turnstile, and the Cloudflare Web Analytics beacon when it is enabled. | dist: script `src` allow-list, and every CSP in the built `_headers` held directive by directive to the allow-list in `tests/dist/headers.ts` (§8); package.json has no react, vue, svelte, preact, solid or alpinejs |
 | C4 | Every page renders through `BaseLayout`. | dist: every HTML page has `<title>`, meta description, canonical, `og:title`, `og:description`, an absolute `og:image` URL and `lang` |
 | C5 | `ContactForm` markup may be restyled, but its contract is fixed: `form[data-contact-form]`, `action="/api/contact"`, `method="post"`, fields `name`, `email`, `message`, `_gotcha` (hidden), a `[data-turnstile]` container, a `[data-status]` live region, and the bundled submit script. | dist checks the structure; e2e checks the behaviour |
-| C6 | The worker stays portable: `src/contact/**` uses only Web-standard APIs, and no KV, D1, Durable Objects or other proprietary bindings are added unless explicitly instructed. | unit tests on Node; a test asserts no `cloudflare:` imports in `src/contact` |
+| C6 | The worker stays portable: `src/contact/**` uses only Web-standard APIs, and no KV, D1, Durable Objects or other proprietary bindings are added unless explicitly instructed. | unit tests on Node; a test walks each file's TypeScript AST and holds every module reference in `src/contact` to a relative string literal that resolves inside it |
 | C7 | The template's example values, and a design's `[bracketed]` placeholders, may be deployed to a workers.dev demo that delivers only to `log`, which is how the demo works, but never to a live site: one whose `wrangler.jsonc` has a custom domain or sets `DELIVERY_PROVIDER` to `resend`, `slack` or `teams`. The handler adds two refusals: a Turnstile test secret with any provider but `log`, and a form posted from a cleartext origin that is not loopback. | `npm run preflight` (§11.3), run by CI's `verify` job, which the `deploy` job needs; unit tests on `readConfig` and `handleContact` |
 
 ## 6. Site configuration and inputs
@@ -542,7 +542,7 @@ It only warns when `design/SOURCE.md` and `design/bundle/` are both absent.
   - `readConfig`: missing values are reported per provider.
   - `handleContact`: every row of §7.3, plus the honeypot sending nothing.
   - `worker.ts` routing, with a stub `ASSETS`.
-  - C6: no file under `src/contact/` imports a `cloudflare:` specifier, any package, or any module outside `src/contact/`.
+  - C6: no file under `src/contact/` imports a `cloudflare:` specifier, any package, or any module outside `src/contact/`. The test reads each file with the TypeScript compiler API, so it finds every module reference the compiler sees: import and export declarations, `import()` and `require()` calls, `import x = require()`, type-only `import()` types, and triple-slash references. A reference whose name is not a string literal (an identifier, a template with a substitution, a concatenation) fails, with its file and line.
 - **Dist contracts** (`tests/dist/`) cover C2 to C5 over every HTML file in `dist/`. They also check that `sitemap-index.xml`, `robots.txt`, `404.html` and `_headers` exist, that `robots.txt` names the sitemap with an absolute URL, and that every CSP and security header in the built `_headers` passes the allow-list (§8).
 - **Preflight** (`tests/preflight/`): §11.3.
 - **E2E** (`tests/e2e/`, Chromium):
