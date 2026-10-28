@@ -75,12 +75,16 @@ names that one account's folder and no other:
 (`sed` runs as you, so `$HOME` is yours; `tee` writes the file as root, and no world-writable
 temporary file exists.) The tracked profile keeps AppArmor's `@{HOME}`, which is `/home/*/` and
 `/root/`, because a profile that names one account cannot be committed; the install narrows it.
+For a self-hosted runner, substitute the runner account's home instead, for example
+`sed "s|@{HOME}/|/home/<runner-account>/|" …`, with the rest of the install unchanged. A runner
+runs as an account of its own, with no `sudo`, so you run the install for it, naming its home.
 
 The installed profile names Playwright's default browser folder, `$HOME/.cache/ms-playwright/`, for
-the account that ran the install, so any other account, and an account whose home is elsewhere, is
-not covered. The profile has one name, so a second account on the same machine that runs the install
-replaces the first's: it is one account per machine. It does not cover browsers installed elsewhere,
-with `PLAYWRIGHT_BROWSERS_PATH` or under an `XDG_CACHE_HOME` of their own. The trade-off: it lets any
+the account that ran the install (or the runner account it named), wherever its home is, so any
+other account is not covered. The profile has one name, so a second account on the same machine
+that runs the install replaces the first's: it is one account per machine. It does not cover
+browsers installed elsewhere, with `PLAYWRIGHT_BROWSERS_PATH` or under an `XDG_CACHE_HOME` of
+their own. The trade-off: it lets any
 program at those paths, which that account can write, create user namespaces, so it gives back part
 of what Ubuntu's restriction takes away for that account. Without it, design screens are read as
 source on that machine. Chromium also refuses its sandbox to root, on any Linux: run as an ordinary

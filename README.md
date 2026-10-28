@@ -328,11 +328,11 @@ the pull request's `dist/`: the preview job refuses both ([why](#cloudflare-api-
 
 **Short of GitHub Actions minutes?** CI's checks can run on a self-hosted runner (set
 `CI_LINUX_RUNNER`, private repositories only). On an Ubuntu 23.10 or later runner, install the
-AppArmor profile on that machine once (`tools/screenshots/README.md`, "Chromium's sandbox"), or its
-design-fence tests refuse and deploys wait. Before the repository goes public, remove the
-runner's registration (Settings → Actions → Runners), not only the variable: on a public
-repository a fork's pull request runs the fork's own workflow file, which can name the runner's
-`self-hosted` label directly. The deploy and preview jobs always run on
+AppArmor profile on that machine once, for the runner's account (`tools/screenshots/README.md`,
+"Chromium's sandbox"), or its design-fence tests refuse and deploys wait. Before the repository
+goes public, remove the runner's registration (Settings → Actions → Runners), not only the
+variable: on a public repository a fork's pull request runs the fork's own workflow file, which
+can name the runner's `self-hosted` label directly. The deploy and preview jobs always run on
 GitHub-hosted runners, because they hold the Cloudflare token, and so does `verify` on a push to
 `main`, because it builds what deploys: each push to `main` spends hosted minutes twice. With none
 left, a private repository's deploys wait until the minutes return; a public repository's hosted

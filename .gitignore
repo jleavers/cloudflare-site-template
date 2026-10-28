@@ -16,10 +16,9 @@
 .claude/worktrees/
 .claude/settings.local.json
 
-# Local secrets, excluding the example.
+# Local secrets. No example is tracked: tests/sweep/tree.test.ts would refuse one as a dot path.
 .env
 .env.*
-!.env.example
 
 # Superpowers SDD scratch: ledger, task briefs, implementer reports and review
 # packages for a plan being executed. Machine-local and per-run by nature, and
