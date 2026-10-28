@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, relative, resolve } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import { codeLoadingDirective } from '../../tools/design-ingest/ingest.mjs';
@@ -83,8 +84,8 @@ export const cssReferences = (text: string) => [...text.matchAll(/@(?:import|ref
 /** The relative `.css` paths a module names in quotes, as `import './x.css'` does. */
 export const moduleCss = (text: string) => [...text.matchAll(/["'](\.{1,2}\/[^"'\s]+\.css)(?:\?[^"']*)?["']/g)].map((match) => match[1] ?? '');
 
-function filesUnder(dir: string): string[] {
-  return readdirSync(root(dir), { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? filesUnder(`${dir}/${entry.name}`) : [`${dir}/${entry.name}`]));
+function filesUnder(base: string, dir: string): string[] {
+  return readdirSync(join(base, dir), { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? filesUnder(base, `${dir}/${entry.name}`) : [`${dir}/${entry.name}`]));
 }
 
 /**
@@ -92,8 +93,7 @@ function filesUnder(dir: string): string[] {
  * file there, every `.css` file a src/ module imports by a relative path, wherever it is, and every
  * file those stylesheets `@import` or `@reference`, of any type, followed until none is new.
  */
-function buildStylesheets() {
-  const repo = root('');
+export function buildStylesheets(base = root('')) {
   const found: { label: string; text: string; stylesheet: boolean }[] = [];
   const seen = new Set<string>();
   const queue: { text: string; dir: string }[] = [];
@@ -101,21 +101,22 @@ function buildStylesheets() {
     if (seen.has(path) || !existsSync(path) || !statSync(path).isFile()) return;
     seen.add(path);
     const text = readFileSync(path, 'utf8');
-    found.push({ label: relative(repo, path), text, stylesheet: path.endsWith('.css') });
+    found.push({ label: relative(base, path).split('\\').join('/'), text, stylesheet: path.endsWith('.css') });
     queue.push({ text, dir: dirname(path) });
   };
-  for (const file of filesUnder('src')) {
-    if (file.endsWith('.css')) follow(root(file));
-    const text = readFileSync(root(file), 'utf8');
+  for (const file of filesUnder(base, 'src')) {
+    const path = join(base, file);
+    if (file.endsWith('.css')) follow(path);
+    const text = readFileSync(path, 'utf8');
     if (file.endsWith('.astro')) {
       for (const [index, block] of styleBlocks(text).entries()) {
         found.push({ label: `${file} <style> ${index + 1}`, text: block, stylesheet: true });
-        queue.push({ text: block, dir: dirname(root(file)) });
+        queue.push({ text: block, dir: dirname(path) });
       }
     }
-    if (/\.(?:astro|[cm]?[jt]sx?|mdx?)$/.test(file)) for (const path of moduleCss(text)) follow(resolve(dirname(root(file)), path));
+    if (/\.(?:astro|[cm]?[jt]sx?|mdx?)$/.test(file)) for (const css of moduleCss(text)) follow(resolve(dirname(path), css));
   }
-  for (let next = queue.shift(); next; next = queue.shift()) for (const path of cssReferences(next.text)) follow(resolve(next.dir, path));
+  for (let next = queue.shift(); next; next = queue.shift()) for (const css of cssReferences(next.text)) follow(resolve(next.dir, css));
   return found;
 }
 
@@ -145,6 +146,33 @@ describe('no CSS directive that loads code reaches the build unless approved', (
     for (const css of ['@plugin "@tailwindcss/forms";', '@PLUGIN "@tailwindcss/typography";', '@plugin "@tailwindcss/typography" { className: x; }', '@plugin "@tailwindcss/typographyx";', '@plugin "@tailwindcss/typography";\n@plugin "./brand.js";']) {
       expect(unapprovedDirective(css, true, approved), css).toBe('@plugin');
     }
+  });
+
+  test('the walk follows a <style> block, a stylesheet a module imports from outside src/, and what they @import', () => {
+    const base = mkdtempSync(join(tmpdir(), 'contracts-css-'));
+    const files: Record<string, string> = {
+      'src/pages/index.astro': "---\nimport '../../outside/theme.css';\n---\n<h1>Hi</h1>\n<style>\n  @import './local.css';\n  @config './theme.js';\n</style>\n",
+      'src/pages/local.css': 'a { color: red }\n',
+      'src/styles/global.css': '@import "tailwindcss";\n@import "../../outside/notes.txt";\n',
+      'outside/theme.css': '@reference "./deeper.md";\n',
+      'outside/deeper.md': '@plugin "./brand.js";\n',
+      'outside/notes.txt': 'nothing here\n',
+      'outside/unread.css': '@plugin "./brand.js";\n',
+    };
+    let sheets: ReturnType<typeof buildStylesheets>;
+    try {
+      for (const [path, text] of Object.entries(files)) {
+        mkdirSync(dirname(join(base, path)), { recursive: true });
+        writeFileSync(join(base, path), text);
+      }
+      sheets = buildStylesheets(base);
+    } finally {
+      for (const path of Object.keys(files)) if (existsSync(join(base, path))) unlinkSync(join(base, path));
+      for (const dir of ['src/pages', 'src/styles', 'src', 'outside', '']) if (existsSync(join(base, dir))) rmdirSync(join(base, dir));
+    }
+    expect(sheets.map((sheet) => sheet.label).sort()).toEqual(['outside/deeper.md', 'outside/notes.txt', 'outside/theme.css', 'src/pages/index.astro <style> 1', 'src/pages/local.css', 'src/styles/global.css']);
+    const flagged = sheets.filter((sheet) => unapprovedDirective(sheet.text, sheet.stylesheet)).map((sheet) => sheet.label).sort();
+    expect(flagged).toEqual(['outside/deeper.md', 'src/pages/index.astro <style> 1']);
   });
 
   test('the walk reads <style> blocks, imported stylesheets and what they @import', () => {
