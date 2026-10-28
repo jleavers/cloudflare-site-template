@@ -307,6 +307,96 @@ describe('b. npm runs no install scripts in this repository', () => {
   });
 });
 
+describe('b3. the shipped docs prescribe no npm command that runs outside the lockfile', () => {
+  // `npm install -g` fetches a package from the registry past the lockfile and this repository's
+  // .npmrc (ignore-scripts, min-release-age). So does `npx` of a package the lockfile doesn't hold:
+  // run outside an installed checkout it downloads the newest release, scripts on, no age floor
+  // (sweep npm-supply-chain-1). A dependency's own bin is the lockfile's copy once installed. The
+  // dated plan and spec under docs/superpowers/ are history, not instructions, and are not linted.
+
+  const pkg = JSON.parse(read('package.json')) as { dependencies: Record<string, string>; devDependencies: Record<string, string> };
+  const DEPENDENCIES = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
+  // A bin whose name is not its package's: `playwright` comes with @playwright/test.
+  const BIN_OWNERS: Record<string, string> = { playwright: '@playwright/test' };
+  // Run to clear a login on a machine that may have no install, so it must refuse to download: npx
+  // would otherwise fetch the newest wrangler there. `--no-install` is the deprecated spelling of `--no`.
+  const NEVER_DOWNLOAD = [/^wrangler\s+logout\b/];
+
+  /** Problems with the npm commands a doc prescribes: a global install, or an npx that may download. */
+  function npxProblems(where: string, text: string, dependencies: string[] = DEPENDENCIES): string[] {
+    const problems: string[] = [];
+    text.split(/\r?\n/).forEach((line, i) => {
+      const at = `${where}:${i + 1}`;
+      if (/\bnpm\s+(?:install|i|add)\b[^`]*?(?:\s-g\b|--global\b|--location[= ]global\b)|\bnpm\s+(?:-g|--global)\b/.test(line)) {
+        problems.push(`${at}: a global npm install, which resolves outside the lockfile`);
+      }
+      for (const match of line.matchAll(/\bnpx\b([^`\n]*)/g)) {
+        const words = match[1]!.trim().split(/\s+/).filter(Boolean);
+        const refuses = words.some((word) => /^--no(?:-install)?$/.test(word));
+        const rest = words.filter((word) => !/^--no(?:-install)?$/.test(word));
+        const targetAt = rest.findIndex((word) => !word.startsWith('-'));
+        const command = `\`npx${match[1]}\``;
+        if (targetAt === -1) {
+          problems.push(`${at}: an npx with no package, in ${command}`);
+          continue;
+        }
+        const name = rest[targetAt]!.replace(/(?<=.)@[^@/]*$/, ''); // drop a version or tag
+        if (refuses) continue; // npx stops rather than download
+        if (NEVER_DOWNLOAD.some((pattern) => pattern.test([name, ...rest.slice(targetAt + 1)].join(' ')))) {
+          problems.push(`${at}: ${command} may download; say --no`);
+        } else if (!dependencies.includes(BIN_OWNERS[name] ?? name)) {
+          problems.push(`${at}: ${command} runs ${name}, which is not in package.json; say --no`);
+        }
+      }
+    });
+    return problems;
+  }
+
+  const skills = readdirSync(fileURLToPath(new URL('../../.claude/skills/', import.meta.url))).map((dir) => `.claude/skills/${dir}/SKILL.md`);
+  const tools = readdirSync(fileURLToPath(new URL('../../tools/', import.meta.url))).map((dir) => `tools/${dir}/README.md`);
+  const SHIPPED_DOCS = ['README.md', 'AGENTS.md', 'design/README.md', ...skills, ...tools].filter(exists);
+
+  test('the shipped docs are found', () => {
+    expect(SHIPPED_DOCS).toEqual(expect.arrayContaining(['README.md', 'AGENTS.md', '.claude/skills/security-sweep/SKILL.md', 'design/README.md', 'tools/screenshots/README.md']));
+  });
+
+  test('no shipped doc prescribes a global npm install, or an npx that may download', () => {
+    expect(SHIPPED_DOCS.flatMap((doc) => npxProblems(doc, read(doc)))).toEqual([]);
+  });
+
+  test('refuses a global install, an npx of an unknown package, and wrangler logout without --no', () => {
+    for (const ok of [
+      'npm ci',
+      'run `npx --no wrangler logout` in a checkout',
+      'run `npx --no-install wrangler logout` in a checkout',
+      'run `npx wrangler dev`',
+      '(`npx playwright install chromium`)',
+      'npx wrangler@4.149.0 dev',
+      'a global tool, as in `npm config get prefix`',
+    ]) {
+      expect(npxProblems('x', ok), ok).toEqual([]);
+    }
+    for (const bad of [
+      'on Node 22 run `npm install -g npm@11`',
+      'run `npm i -g npm`',
+      'run `npm install --global npm@11`',
+      'run `npm install npm@11 -g`',
+      'run `npm add -g typescript`',
+      'run `npm -g install npm`',
+      'run `npx wrangler logout`',
+      'run `npx wrangler@latest logout`',
+      'run `npx cowsay hi`',
+      'run `npx -y cowsay hi`',
+      'run `npx @evil/tool`',
+    ]) {
+      expect(npxProblems('x', bad), bad).not.toEqual([]);
+    }
+    // The flag excuses an unknown package from the download, not from being named.
+    expect(npxProblems('x', 'run `npx --no`')).toHaveLength(1);
+    expect(npxProblems('x', 'npx --no wrangler logout, then `npx cowsay hi`')).toHaveLength(1);
+  });
+});
+
 describe('b2. install scripts are on an allow-list (an early warning)', () => {
   // Under ignore-scripts none of these runs. The list still flags a new package that declares
   // install-time code, so a dependency update that adds one is looked at, and needs the owner's

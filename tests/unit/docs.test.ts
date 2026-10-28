@@ -474,7 +474,7 @@ describe('agent-facing documents', () => {
 
     test('the README says how to clear an old login, and needs no API token on the machine for Turnstile', () => {
       const readme = read('README.md').replace(/\s+/g, ' ');
-      for (const fragment of ['`npx wrangler logout`', '`~/.config/.wrangler/config/default.toml`', 'once, into `gh secret set`']) expect(readme, fragment).toContain(fragment);
+      for (const fragment of ['`npx --no wrangler logout`', '`~/.config/.wrangler/config/default.toml`', 'once, into `gh secret set`']) expect(readme, fragment).toContain(fragment);
       expect(section(readme, '### Turnstile', '### Delivery')).not.toMatch(/\bAPI\b/);
     });
 
@@ -490,7 +490,7 @@ describe('agent-facing documents', () => {
 
   test('the security sweep logs out of Wrangler and stays logged out', () => {
     const sweep = read('.claude/skills/security-sweep/SKILL.md').replace(/\s+/g, ' ');
-    expect(sweep).toContain('run `npx wrangler logout`, and stay logged out');
+    expect(sweep).toContain("run `npx --no wrangler logout` in an installed checkout of the template (it uses the lockfile's wrangler and downloads none), and stay logged out");
     expect(sweep).not.toMatch(/wrangler logout` for the run/);
     expect(sweep).toContain('Leave Wrangler logged out');
   });
