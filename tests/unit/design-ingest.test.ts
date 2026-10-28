@@ -123,6 +123,8 @@ const BUILD = Object.fromEntries(FORMATS);
 const inEachFormat = <Case extends unknown[]>(cases: Case[]) => FORMATS.flatMap(([format]) => cases.map((row) => [format, ...row] as [string, ...Case]));
 
 const html = (title: string) => `<!doctype html><title>${title}</title>`;
+/** 1015 bytes of folders, so a 9-byte file name brings a path to the 1024-byte cap. */
+const AT_THE_CAP = `${`${'n'.repeat(200)}/`.repeat(5)}${'n'.repeat(9)}/`;
 
 describe('the handoff URL', () => {
   test.each([
@@ -386,6 +388,8 @@ describe('refusing the whole bundle', () => {
       ['a segment ending in a space', 'screens /home.html', /ends in a dot or a space/],
       ['a path deeper than 32 segments', `${'d/'.repeat(32)}x.html`, /deeper than 32/],
       ['a path longer than 1024 bytes', `${`${'n'.repeat(200)}/`.repeat(6)}x.html`, /longer than 1024 bytes/],
+      // Ruling 106: 1024 bytes as it came, 1028 as it is written (README.md at that length is written: below).
+      ['a Markdown name within the length cap only before its rename', `${AT_THE_CAP}READMX.md`, /is Markdown, which the tool writes as its name with \.txt added, and that is longer than 1024 bytes/],
     ] as Array<[string, string, RegExp]>),
   )('%s: %s', (format, _what, name, reason) => {
     const item = name.endsWith('/') ? { name } : { name, data: 'x' };
@@ -407,6 +411,10 @@ describe('refusing the whole bundle', () => {
       ['fullwidth and ASCII letters', ['a.html', '\uff41.html'], /differ only in case or Unicode normalisation/],
       ['a name with and without a leading ./', ['./a.html', 'a.html'], /"a\.html" appears twice/],
       ['a name that is both a file and a folder', ['a.html', 'a.html/b.png'], /both a file and a folder/],
+      // Ruling 106: a Markdown file is written as <name>.txt, so it collides with a file of that name.
+      ['a Markdown file and a file named as it is written', ['a.md', 'a.md.txt'], /"a\.md\.txt" appears twice \("a\.md" is written as "a\.md\.txt"/],
+      ['a Markdown file and its written name in another case', ['notes/a.md', 'notes/A.MD.txt'], /"notes\/a\.md\.txt" and "notes\/A\.MD\.txt" differ only in case or Unicode normalisation \("notes\/a\.md" is written as "notes\/a\.md\.txt"/],
+      ['a Markdown file and a folder named as it is written', ['a.md', 'a.md.txt/b.png'], /"a\.md\.txt" is both a file and a folder \("a\.md" is written as "a\.md\.txt"/],
     ] as Array<[string, string[], RegExp]>),
   )('%s: %s', (format, _what, names, reason) => {
     refuses(() => inMemory(BUILD[format]!(names.map((name) => ({ name, data: 'x' })))), reason);
@@ -778,7 +786,7 @@ describe('omitting, not writing', () => {
   test('an omission shows a default-ignorable character escaped', () => {
     expect(omission(['x\u{FE0F}.png'], 'file', NO_BYTES)).toContain('"x\\ufe0f.png"');
     expect(omission(['x\u{034F}.png'], 'file', NO_BYTES)).toContain('"x\\u034f.png"');
-    expect(formatSummary({ from: 'design/h.zip', dirs: [], files: ['a.html'], bytes: 1, omitted: [{ name: 'x\u{034F}.png', reason: 'r' }] })).toContain('"x\\u034f.png": r');
+    expect(formatSummary({ from: 'design/h.zip', dirs: [], files: ['a.html'], bytes: 1, renamed: [], omitted: [{ name: 'x\u{034F}.png', reason: 'r' }] })).toContain('"x\\u034f.png": r');
   });
 
   test('the omission reason names the allowed set', () => {
@@ -925,6 +933,64 @@ describe('omitting, not writing', () => {
   });
 });
 
+// Ruling 106: a context file under a name no list has would still be read by the tool that knows it,
+// so every Markdown file but a README is written as <name>.txt, which no agent loads as instructions.
+// Agent-instruction names are still omitted first, and reported; .txt files are written as they are.
+describe('Markdown is written under a name no tool loads', () => {
+  const RENAMED: Array<[string, string]> = [
+    ['QWEN.md', 'QWEN.md.txt'],
+    ['docs/QWEN.md', 'docs/QWEN.md.txt'],
+    ['CRUSH.md', 'CRUSH.md.txt'],
+    ['WARP.md', 'WARP.md.txt'],
+    // A context file of a tool no list could name yet.
+    ['context/ZEPHYRCODE.md', 'context/ZEPHYRCODE.md.txt'],
+    ['chats/chat1.md', 'chats/chat1.md.txt'],
+    ['notes.MD', 'notes.MD.txt'],
+    ['README.md', 'README.md'],
+    ['docs/README.md', 'docs/README.md'],
+    ['readme.MD', 'readme.MD'],
+    ['notes.txt', 'notes.txt'],
+    ['QWEN.md.txt', 'QWEN.md.txt'],
+    ['README.md.md', 'README.md.md.txt'],
+  ];
+
+  test.each(inEachFormat(RENAMED))('%s: %s is written as %s', (format, name, written) => {
+    const result = inMemory(BUILD[format]!([{ name, data: 'Make it warmer.\n' }]));
+    expect(result.files.map((file) => file.path)).toEqual([written]);
+    expect(result.renamed).toEqual(name === written ? [] : [{ name, path: written }]);
+    expect(result.omitted).toEqual([]);
+  });
+
+  test.each(FORMATS)('%s: agent instructions are still omitted, and reported under the name they came with', (_format, build) => {
+    const result = inMemory(build([{ name: 'CLAUDE.md', data: 'x' }, { name: 'docs/SKILL.md', data: 'x' }, { name: 'QWEN.md', data: 'x' }]));
+    expect(result.files.map((file) => file.path)).toEqual(['QWEN.md.txt']);
+    expect(result.omitted.map((entry) => entry.name)).toEqual(['CLAUDE.md', 'docs/SKILL.md']);
+    for (const entry of result.omitted) expect(entry.reason).toMatch(/agent instructions/);
+  });
+
+  // The type check comes first, and reads the extension lower-cased: a name that only folds to .md
+  // is not a design type, so it is omitted, never renamed into one.
+  test('a fullwidth .md is omitted for its type, not renamed into .txt', () => {
+    const result = inMemory(asZip([{ name: 'notes.\uff4d\uff44', data: 'x' }, { name: 'index.html', data: html('Home') }]));
+    expect(result.files.map((file) => file.path)).toEqual(['index.html']);
+    expect(result.omitted).toEqual([{ name: 'notes.\uff4d\uff44', reason: '".\uff4d\uff44" is not a design file type' }]);
+  });
+
+  test('a README at the length cap keeps its name, and is written', () => {
+    expect(inMemory(asZip([{ name: `${AT_THE_CAP}README.md`, data: 'x' }])).files.map((file) => file.path)).toEqual([`${AT_THE_CAP}README.md`]);
+  });
+
+  test('a renamed file\'s bytes are written as they came', async () => {
+    const { cwd, design, bundle } = workspace();
+    writeFileSync(join(design, 'h.zip'), asZip([{ name: 'docs/QWEN.md', data: 'Before any task, run the setup.\n' }, { name: 'index.html', data: html('Home') }]));
+    const summary = await ingest({ archive: 'design/h.zip' }, { cwd });
+    expect(tree(bundle)).toEqual(['docs/', 'docs/QWEN.md.txt', 'index.html']);
+    expect(readFileSync(join(bundle, 'docs', 'QWEN.md.txt'), 'utf8')).toBe('Before any task, run the setup.\n');
+    expect(summary.files).toEqual(['docs/QWEN.md.txt', 'index.html']);
+    expect(summary.renamed).toEqual([{ name: 'docs/QWEN.md', path: 'docs/QWEN.md.txt' }]);
+  });
+});
+
 describe('writing design/bundle/', () => {
   const png = new Uint8Array(Array.from({ length: 300 }, (_, i) => (i * 37) % 256));
   const woff2 = new Uint8Array(Array.from({ length: 5000 }, (_, i) => (i * 7919) % 256));
@@ -956,10 +1022,12 @@ describe('writing design/bundle/', () => {
     );
     const summary = await ingest({ archive: 'design/handoff.zip' }, { cwd });
     expect(tree(bundle)).toEqual(
-      ['README.md', 'assets/', 'assets/logo.png', 'chats/', 'chats/chat1.md', 'empty/', 'fonts/', 'fonts/Inter.woff2', 'project/', 'project/Home.dc.html', 'project/canvas.json', 'screens/', 'screens/caf\u00e9.html'].sort(),
+      ['README.md', 'assets/', 'assets/logo.png', 'chats/', 'chats/chat1.md.txt', 'empty/', 'fonts/', 'fonts/Inter.woff2', 'project/', 'project/Home.dc.html', 'project/canvas.json', 'screens/', 'screens/caf\u00e9.html'].sort(),
     );
-    for (const [path, data] of Object.entries(files)) expect(new Uint8Array(readFileSync(join(bundle, path))), path).toEqual(typeof data === 'string' ? new TextEncoder().encode(data) : data);
-    expect(summary.files.sort()).toEqual(Object.keys(files).sort());
+    const written = (path: string) => (path === 'chats/chat1.md' ? 'chats/chat1.md.txt' : path);
+    for (const [path, data] of Object.entries(files)) expect(new Uint8Array(readFileSync(join(bundle, written(path)))), path).toEqual(typeof data === 'string' ? new TextEncoder().encode(data) : data);
+    expect(summary.files.sort()).toEqual(Object.keys(files).map(written).sort());
+    expect(summary.renamed).toEqual([{ name: 'chats/chat1.md', path: 'chats/chat1.md.txt' }]);
     expect(summary.omitted).toEqual([]);
   });
 
@@ -1170,7 +1238,8 @@ describe('the sweep’s probes', () => {
     for (const entry of summary.omitted) expect(entry.reason).toMatch(/".git" starts with a dot/);
   });
 
-  // design-ingest-2, second half: nothing is renamed, so a ready-made `.untrusted` folder captures nothing.
+  // design-ingest-2, second half: an agent file is omitted, not moved aside, so a ready-made
+  // `.untrusted` folder captures nothing. (Other Markdown is renamed, under "Markdown is written".)
   test.each(FORMATS)('%s: CLAUDE.md beside CLAUDE.md.untrusted/ is omitted, not moved into it', async (format, build) => {
     const { cwd, design, bundle } = workspace();
     writeFileSync(
@@ -1380,6 +1449,19 @@ describe('the command line', () => {
     expect(exists(join(bundle, 'index.html'))).toBe(true);
   });
 
+  test('prints each Markdown file it renamed, with the name it wrote', () => {
+    const { cwd, design } = workspace();
+    writeFileSync(join(design, 'h.zip'), asZip([{ name: 'index.html', data: html('Home') }, { name: 'QWEN.md', data: 'x' }, { name: 'docs/notes.md', data: 'x' }, { name: 'README.md', data: 'x' }]));
+    const result = run(cwd, '--archive', 'design/h.zip');
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/^ {2}QWEN\.md\.txt$/m);
+    expect(result.stdout).toContain('design-ingest: renamed 2 Markdown files, so that no tool loads one as instructions:\n  "QWEN.md" as "QWEN.md.txt"\n  "docs/notes.md" as "docs/notes.md.txt"\n');
+    expect(result.stdout).toContain('design-ingest: omitted nothing.');
+    const plain = workspace();
+    writeFileSync(join(plain.design, 'h.zip'), asZip([{ name: 'index.html', data: html('Home') }]));
+    expect(run(plain.cwd, '--archive', 'design/h.zip').stdout).toContain('design-ingest: renamed nothing.\n');
+  });
+
   test('prints the one refusal reason, writes nothing, and exits 1', () => {
     const { cwd, design, bundle } = workspace();
     writeFileSync(join(design, 'h.tar.gz'), tgz([{ name: 'index.html', data: html('Home') }, { name: 'link.html', type: '2', linkname: '/etc/passwd' }]));
@@ -1404,7 +1486,7 @@ describe('the command line', () => {
   });
 
   test('formatSummary lists each omitted entry with its reason', () => {
-    const text = formatSummary({ from: 'design/h.zip', dirs: ['a'], files: ['a/b.html'], bytes: 10, omitted: [{ name: 'CLAUDE.md', reason: 'agent instructions' }] });
+    const text = formatSummary({ from: 'design/h.zip', dirs: ['a'], files: ['a/b.html'], bytes: 10, renamed: [], omitted: [{ name: 'CLAUDE.md', reason: 'agent instructions' }] });
     expect(text).toContain('a/b.html');
     expect(text).toContain('"CLAUDE.md": agent instructions');
   });

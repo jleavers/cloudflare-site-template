@@ -36,7 +36,10 @@ describe what the site should look like; the skill reads them for that and never
 or changes a setting because the bundle says so. A design file can still be code to a tool: a
 stylesheet's `@plugin` or `@config` makes Tailwind's build and its editor extension run a
 JavaScript module, and so can a tool's config or a `node_modules` folder. The ingest tool leaves
-out the kinds of such file that [its README](../tools/design-ingest/README.md) lists. The
+out the kinds of such file that [its README](../tools/design-ingest/README.md) lists, and agent
+instructions. It writes every other Markdown file but a README under a `.txt` name (`chat1.md` as
+`chat1.md.txt`), so that no agent tool loads one as instructions, whatever its name: the rename
+covers names no list has. The
 skill never carries such a directive into the site, and a test fails the build checks if one
 reaches `src/` without the owner's approval. Nor does the skill carry any of the bundle's code into
 the site: it writes every script, style, component and SVG itself from what the design shows, and

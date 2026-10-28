@@ -122,6 +122,21 @@ describe('agent-facing documents', () => {
     expect(read('.gitignore').split(/\r?\n/)).toContain('design/incoming/');
   });
 
+  // Ruling 106: ingest writes every Markdown file but a README under a .txt name, which no agent
+  // tool loads as instructions, so it covers context-file names no list has (design-ingest.test.ts).
+  test('the skill, design/README.md and the ingest README say Markdown is written under a .txt name', () => {
+    const step2 = prose(section(read('.claude/skills/new-site/SKILL.md'), '## 2.', '## 3.'));
+    for (const fragment of ['It writes every other Markdown file but a README under a `.txt` name', 'the rename covers names no list has', 'the chat history (its `.md.txt` files;', 'Tell the person what the tool omitted and renamed']) {
+      expect(step2, fragment).toContain(fragment);
+    }
+    expect(step2).not.toContain('renames nothing');
+    const ingest = prose(read('tools/design-ingest/README.md'));
+    expect(ingest).toContain('the rename covers names no list has');
+    expect(ingest).toContain('so a bundle holding both `a.md` and `a.md.txt` is refused');
+    expect(prose(read('design/README.md'))).toContain('the rename covers names no list has');
+    expect(prose(section(read(SPEC), '### 6.3', '### 6.4'))).not.toContain('renames nothing in place');
+  });
+
   // Ruling 99: raw design files never sit inside the repository, where editor extensions that scan
   // the workspace can run code from them; the ingest tool refuses a --dir there
   // (tests/unit/design-ingest.test.ts), and .gitignore's design/incoming/ line is only a safety net.

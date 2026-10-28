@@ -9,10 +9,11 @@ import { crc32, gunzipSync, inflateRawSync } from 'node:zlib';
 // repository, checks every entry against one allow-list, and only then writes a fresh
 // design/bundle/. The allow-list judges an entry by its path and type, and a file also by its bytes,
 // since a design file type can still be code to a tool: a stylesheet's @plugin makes Tailwind run a
-// module. Nothing it reads is ever put into a command line, and nothing is renamed in place: an
-// entry outside the allow-list is refused (the whole bundle) or omitted (that entry), never moved
-// aside. It imports only node: modules, so it needs no install, and it runs the same on Windows and
-// Linux.
+// module. Nothing it reads is ever put into a command line. An entry outside the allow-list is
+// refused (the whole bundle) or omitted (that entry), never moved aside. What passes keeps its
+// name, but for Markdown other than a README, written as <name>.txt: no tool loads that as
+// instructions, so a context file of a tool no list names is inert too. It imports only node:
+// modules, so it needs no install, and it runs the same on Windows and Linux.
 //
 //   node tools/design-ingest/ingest.mjs --source [--host <name>]   the URL in design/SOURCE.md
 //   node tools/design-ingest/ingest.mjs --archive design/<file>     a .zip or .tar.gz
@@ -144,8 +145,9 @@ function refuse(reason) {
 
 /** @typedef {{ name: string, kind: 'file' | 'dir', data?: Uint8Array }} Entry */
 /** @typedef {(url: string, init: { redirect: 'manual', signal: AbortSignal }) => Promise<Response>} Fetch */
-/** @typedef {{ dirs: string[], files: { path: string, data: Uint8Array }[], omitted: { name: string, reason: string }[] }} Plan */
-/** @typedef {{ from: string, dirs: string[], files: string[], bytes: number, omitted: { name: string, reason: string }[] }} Summary */
+/** @typedef {{ name: string, path: string }} Renamed a file as it came, and the path it is written at */
+/** @typedef {{ dirs: string[], files: { path: string, data: Uint8Array }[], renamed: Renamed[], omitted: { name: string, reason: string }[] }} Plan */
+/** @typedef {{ from: string, dirs: string[], files: string[], bytes: number, renamed: Renamed[], omitted: { name: string, reason: string }[] }} Summary */
 
 /** @param {Partial<Limits>} [limits] @returns {Limits} */
 const withLimits = (limits) => ({ ...LIMITS, ...limits });
@@ -942,10 +944,25 @@ export function omission(segments, kind, data) {
 }
 
 /**
+ * Whether a file that omission() passed is Markdown other than a README, and so is written as
+ * <name>.txt: its extension lower-cased, as the type check reads it, and its name folded
+ * (`readme.MD` is a README).
+ *
+ * @param {string[]} segments
+ * @param {'file' | 'dir'} kind
+ */
+function renamedMarkdown(segments, kind) {
+  const last = segments[segments.length - 1] ?? '';
+  return kind === 'file' && last.slice(last.lastIndexOf('.')).toLowerCase() === '.md' && fold(last) !== 'readme.md';
+}
+
+/**
  * Checks every entry, and decides what to write. One leading `./` on a name is stripped first, and
- * a `.` root folder is skipped. Refuses a bad path, two names that are equal once folded
- * (NFKC, then lower-, upper- and lower-cased), a name that is both a file and a folder, more files
- * and folders (those a path implies included) than the cap, or nothing to write.
+ * a `.` root folder is skipped. An entry that passes omission() and is Markdown other than a README
+ * is written as <name>.txt, and every check that follows is on that written name. Refuses a bad
+ * path, two names that are equal once folded (NFKC, then lower-, upper- and lower-cased), a name
+ * that is both a file and a folder, more files and folders (those a path implies included) than
+ * the cap, or nothing to write.
  *
  * @param {Entry[]} entries
  * @param {Partial<Limits>} [limits]
@@ -953,16 +970,23 @@ export function omission(segments, kind, data) {
  */
 export function plan(entries, limits) {
   const caps = withLimits(limits);
-  /** @type {Map<string, { path: string, kind: 'file' | 'dir', explicit: boolean }>} */
+  /** @typedef {{ path: string, from?: string }} Claimant a path, and the name it came with when it is written under another */
+  /** @type {Map<string, Claimant & { kind: 'file' | 'dir', explicit: boolean }>} */
   const claimed = new Map();
-  /** @param {string} path @param {'file' | 'dir'} kind @param {boolean} explicit */
-  const claim = (path, kind, explicit) => {
+  /** @param {Claimant[]} claimants */
+  const renaming = (claimants) => {
+    const renamed = claimants.flatMap(({ path, from }) => (from === undefined ? [] : [`${show(from)} is written as ${show(path)}`]));
+    return renamed.length === 0 ? '' : ` (${renamed.join(', ')}, since the tool writes Markdown under a .txt name)`;
+  };
+  /** @param {string} path @param {'file' | 'dir'} kind @param {boolean} explicit @param {string} [from] */
+  const claim = (path, kind, explicit, from) => {
     const key = fold(path);
     const prior = claimed.get(key);
-    if (!prior) return void claimed.set(key, { path, kind, explicit });
-    if (prior.path !== path) refuse(`${show(prior.path)} and ${show(path)} differ only in case or Unicode normalisation`);
-    if (prior.kind !== kind) refuse(`${show(path)} is both a file and a folder`);
-    if (explicit && prior.explicit) refuse(`${show(path)} appears twice`);
+    if (!prior) return void claimed.set(key, { path, kind, explicit, from });
+    const why = renaming([prior, { path, from }]);
+    if (prior.path !== path) refuse(`${show(prior.path)} and ${show(path)} differ only in case or Unicode normalisation${why}`);
+    if (prior.kind !== kind) refuse(`${show(path)} is both a file and a folder${why}`);
+    if (explicit && prior.explicit) refuse(`${show(path)} appears twice${why}`);
     prior.explicit ||= explicit;
   };
   const checked = entries.flatMap((entry) => {
@@ -970,33 +994,49 @@ export function plan(entries, limits) {
     // skipped (the readers have counted it), and one leading "./" is stripped before any check.
     if (entry.kind === 'dir' && entry.name === '.') return [];
     const name = entry.name.startsWith('./') ? entry.name.slice(2) : entry.name;
-    const segments = checkPath(name, caps);
-    for (let i = 1; i < segments.length; i++) claim(segments.slice(0, i).join('/'), 'dir', false);
-    claim(name, entry.kind, true);
-    return [{ ...entry, name, segments }];
+    return [{ ...entry, name, segments: checkPath(name, caps) }];
   });
+  // Each entry as it is written: an omitted one keeps its name, and so does all but Markdown.
+  // omission() judges the name as it came, so agent instructions are omitted and reported as such;
+  // a renamed file's written name then passes every name check again, its bytes already judged.
+  const judged = checked.map((entry) => {
+    const reason = omission(entry.segments, entry.kind, entry.data);
+    if (reason !== null || !renamedMarkdown(entry.segments, entry.kind)) return { ...entry, reason, path: entry.name, written: entry.segments };
+    const path = `${entry.name}.txt`;
+    if (Buffer.byteLength(path) > caps.maxPathBytes) {
+      refuse(`${show(entry.name)} is Markdown, which the tool writes as its name with .txt added, and that is longer than ${caps.maxPathBytes} bytes`);
+    }
+    const writtenSegments = checkPath(path, caps);
+    return { ...entry, reason: omission(writtenSegments, 'file', new Uint8Array(0)), path, written: writtenSegments };
+  });
+  for (const entry of judged) {
+    for (let i = 1; i < entry.written.length; i++) claim(entry.written.slice(0, i).join('/'), 'dir', false);
+    claim(entry.path, entry.kind, true, entry.path === entry.name ? undefined : entry.name);
+  }
 
   /** @type {Plan['files']} */
   const files = [];
+  /** @type {Plan['renamed']} */
+  const renamed = [];
   /** @type {Plan['omitted']} */
   const omitted = [];
   /** @type {Set<string>} */
   const dirs = new Set();
-  for (const entry of checked) {
-    const reason = omission(entry.segments, entry.kind, entry.data);
-    if (reason) {
-      omitted.push({ name: entry.name, reason });
+  for (const entry of judged) {
+    if (entry.reason) {
+      omitted.push({ name: entry.name, reason: entry.reason });
       continue;
     }
-    for (let i = 1; i < entry.segments.length; i++) dirs.add(entry.segments.slice(0, i).join('/'));
-    if (entry.kind === 'dir') dirs.add(entry.name);
-    else files.push({ path: entry.name, data: entry.data ?? new Uint8Array(0) });
+    for (let i = 1; i < entry.written.length; i++) dirs.add(entry.written.slice(0, i).join('/'));
+    if (entry.kind === 'dir') dirs.add(entry.path);
+    else files.push({ path: entry.path, data: entry.data ?? new Uint8Array(0) });
+    if (entry.path !== entry.name) renamed.push({ name: entry.name, path: entry.path });
   }
   const written = files.length + dirs.size;
   if (written > caps.maxEntries) refuse(`the bundle would write ${written} files and folders, more than ${caps.maxEntries}`);
   if (files.length === 0) refuse('the bundle has no design files to write');
   const depth = (/** @type {string} */ path) => path.split('/').length;
-  return { dirs: [...dirs].sort((a, b) => depth(a) - depth(b) || (a < b ? -1 : a > b ? 1 : 0)), files, omitted };
+  return { dirs: [...dirs].sort((a, b) => depth(a) - depth(b) || (a < b ? -1 : a > b ? 1 : 0)), files, renamed, omitted };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1143,19 +1183,26 @@ export async function ingest(input, deps = {}) {
     dirs: bundle.dirs,
     files: bundle.files.map((file) => file.path),
     bytes: bundle.files.reduce((total, file) => total + file.data.length, 0),
+    renamed: bundle.renamed,
     omitted: bundle.omitted,
   };
 }
 
 /**
- * What was written, and each omitted entry with its reason.
+ * What was written, each Markdown file with the name it was written under, and each omitted entry
+ * with its reason.
  *
  * @param {Summary} summary
  * @returns {string}
  */
-export function formatSummary({ from, dirs, files, bytes, omitted }) {
+export function formatSummary({ from, dirs, files, bytes, renamed, omitted }) {
   const lines = [`design-ingest: wrote design/bundle/ from ${from}: ${plural(files.length, 'file')} (${bytes} bytes) in ${plural(dirs.length, 'folder')}.`];
   for (const file of files) lines.push(`  ${file}`);
+  if (renamed.length === 0) lines.push('design-ingest: renamed nothing.');
+  else {
+    lines.push(`design-ingest: renamed ${plural(renamed.length, 'Markdown file')}, so that no tool loads one as instructions:`);
+    for (const { name, path } of renamed) lines.push(`  ${show(name)} as ${show(path)}`);
+  }
   if (omitted.length === 0) lines.push('design-ingest: omitted nothing.');
   else {
     lines.push(`design-ingest: omitted ${plural(omitted.length, 'entry', 'entries')}, which ${omitted.length === 1 ? 'was' : 'were'} not written:`);

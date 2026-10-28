@@ -53,7 +53,8 @@ These entries are **omitted**, and listed in the output with the reason:
 - anything under a name that starts with a dot (`.git`, `.claude`, `.github`, `.vscode`,
   `.mcp.json`, …);
 - agent instructions (`CLAUDE.md`, `AGENTS.md`, `AGENTS.override.md`, `SKILL.md`, `*.mdc` and the
-  like, compared folded);
+  like, compared folded). Markdown under any other name is renamed instead (below), so a context
+  file of a tool this list does not name is inert too;
 - tool configurations, compared folded. An editor or build tool finds one by looking upward from a
   file, or across the whole workspace, and a configuration can run code or name code to run:
   - `*.config.js`, `.mjs`, `.cjs`, `.ts`, `.mts` or `.cts`: ESLint, Prettier, Stylelint, PostCSS,
@@ -104,9 +105,19 @@ These entries are **omitted**, and listed in the output with the reason:
 The tool reads each file's bytes once, in memory, after its name has passed: the caps above bound
 what it reads, and the check takes about a second for the 50 MB maximum.
 
+**Markdown is written under a `.txt` name.** Every `.md` file that passes those checks, but a
+README (`README.md` in any folder, in any letter case), is written as `<its name>.txt`: `QWEN.md`
+becomes `QWEN.md.txt`, and `docs/notes.md` becomes `docs/notes.md.txt`. Agent tools load context
+files by name, some from any folder below the one they start in (Gemini CLI's `GEMINI.md`, Qwen
+Code's `QWEN.md`), and no list of those names stays complete: the rename covers names no list
+has, since no tool loads a `.txt` file as instructions. The duplicate check, the path-length cap
+and every other name check apply to the written name, so a bundle holding both `a.md` and
+`a.md.txt` is refused. A `.txt` file is written as it is.
+
 **The output is always a fresh `design/bundle/`.** The tool refuses if it exists in any form, and
-writes files `0644` with nothing taken from the archive's modes or owners. A refusal exits 1 and
-writes nothing; a usage error exits 2.
+writes files `0644` with nothing taken from the archive's modes or owners. It prints each file it
+wrote, each Markdown file it renamed, with the name it wrote, and each entry it omitted, with the
+reason. A refusal exits 1 and writes nothing; a usage error exits 2.
 
 `tests/unit/design-ingest.test.ts` builds every fixture in memory, hostile ones included
 (`tests/unit/design-ingest-archives.ts` holds small zip and tar writers), so a change to the
