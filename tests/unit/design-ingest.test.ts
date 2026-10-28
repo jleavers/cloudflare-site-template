@@ -602,6 +602,8 @@ describe('the caps', () => {
 });
 
 describe('omitting, not writing', () => {
+  /** A file's bytes, where a test judges only its name. */
+  const NO_BYTES = new Uint8Array(0);
   const OMITTED: Array<[string, RegExp]> = [
     ['CLAUDE.md', /agent instructions/],
     ['notes/claude.md', /agent instructions/],
@@ -701,10 +703,27 @@ describe('omitting, not writing', () => {
     ['node_modules/tailwindcss/index.js', /"node_modules" is a package folder/],
     ['web/node_modules/tailwindcss/package.json.js', /"node_modules" is a package folder/],
     ['mods/Node_Modules/x.js', /"Node_Modules" is a package folder/],
+    // 20l round 1: one row for each design-type name the Part 2 tools use that had none.
+    ['knip.mjs', /tool configuration/],
+    ['tailwind.config.dark.mjs', /tool configuration/],
+    ['tailwind.config.dark.ts', /tool configuration/],
+    ['knip.config.ts', /tool configuration/],
+    ['cspell.config.mjs', /tool configuration/],
+    ['eslint.config.js', /tool configuration/],
+    ['prettier.config.mjs', /tool configuration/],
+    ['stylelint.config.js', /tool configuration/],
+    ['postcss.config.ts', /tool configuration/],
+    ['babel.config.js', /tool configuration/],
+    ['vite.config.ts', /tool configuration/],
+    ['jest.config.ts', /tool configuration/],
+    ['playwright.config.ts', /tool configuration/],
+    ['astro.config.mjs', /tool configuration/],
+    ['lint-staged.config.mjs', /tool configuration/],
+    ['oxlint.config.ts', /tool configuration/],
   ];
 
   test.each(OMITTED)('omission(%s) gives a reason', (name, reason) => {
-    expect(omission(name.split('/'), 'file')).toMatch(reason);
+    expect(omission(name.split('/'), 'file', NO_BYTES)).toMatch(reason);
   });
 
   test.each(
@@ -712,7 +731,7 @@ describe('omitting, not writing', () => {
       [`file${ext}`],
       [`FILE${ext.toUpperCase()}`],
     ]),
-  )('keeps %s', (name) => expect(omission(['assets', name], 'file')).toBeNull());
+  )('keeps %s', (name) => expect(omission(['assets', name], 'file', NO_BYTES)).toBeNull());
 
   test.each([
     ['hero (1).png'],
@@ -745,23 +764,23 @@ describe('omitting, not writing', () => {
     ['knip.md'],
     ['node_modules.png'],
   ])('keeps the allowed name %s', (name) => {
-    expect(omission(['assets', name], 'file')).toBeNull();
+    expect(omission(['assets', name], 'file', NO_BYTES)).toBeNull();
   });
 
   test('a folder with a character outside the allowed set omits everything under it', () => {
     expect(omission(['a&b'], 'dir')).toMatch(/name has a character outside the allowed set/);
-    expect(omission(['a&b', 'logo.png'], 'file')).toMatch(/name has a character outside the allowed set/);
+    expect(omission(['a&b', 'logo.png'], 'file', NO_BYTES)).toMatch(/name has a character outside the allowed set/);
   });
 
   // A variation selector or a combining grapheme joiner renders as nothing, so a name holding one would print as another name.
   test('an omission shows a default-ignorable character escaped', () => {
-    expect(omission(['x\u{FE0F}.png'], 'file')).toContain('"x\\ufe0f.png"');
-    expect(omission(['x\u{034F}.png'], 'file')).toContain('"x\\u034f.png"');
+    expect(omission(['x\u{FE0F}.png'], 'file', NO_BYTES)).toContain('"x\\ufe0f.png"');
+    expect(omission(['x\u{034F}.png'], 'file', NO_BYTES)).toContain('"x\\u034f.png"');
     expect(formatSummary({ from: 'design/h.zip', dirs: [], files: ['a.html'], bytes: 1, omitted: [{ name: 'x\u{034F}.png', reason: 'r' }] })).toContain('"x\\u034f.png": r');
   });
 
   test('the omission reason names the allowed set', () => {
-    expect(omission(['a&b.png'], 'file')).toContain('name has a character outside the allowed set (letters, digits, combining marks, space and . _ ( ) + , @ -)');
+    expect(omission(['a&b.png'], 'file', NO_BYTES)).toContain('name has a character outside the allowed set (letters, digits, combining marks, space and . _ ( ) + , @ -)');
   });
 
   test('a folder is omitted only for its name, not for a file type', () => {
@@ -771,7 +790,7 @@ describe('omitting, not writing', () => {
     expect(omission(['package.json'], 'dir')).toMatch(/tool configuration/);
     expect(omission(['node_modules'], 'dir')).toMatch(/"node_modules" is a package folder/);
     expect(omission(['my_node_modules'], 'dir')).toBeNull();
-    expect(omission(['my_node_modules', 'x.png'], 'file')).toBeNull();
+    expect(omission(['my_node_modules', 'x.png'], 'file', NO_BYTES)).toBeNull();
   });
 
   // Task 20l (Ruling 95): Tailwind 4 reads its configuration from CSS, and `@plugin` and `@config`
@@ -804,10 +823,43 @@ describe('omitting, not writing', () => {
     ['styles/q.css', '@\\plugin "./brand.js";', /escaped at-keyword/],
     ['styles/r.css', '@pl\\75gin "./brand.js";', /escaped at-keyword/],
     ['styles/s.css', '@m\\65 dia (min-width: 1px) { a { color: red } }', /escaped at-keyword/],
-    // UTF-16 text has a NUL beside each ASCII character.
+    // UTF-16 text has a NUL beside each ASCII character. Both consumers read UTF-8 only, so this loads
+    // nothing; the scan skips NULs as a margin.
     ['styles/t.css', Buffer.from('@plugin "./brand.js";', 'utf16le'), /"@plugin"/],
     ['styles/u.css', Buffer.from('@config "./theme.js";', 'utf16le').swap16(), /"@config"/],
+    // 20l round 1 (Ruling 97): Tailwind's parser trims Unicode whitespace from the name, so any byte but
+    // an ASCII name character ends it. These are the review's rows, and the cost Ruling 95 accepts.
+    ['styles/v.css', '@plugin\u00a0 "./brand.js";', /"@plugin"/],
+    ['styles/w.css', '@plugin\u00a0\n"./brand.js";', /"@plugin"/],
+    ['styles/x.css', '@plugin\u00a0 "./brand.js" { }', /"@plugin"/],
+    ['styles/y.css', '@config\u00a0 "./theme.js";', /"@config"/],
+    ['styles/z.css', '@plugin\u00e9 "./brand.js";', /"@plugin"/],
+    ['notes/n.txt', '@plugin\u3000 "./brand.js";\n', /"@plugin"/],
+    // An escaped at-keyword with a comment before the escape (round 1, Minor 1).
+    ['styles/e2.css', '@/**/\\70 lugin "./brand.js";', /escaped at-keyword/],
+    ['styles/e3.css', '@pl/* x */\\75gin "./brand.js";', /escaped at-keyword/],
   ];
+
+  // Ruling 97: every code point JavaScript's trim() strips, as Tailwind 4.3.3's parser (Qe) trims a name.
+  const TRIMMED = Array.from({ length: 0x110000 }, (_, point) => point)
+    .filter((point) => (point < 0xd800 || point > 0xdfff) && `a${String.fromCodePoint(point)}`.trim() === 'a')
+    .map((point) => `U+${point.toString(16).toUpperCase().padStart(4, '0')}`);
+  test('the trim set is the one the parser uses', () => {
+    expect(TRIMMED).toEqual(expect.arrayContaining(['U+0009', 'U+0020', 'U+00A0', 'U+1680', 'U+2000', 'U+200A', 'U+2028', 'U+2029', 'U+202F', 'U+205F', 'U+3000', 'U+FEFF']));
+  });
+  test.each(TRIMMED.flatMap((point) => [[point, 'styles/app.css'], [point, 'notes/n.txt']]))(
+    'a name followed by %s is still the directive, in %s',
+    (point, path) => {
+      const space = String.fromCodePoint(parseInt(point.slice(2), 16));
+      expect(omission(path.split('/'), 'file', enc(`@plugin${space}"./brand.js";`))).toMatch(/"@plugin"/);
+      expect(omission(path.split('/'), 'file', enc(`@config${space}"./theme.js";`))).toMatch(/"@config"/);
+    },
+  );
+
+  test('a file is never judged without its bytes', () => {
+    expect(() => omission(['styles', 'app.css'], 'file')).toThrow(/bytes/);
+    expect(omission(['styles'], 'dir')).toBeNull();
+  });
 
   test.each(CODE_LOADING)('omission(%s) names the directive its text holds', (name, content, reason) => {
     expect(omission(name.split('/'), 'file', typeof content === 'string' ? enc(content) : content)).toMatch(reason);

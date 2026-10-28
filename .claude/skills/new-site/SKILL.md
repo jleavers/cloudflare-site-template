@@ -53,8 +53,9 @@ tool configurations (`*.config.js`, `package.json`, `tsconfig*.json`, `deno.json
 `cspell.json`, `dprint.json` and the like), everything under a `node_modules` folder, everything
 under a name with a character outside the allowed set (letters, digits, combining marks, space
 and `. _ ( ) + , @ -`), every file that is not a design file type, and every file whose text holds
-a Tailwind `@plugin` or `@config` directive, in any spelling, since the build and Tailwind's
-editor extension run the JavaScript module it names. It renames nothing in place, and it always
+a Tailwind `@plugin` or `@config` directive in any letter case, with comments inside it, followed
+by anything that does not make it a longer name (a Unicode space included), since the build and
+Tailwind's editor extension run the JavaScript module it names. It renames nothing in place, and it always
 writes a fresh `design/bundle/`.
 
 - **Handoff URL** (the first line of `design/SOURCE.md`):

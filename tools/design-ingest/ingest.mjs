@@ -809,6 +809,13 @@ export function checkPath(name, limits) {
  * and every byte of a non-ASCII character.
  */
 const NAME_BYTE = Uint8Array.from({ length: 256 }, (_, byte) => Number(byte >= 0x80 || /[\w\\-]/.test(String.fromCharCode(byte))));
+/**
+ * The bytes that continue `@plugin` or `@config` into a longer name: ASCII letters and digits, `-`,
+ * `_` and `\`. Any other byte ends the name, a non-ASCII one too, because Tailwind 4.3.3's parser
+ * cuts a name at an ASCII space, tab or `(` and then trims it with String.prototype.trim, which
+ * strips U+00A0, U+3000, U+FEFF and other Unicode spaces (Ruling 97).
+ */
+const NAME_CONTINUES = Uint8Array.from({ length: 256 }, (_, byte) => Number(/[\w\\-]/.test(String.fromCharCode(byte))));
 const [AT, SLASH, STAR, BACKSLASH] = [0x40, 0x2f, 0x2a, 0x5c];
 /**
  * The at-rules that make a consumer import a module: Tailwind CSS 4's build (`@tailwindcss/node`)
@@ -828,15 +835,16 @@ const DIRECTIVES = ['@plugin', '@config'].map((directive) => {
 /**
  * The code-loading directive a file's raw bytes hold, or null. It reads the bytes as they are, with
  * no CSS parser, so no difference between parsers re-opens it:
- * - `@plugin` or `@config`, ASCII case-insensitively, that no name character follows, wherever it
- *   is: inside a comment or a string too;
+ * - `@plugin` or `@config`, ASCII case-insensitively, followed by anything but an ASCII name
+ *   character (NAME_CONTINUES), wherever it is: inside a comment or a string too;
  * - with any number of comments between the `@` and the name or inside it, since Tailwind's
  *   parser drops a comment from a name. A comment here is anything from a `/*` to any later `*\/`,
  *   so where a parser would end one does not matter;
- * - NUL bytes skipped, so UTF-16 text is read too;
+ * - NUL bytes skipped, a margin only: both consumers read a file as UTF-8, so UTF-16 text loads
+ *   nothing, and this does not claim to read UTF-16;
  * - in a stylesheet only, also an at-keyword spelled with a backslash escape (`@` and any name
- *   characters, then `\`), whatever it decodes to. Elsewhere `@\` is ordinary text (a regular
- *   expression such as `/\S+@\S+/`), and in binary data it is common.
+ *   characters or comments, then `\`), whatever it decodes to. Elsewhere `@\` is ordinary text (a
+ *   regular expression such as `/\S+@\S+/`), and in binary data it is common.
  * One pass, in time linear in the bytes: each name is matched by a small automaton, not a regular
  * expression that backtracks over comments.
  *
@@ -847,12 +855,13 @@ const DIRECTIVES = ['@plugin', '@config'].map((directive) => {
 export function codeLoadingDirective(bytes, { stylesheet = false } = {}) {
   // Per directive, as bits by the number of letters matched: `ready`, right after the `@` and those
   // letters; `open`, after a `/` there; `inside`, in a comment opened there (it stays set, since a
-  // comment may end at any later `*/`); `star`, in such a comment, after a `*`.
+  // comment may end at any later `*/`); `star`, in such a comment, after a `*`. The escape rule keeps
+  // the same four states for an at-keyword's name, as booleans.
   const ready = new Uint8Array(DIRECTIVES.length);
   const open = new Uint8Array(DIRECTIVES.length);
   const inside = new Uint8Array(DIRECTIVES.length);
   const star = new Uint8Array(DIRECTIVES.length);
-  let atName = false;
+  let [atName, atOpen, atInside, atStar] = [false, false, false, false];
   for (let i = 0; i <= bytes.length; i++) {
     // -1 is the end, where a name that is complete is followed by nothing.
     const byte = i < bytes.length ? bytes[i] : -1;
@@ -860,7 +869,7 @@ export function codeLoadingDirective(bytes, { stylesheet = false } = {}) {
     for (let d = 0; d < DIRECTIVES.length; d++) {
       const { directive, masks, all, full } = DIRECTIVES[d];
       const r = ready[d];
-      if (r & full && (byte === -1 || !NAME_BYTE[byte])) return /** @type {'@plugin' | '@config'} */ (directive);
+      if (r & full && (byte === -1 || !NAME_CONTINUES[byte])) return /** @type {'@plugin' | '@config'} */ (directive);
       if (byte === -1) continue;
       const n = inside[d];
       ready[d] = ((r & masks[byte]) << 1) | (byte === SLASH ? star[d] : 0) | (byte === AT ? 1 : 0);
@@ -870,7 +879,12 @@ export function codeLoadingDirective(bytes, { stylesheet = false } = {}) {
     }
     if (stylesheet && byte !== -1) {
       if (atName && byte === BACKSLASH) return 'an escaped at-keyword';
-      atName = byte === AT || (atName && NAME_BYTE[byte] === 1);
+      [atName, atOpen, atInside, atStar] = [
+        byte === AT || (atName && NAME_BYTE[byte] === 1) || (atStar && byte === SLASH),
+        atName && byte === SLASH,
+        atInside || (atOpen && byte === STAR),
+        atInside && byte === STAR,
+      ];
     }
   }
   return null;
@@ -881,14 +895,16 @@ export function codeLoadingDirective(bytes, { stylesheet = false } = {}) {
  * with a dot, a segment that names agent instructions, a tool configuration or a package folder
  * (all compared folded), a segment with a character outside the allowed set, a file that is not a
  * design file type (its extension compared lower-cased), or a file whose bytes hold a directive
- * that loads code (codeLoadingDirective). Its bytes are read only when its name passes.
+ * that loads code (codeLoadingDirective). Its bytes are read only when its name passes, but a file
+ * must come with them: without its bytes it cannot be judged, so that throws rather than pass it.
  *
  * @param {string[]} segments
  * @param {'file' | 'dir'} kind
- * @param {Uint8Array} [data] a file's bytes
+ * @param {Uint8Array} [data] a file's bytes, required for a file
  * @returns {string | null}
  */
 export function omission(segments, kind, data) {
+  if (kind === 'file' && !(data instanceof Uint8Array)) throw new TypeError(`omission() needs a file's bytes to judge ${show(segments.join('/'))}`);
   for (const segment of segments) {
     if (fold(segment).startsWith('.')) return `${show(segment)} starts with a dot: dotfiles and dot-folders (.git, .claude, .github and the like) are never written`;
   }
@@ -913,12 +929,12 @@ export function omission(segments, kind, data) {
   if (dot <= 0) return 'it has no file extension, so it is not a design file type';
   const extension = last.slice(dot).toLowerCase();
   if (!DESIGN_TYPES.has(extension)) return `${show(extension)} is not a design file type`;
-  const directive = data && codeLoadingDirective(data, { stylesheet: extension === '.css' });
+  const directive = codeLoadingDirective(/** @type {Uint8Array} */ (data), { stylesheet: extension === '.css' });
   if (directive === 'an escaped at-keyword') {
     return 'it holds an escaped at-keyword (an @-name spelled with a backslash escape, whatever it decodes to), which could spell a directive that loads code, such as @plugin or @config, so it is never written';
   }
   if (directive) {
-    return `it holds ${JSON.stringify(directive)}, a Tailwind CSS directive that makes the build and the editor extension load and run a JavaScript module, so it is never written (any spelling counts, in a comment or a string too, and a stylesheet's @import reads a file of any type)`;
+    return `it holds ${JSON.stringify(directive)}, a Tailwind CSS directive that makes the build and the editor extension load and run a JavaScript module, so it is never written (in any letter case, with comments in it, followed by any character but an ASCII letter, digit, -, _ or \\, and in a comment or a string too, since a stylesheet's @import reads a file of any type)`;
   }
   return null;
 }

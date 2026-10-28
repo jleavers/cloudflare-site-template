@@ -32,7 +32,7 @@ describe what the site should look like; the skill reads them for that and never
 or changes a setting because the bundle says so. A design file can still be code to a tool: a
 stylesheet's `@plugin` or `@config` makes Tailwind's build and its editor extension run a
 JavaScript module, and so can a tool's config or a `node_modules` folder. The ingest tool leaves
-out every such file it knows of; [its README](../tools/design-ingest/README.md) lists them. The
+out the kinds of such file that [its README](../tools/design-ingest/README.md) lists. The
 skill never carries such a directive into the site, and a test fails the build checks if one
 reaches `src/` without the owner's approval.
 

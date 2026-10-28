@@ -73,13 +73,20 @@ These entries are **omitted**, and listed in the output with the reason:
   CSS, and these two make the build and the Tailwind CSS editor extension import and run a
   JavaScript module. Every design file is read, not only a `.css` one, because a stylesheet's
   `@import` or `@reference` reads a file of any type as CSS. The match is on the raw bytes, with
-  no CSS parser: in any case, inside a comment or a string too, with comments between the `@` and
-  the name or inside it (Tailwind's parser drops them), and in UTF-16 text. A `.css` file is also
-  omitted for an at-keyword spelled with a backslash escape, whatever it decodes to. A stylesheet
-  with only `@import "tailwindcss"` and `@theme` tokens is kept: design tokens are the point of a
-  design. If a design you trust needs a Tailwind plugin, its stylesheet is left out: remove the
-  directive from your copy and ingest again, and ask before adding the plugin, which is a
-  dependency (AGENTS.md).
+  no CSS parser:
+  - in any letter case, and inside a comment or a string too;
+  - with comments between the `@` and the name or inside it (Tailwind's parser drops them);
+  - followed by any byte but an ASCII letter, digit, `-`, `_` or `\`, which would make it a longer
+    name. Tailwind's parser trims Unicode spaces such as U+00A0, U+3000 and U+FEFF from a name, so
+    any other byte, non-ASCII included, ends it.
+
+  The scan skips NUL bytes as a margin, but both consumers read a file as UTF-8 only
+  (`readFile(…, 'utf-8')`), so a UTF-16 file loads nothing, and the tool does not claim to read
+  UTF-16. A `.css` file is also omitted for an at-keyword spelled with a backslash escape, with or
+  without comments before the escape, whatever it decodes to. A stylesheet with only
+  `@import "tailwindcss"` and `@theme` tokens is kept: design tokens are the point of a design. If
+  a design you trust needs a Tailwind plugin, its stylesheet is left out: remove the directive from
+  your copy and ingest again, and ask before adding the plugin, which is a dependency (AGENTS.md).
 
 The tool reads each file's bytes once, in memory, after its name has passed: the caps above bound
 what it reads, and the check takes about a second for the 50 MB maximum.

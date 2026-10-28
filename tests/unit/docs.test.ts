@@ -110,7 +110,8 @@ describe('agent-facing documents', () => {
     expect(prose(step2)).toContain('a character outside the allowed set (letters, digits, combining marks, space and `. _ ( ) + , @ -`)');
     expect(prose(step2)).toContain('`package.json`');
     // Task 20l: and it omits a file that makes Tailwind run code, and a package folder.
-    expect(prose(step2)).toContain('a Tailwind `@plugin` or `@config` directive, in any spelling');
+    expect(prose(step2)).toContain('a Tailwind `@plugin` or `@config` directive in any letter case, with comments inside it, followed by anything that does not make it a longer name');
+    expect(step2).not.toContain('in any spelling');
     expect(prose(step2)).toContain('everything under a `node_modules` folder');
     expect(step2).not.toContain('a shell treats specially');
     expect(prose(section(skill, '## 6.', '## 7.'))).toContain('in double quotes');

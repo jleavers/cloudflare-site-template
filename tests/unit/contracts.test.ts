@@ -70,9 +70,14 @@ describe('Tailwind source detection', () => {
 const APPROVED_TAILWIND_MODULES: readonly string[] = [];
 
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
-/** The code-loading directive left in `text` once every approved one, spelled exactly, is taken out (the ingest tool's match). */
-export function unapprovedDirective(text: string, stylesheet: boolean, approved: readonly string[] = APPROVED_TAILWIND_MODULES) {
-  let rest = text;
+/**
+ * The code-loading directive left once every approved one, spelled exactly, is taken out of a
+ * stylesheet (the ingest tool's match). Any other file is judged on its raw bytes, undecoded.
+ */
+export function unapprovedDirective(source: string | Uint8Array, stylesheet: boolean, approved: readonly string[] = APPROVED_TAILWIND_MODULES) {
+  const bytes = typeof source === 'string' ? new TextEncoder().encode(source) : source;
+  if (!stylesheet || approved.length === 0) return codeLoadingDirective(bytes, { stylesheet });
+  let rest = new TextDecoder().decode(bytes);
   for (const name of approved) rest = rest.replace(new RegExp(String.raw`@(?:plugin|config)[ \t]+(["'])${escapeRegExp(name)}\1[ \t]*;`, 'g'), '');
   return codeLoadingDirective(new TextEncoder().encode(rest), { stylesheet });
 }
@@ -88,33 +93,47 @@ function filesUnder(base: string, dir: string): string[] {
   return readdirSync(join(base, dir), { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? filesUnder(base, `${dir}/${entry.name}`) : [`${dir}/${entry.name}`]));
 }
 
+/** The file types the walk decodes as UTF-8 text; any other file is checked as bytes, never decoded. */
+const TEXT_TYPE = /\.(?:css|astro|html?|svg|mdx?|txt|json|[cm]?[jt]sx?)$/i;
+/** The modules the walk reads for `<style>` blocks and `.css` imports. */
+const MODULE_TYPE = /\.(?:astro|[cm]?[jt]sx?|mdx?)$/;
+
 /**
  * What the build reads as CSS: every `.css` file under src/, every `<style>` block of an `.astro`
  * file there, every `.css` file a src/ module imports by a relative path, wherever it is, and every
  * file those stylesheets `@import` or `@reference`, of any type, followed until none is new.
+ *
+ * It is a static walk, and does not follow:
+ * - an `@import` with a comment inside its name, which Tailwind's parser still reads as one;
+ * - a root-absolute path (`/src/…`) or a Vite alias, of which the template configures none;
+ * - a chain through a JavaScript module outside src/: only src/ modules are read for imports;
+ * - a module id that carries `&lang.css` without ending in `.css`, which @tailwindcss/vite also compiles;
+ * - anything `astro.config.mjs` adds to the build through a Vite plugin or an integration;
+ * - what a binary file `@import`s: it is checked as bytes, not decoded and followed.
  */
 export function buildStylesheets(base = root('')) {
-  const found: { label: string; text: string; stylesheet: boolean }[] = [];
+  const found: { label: string; bytes: Uint8Array; stylesheet: boolean }[] = [];
   const seen = new Set<string>();
   const queue: { text: string; dir: string }[] = [];
   const follow = (path: string) => {
     if (seen.has(path) || !existsSync(path) || !statSync(path).isFile()) return;
     seen.add(path);
-    const text = readFileSync(path, 'utf8');
-    found.push({ label: relative(base, path).split('\\').join('/'), text, stylesheet: path.endsWith('.css') });
-    queue.push({ text, dir: dirname(path) });
+    const bytes = readFileSync(path);
+    found.push({ label: relative(base, path).split('\\').join('/'), bytes, stylesheet: path.endsWith('.css') });
+    if (TEXT_TYPE.test(path)) queue.push({ text: bytes.toString('utf8'), dir: dirname(path) });
   };
   for (const file of filesUnder(base, 'src')) {
     const path = join(base, file);
     if (file.endsWith('.css')) follow(path);
+    if (!MODULE_TYPE.test(file)) continue;
     const text = readFileSync(path, 'utf8');
     if (file.endsWith('.astro')) {
       for (const [index, block] of styleBlocks(text).entries()) {
-        found.push({ label: `${file} <style> ${index + 1}`, text: block, stylesheet: true });
+        found.push({ label: `${file} <style> ${index + 1}`, bytes: new TextEncoder().encode(block), stylesheet: true });
         queue.push({ text: block, dir: dirname(path) });
       }
     }
-    if (/\.(?:astro|[cm]?[jt]sx?|mdx?)$/.test(file)) for (const css of moduleCss(text)) follow(resolve(dirname(path), css));
+    for (const css of moduleCss(text)) follow(resolve(dirname(path), css));
   }
   for (let next = queue.shift(); next; next = queue.shift()) for (const css of cssReferences(next.text)) follow(resolve(next.dir, css));
   return found;
@@ -128,11 +147,11 @@ describe('no CSS directive that loads code reaches the build unless approved', (
   });
 
   test.each(stylesheets.map((sheet) => [sheet.label, sheet] as const))('%s loads no unapproved module', (_label, sheet) => {
-    expect(unapprovedDirective(sheet.text, sheet.stylesheet), 'a @plugin or @config the owner has not approved: see APPROVED_TAILWIND_MODULES in this file').toBeNull();
+    expect(unapprovedDirective(sheet.bytes, sheet.stylesheet), 'a @plugin or @config the owner has not approved: see APPROVED_TAILWIND_MODULES in this file').toBeNull();
   });
 
   test('the check bites, with the ingest tool’s match', () => {
-    for (const css of ['@plugin "./brand.js";', "@config './theme.js';", '@PLUGIN "./brand.js";', '@/* x */plugin "./brand.js";', '@plu/**/gin "./brand.js";', '/* @config "./theme.js"; */']) {
+    for (const css of ['@plugin "./brand.js";', "@config './theme.js';", '@PLUGIN "./brand.js";', '@/* x */plugin "./brand.js";', '@plu/**/gin "./brand.js";', '/* @config "./theme.js"; */', '@plugin\u00a0"./brand.js";', '@config\u3000 "./theme.js";']) {
       expect(unapprovedDirective(css, true), css).not.toBeNull();
     }
     expect(unapprovedDirective('@\\70 lugin "./brand.js";', true)).toBe('an escaped at-keyword');
@@ -153,7 +172,9 @@ describe('no CSS directive that loads code reaches the build unless approved', (
     const files: Record<string, string> = {
       'src/pages/index.astro': "---\nimport '../../outside/theme.css';\n---\n<h1>Hi</h1>\n<style>\n  @import './local.css';\n  @config './theme.js';\n</style>\n",
       'src/pages/local.css': 'a { color: red }\n',
-      'src/styles/global.css': '@import "tailwindcss";\n@import "../../outside/notes.txt";\n',
+      'src/styles/global.css': '@import "tailwindcss";\n@import "../../outside/notes.txt";\n@import "../../outside/hero.png";\n',
+      'outside/hero.png': '\u0089PNG\r\n\u001a\n{}\n@plugin "./brand.js";\n@import "./never-read.css";\n',
+      'outside/never-read.css': '@plugin "./brand.js";\n',
       'outside/theme.css': '@reference "./deeper.md";\n',
       'outside/deeper.md': '@plugin "./brand.js";\n',
       'outside/notes.txt': 'nothing here\n',
@@ -170,9 +191,10 @@ describe('no CSS directive that loads code reaches the build unless approved', (
       for (const path of Object.keys(files)) if (existsSync(join(base, path))) unlinkSync(join(base, path));
       for (const dir of ['src/pages', 'src/styles', 'src', 'outside', '']) if (existsSync(join(base, dir))) rmdirSync(join(base, dir));
     }
-    expect(sheets.map((sheet) => sheet.label).sort()).toEqual(['outside/deeper.md', 'outside/notes.txt', 'outside/theme.css', 'src/pages/index.astro <style> 1', 'src/pages/local.css', 'src/styles/global.css']);
-    const flagged = sheets.filter((sheet) => unapprovedDirective(sheet.text, sheet.stylesheet)).map((sheet) => sheet.label).sort();
-    expect(flagged).toEqual(['outside/deeper.md', 'src/pages/index.astro <style> 1']);
+    // A binary is checked, but not decoded, so what it @imports is not followed.
+    expect(sheets.map((sheet) => sheet.label).sort()).toEqual(['outside/deeper.md', 'outside/hero.png', 'outside/notes.txt', 'outside/theme.css', 'src/pages/index.astro <style> 1', 'src/pages/local.css', 'src/styles/global.css']);
+    const flagged = sheets.filter((sheet) => unapprovedDirective(sheet.bytes, sheet.stylesheet)).map((sheet) => sheet.label).sort();
+    expect(flagged).toEqual(['outside/deeper.md', 'outside/hero.png', 'src/pages/index.astro <style> 1']);
   });
 
   test('the walk reads <style> blocks, imported stylesheets and what they @import', () => {
