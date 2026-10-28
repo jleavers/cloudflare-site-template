@@ -283,6 +283,16 @@ describe('agent-facing documents', () => {
     test('the README links design/BRIEFING.md', () => expect(read('README.md')).toContain('design/BRIEFING.md'));
   });
 
+  // On a public repository a fork's pull request runs the fork's own workflow file, which can name a
+  // self-hosted runner's label directly, so unsetting CI_LINUX_RUNNER protects nothing: the runner's
+  // registration has to go before the flip (sweep run 20261027T190359Z, ci-workflow-2).
+  eachDoc('%s says to remove a self-hosted runner before the repository goes public', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
+    const text = read(doc).replace(/\s+/g, ' ');
+    for (const fragment of ['Settings → Actions → Runners', 'not only the variable', 'own workflow file', 'can name the runner']) {
+      expect(text, `${doc}: ${fragment}`).toContain(fragment);
+    }
+  });
+
   // Every deploy goes through CI, a site's first included, and the Worker's secrets are set in the
   // dashboard: a local deploy, a login or a token on a machine that runs the build would sit beside
   // the lockfile's code (sweep cluster 3, Ruling 84).

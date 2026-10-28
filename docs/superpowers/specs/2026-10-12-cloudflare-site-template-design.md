@@ -593,7 +593,7 @@ New users who only want to see the template working start with §14.2 instead. T
    5. Add `TURNSTILE_SECRET_KEY`, and `RESEND_API_KEY` or `WEBHOOK_URL`, as type Secret in the dashboard (the Worker → Settings → Variables and Secrets, §7.5). Until then the handler refuses every post, which is expected.
    6. Turn on **Always Use HTTPS** for the domain's zone (SSL/TLS → Edge Certificates). Preflight can't check it, and without it the pages can be fetched over http.
    7. Send a test message from the live site.
-6. **Optionally**, `gh variable set CI_LINUX_RUNNER` plus a runner registration (see ci-runners), and `CI_PREVIEWS` once a `preview` environment with required reviewers holds the token (§10). Pull-request previews are opt-in.
+6. **Optionally**, `gh variable set CI_LINUX_RUNNER` plus a runner registration (see ci-runners), removed again before the repository is made public (a fork's pull request runs its own workflow file, which can name the runner's label directly, so removing the variable alone protects nothing); and `CI_PREVIEWS` once a `preview` environment with required reviewers holds the token (§10). Pull-request previews are opt-in.
 
 The "under 5 minutes" target covers steps 1 and 5 for an account where step 4 has already been done once. Step 3 depends on the design.
 

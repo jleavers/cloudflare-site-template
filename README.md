@@ -279,7 +279,7 @@ private Free repository there are no rulesets, so the agent's Contents write can
 | Worker secrets, set in the dashboard | `TURNSTILE_SECRET_KEY` | always |
 | | `RESEND_API_KEY` or `WEBHOOK_URL` | for the provider |
 | GitHub secrets | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | for CI deploys and previews: in the `production` and `preview` environments, or repository secrets on a private Free repository ([where](#cloudflare-api-token)) |
-| GitHub variables | `CI_LINUX_RUNNER` | optional: a self-hosted runner label (private repositories only) for `e2e`, `preview-build`, and the pull-request and dispatch runs of `verify` |
+| GitHub variables | `CI_LINUX_RUNNER` | optional: a self-hosted runner label (private repositories only: remove the runner itself before going public, [why](#development)) for `e2e`, `preview-build`, and the pull-request and dispatch runs of `verify` |
 | | `CI_PREVIEWS` | optional: `true` turns on pull-request previews, once the `preview` environment has required reviewers ([why](#cloudflare-api-token)) |
 
 ## Development
@@ -315,7 +315,10 @@ bundle would apply, or `containers`, whose image path could name a file in the d
 the pull request's `dist/`: the preview job refuses both ([why](#cloudflare-api-token)).
 
 **Short of GitHub Actions minutes?** CI's checks can run on a self-hosted runner (set
-`CI_LINUX_RUNNER`, private repositories only). The deploy and preview jobs always run on
+`CI_LINUX_RUNNER`, private repositories only). Before the repository goes public, remove the
+runner's registration (Settings → Actions → Runners), not only the variable: on a public
+repository a fork's pull request runs the fork's own workflow file, which can name the runner's
+`self-hosted` label directly. The deploy and preview jobs always run on
 GitHub-hosted runners, because they hold the Cloudflare token, and so does `verify` on a push to
 `main`, because it builds what deploys: each push to `main` spends hosted minutes twice. With none
 left, a private repository's deploys wait until the minutes return; a public repository's hosted

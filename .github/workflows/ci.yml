@@ -25,9 +25,10 @@ permissions:
 
 # The jobs without the token run on the repository's self-hosted runner when CI_LINUX_RUNNER
 # names one, else on GitHub's; verify on a push to main, which builds what deploys, always runs on
-# GitHub's. A public repository must not use self-hosted runners
-# (jleavers/ci-runners "Trust"). Every action is pinned to a commit SHA. Nothing here runs on
-# pull_request_target.
+# GitHub's. A public repository must have no self-hosted runner registered at all, not just no
+# CI_LINUX_RUNNER: a fork's pull request runs its own workflow file, which can name the runner's
+# label directly (README, "Short of GitHub Actions minutes?"). Every action is pinned to a commit
+# SHA. Nothing here runs on pull_request_target.
 #
 # The Cloudflare token can change every Worker on its account, so a job that can read it runs no
 # code that the checked-out tree or the lockfile chose: no install, build or test, and no wrangler
