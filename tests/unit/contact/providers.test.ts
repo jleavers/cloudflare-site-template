@@ -151,6 +151,39 @@ describe('postJson timeout', () => {
     expect(hanging.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
 
+  test('an unreachable endpoint names the label and the error class, never the error text', async () => {
+    const secret = 'https://hooks.example.test/services/T0FAKE/fictional-secret';
+    const throwing = vi.fn<typeof fetch>(async () => {
+      throw new TypeError(`Failed to parse URL from ${secret}`);
+    });
+    const failure = await postJson(throwing, secret, {}, 'Slack').catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(DeliveryError);
+    expect((failure as DeliveryError).message).toBe('Slack could not be reached (TypeError)');
+  });
+
+  test('a timeout is named by its class', async () => {
+    const hanging = vi.fn<typeof fetch>(
+      (_input, init) =>
+        new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))),
+    );
+    const failure = await postJson(hanging, 'https://api.test/', {}, 'Resend', {}, 10).catch((error: unknown) => error);
+    expect((failure as DeliveryError).message).toBe('Resend could not be reached (TimeoutError)');
+  });
+
+  test('a thrown value that is not an Error is named without being printed', async () => {
+    const throwing = vi.fn<typeof fetch>(async () => {
+      throw 'https://hooks.example.test/fictional-secret'; // eslint-disable-line no-throw-literal
+    });
+    const failure = await postJson(throwing, 'https://api.test/', {}, 'Teams').catch((error: unknown) => error);
+    expect((failure as DeliveryError).message).toBe('Teams could not be reached (a non-Error value)');
+  });
+
+  test('a non-2xx answer keeps its status and drops its body', async () => {
+    const answered = vi.fn<typeof fetch>(async () => new Response('fictional-secret ada@example.com', { status: 422 }));
+    const failure = await postJson(answered, 'https://api.test/', {}, 'Resend').catch((error: unknown) => error);
+    expect(failure).toMatchObject({ message: 'Resend answered 422', status: 422 });
+  });
+
   test('defaults to a signal that has not yet aborted', async () => {
     const ok = vi.fn<typeof fetch>(async () => new Response('{}'));
     await postJson(ok, 'https://api.test/', {}, 'Resend');

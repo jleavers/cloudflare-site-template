@@ -39,10 +39,12 @@ export async function postJson(
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
-    throw new DeliveryError(`${label} could not be reached: ${error instanceof Error ? error.message : String(error)}`);
+    // The class only: a runtime error's text can quote the URL, whose path or query is the secret, and this
+    // message reaches the log.
+    throw new DeliveryError(`${label} could not be reached (${error instanceof Error ? error.name : 'a non-Error value'})`);
   }
   if (!response.ok) {
-    const detail = (await response.text().catch(() => '')).slice(0, 300);
-    throw new DeliveryError(`${label} answered ${response.status}: ${detail}`, response.status);
+    // The status only: an error body can echo the request, which holds the visitor's text and the owner's address.
+    throw new DeliveryError(`${label} answered ${response.status}`, response.status);
   }
 }

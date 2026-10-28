@@ -2,6 +2,9 @@ import { describe, expect, test } from 'vitest';
 import { ConfigError, readConfig } from '../../../src/contact/config';
 
 const base = { TURNSTILE_SECRET_KEY: 'secret' };
+const WEBHOOK_MESSAGE =
+  'WEBHOOK_URL must be an https URL with a host and no username or password. Fix it as a secret in the ' +
+  'Cloudflare dashboard: the Worker → Settings → Variables and Secrets, name WEBHOOK_URL.';
 
 function missingFrom(env: Record<string, string | undefined>): string[] {
   try {
@@ -47,6 +50,44 @@ describe('readConfig', () => {
     expect(readConfig({ ...base, DELIVERY_PROVIDER: provider, WEBHOOK_URL: 'https://hooks.example.com/x' }).webhookUrl).toBe(
       'https://hooks.example.com/x',
     );
+  });
+
+  // Ruling 110: a WEBHOOK_URL that is refused is refused with a fixed message. Slack's and Teams'
+  // secrets are the URL's path and query, and a message that quoted any of it would reach the log.
+  describe('WEBHOOK_URL is parsed when the config is read', () => {
+    const SECRET = 'T0FAKE/B0FAKE/fictional-secret-path';
+    const refused: [string, string][] = [
+      ['an https prefix and no host', `https://?${SECRET}&sig=fictional-sig`],
+      ['a host that does not parse', `https://hooks.example .test/${SECRET}`],
+      ['a port that does not parse', `https://hooks.example.test:99999/${SECRET}`],
+      ['a username', `https://fictional-user@hooks.example.test/${SECRET}`],
+      ['a username and password', `https://fictional-user:fictional-pass@hooks.example.test/${SECRET}`],
+      ['a password only', `https://:fictional-pass@hooks.example.test/${SECRET}`],
+      ['http', `http://hooks.example.test/${SECRET}`],
+      ['no scheme', `hooks.example.test/${SECRET}`],
+    ];
+
+    test.each(['slack', 'teams'])('%s refuses each bad value with a message that holds no part of it', (provider) => {
+      for (const [label, value] of refused) {
+        let error: unknown;
+        try {
+          readConfig({ ...base, DELIVERY_PROVIDER: provider, WEBHOOK_URL: value });
+        } catch (caught) {
+          error = caught;
+        }
+        expect(error, label).toBeInstanceOf(ConfigError);
+        const { message } = error as ConfigError;
+        expect(message, label).toBe(WEBHOOK_MESSAGE);
+        for (const part of ['fictional', 'hooks.example', 'T0FAKE', 'B0FAKE', 'sig=', '99999']) expect(message, label).not.toContain(part);
+      }
+    });
+
+    test.each([
+      ['a Slack shaped URL', 'https://hooks.example.test/services/T0FAKE/B0FAKE/fictionalsecret'],
+      ['a Teams shaped URL', 'https://example-tenant.webhook.example.test:443/webhookb2/aaaa@bbbb/IncomingWebhook/cccc/dddd?api-version=1&sig=fictional'],
+    ])('accepts %s, unchanged', (_label, value) => {
+      expect(readConfig({ ...base, DELIVERY_PROVIDER: 'slack', WEBHOOK_URL: value }).webhookUrl).toBe(value);
+    });
   });
 
   test('reports every missing name at once, provider included', () => {

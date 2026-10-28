@@ -29,6 +29,20 @@ const TURNSTILE_TEST_SECRET = /^[123]x0{31}[A-Z]{2}$/;
 
 const isProvider = (value: string): value is ProviderName => (PROVIDERS as readonly string[]).includes(value);
 
+const WEBHOOK_URL_MESSAGE =
+  'WEBHOOK_URL must be an https URL with a host and no username or password. Fix it as a secret in the ' +
+  'Cloudflare dashboard: the Worker → Settings → Variables and Secrets, name WEBHOOK_URL.';
+
+/** True when the value parses as an https URL with a host and no credentials: one fetch cannot choke on while quoting it. */
+function isWebhookUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname !== '' && url.username === '' && url.password === '';
+  } catch {
+    return false;
+  }
+}
+
 /** Reads and checks the settings the chosen provider needs, naming everything missing at once. */
 export function readConfig(env: ContactEnv): ContactConfig {
   const missing: string[] = [];
@@ -69,8 +83,9 @@ export function readConfig(env: ContactEnv): ContactConfig {
         'Variables and Secrets, type Secret, name TURNSTILE_SECRET_KEY.',
     );
   }
-  if (config.webhookUrl !== undefined && !config.webhookUrl.startsWith('https://')) {
-    throw new ConfigError([], 'WEBHOOK_URL must be an https URL.');
+  if (config.webhookUrl !== undefined && !isWebhookUrl(config.webhookUrl)) {
+    // Fixed text: Slack's and Teams' secrets are the URL's path and query, and this message reaches the log.
+    throw new ConfigError([], WEBHOOK_URL_MESSAGE);
   }
   return config;
 }

@@ -219,6 +219,39 @@ describe('step 6: delivery', () => {
   });
 });
 
+describe('step 6: delivery never logs what the endpoint or the network said', () => {
+  // Slack's and Teams' secrets are in the URL, and a runtime error can quote the whole URL.
+  const SECRET_URL = 'https://hooks.example.test/services/T0FAKE/B0FAKE/fictional-secret?sig=fictional-sig';
+  const SLACK_ENV = { DELIVERY_PROVIDER: 'slack', TURNSTILE_SECRET_KEY: 'secret', WEBHOOK_URL: SECRET_URL };
+  const everything = (value: unknown) => JSON.stringify(value);
+
+  test('an error that quotes the URL reaches neither the log nor the response', async () => {
+    const fetchFn = fakeFetch({
+      delivery: () => {
+        throw new TypeError(`Failed to parse URL from ${SECRET_URL}`);
+      },
+    });
+    const { response, body, log } = await run(post(GOOD), SLACK_ENV, fetchFn);
+    expect(response.status).toBe(502);
+    expect(log).toHaveBeenCalledWith('error', 'contact: delivery failed', { provider: 'slack', error: 'Slack could not be reached (TypeError)' });
+    for (const part of ['fictional', 'T0FAKE', 'hooks.example.test']) {
+      expect(everything(log.mock.calls), part).not.toContain(part);
+      expect(everything(body), part).not.toContain(part);
+    }
+  });
+
+  test('an answer body that echoes the URL or the visitor reaches neither the log nor the response', async () => {
+    const fetchFn = fakeFetch({ delivery: () => new Response(`bad hook ${SECRET_URL} from ada@example.com`, { status: 404 }) });
+    const { response, body, log } = await run(post(GOOD), SLACK_ENV, fetchFn);
+    expect(response.status).toBe(502);
+    expect(log).toHaveBeenCalledWith('error', 'contact: delivery failed', { provider: 'slack', error: 'Slack answered 404' });
+    for (const part of ['fictional', 'T0FAKE', 'ada@example.com']) {
+      expect(everything(log.mock.calls), part).not.toContain(part);
+      expect(everything(body), part).not.toContain(part);
+    }
+  });
+});
+
 describe('step 7: success', () => {
   test('200, JSON, no-store; Resend called with the host in the subject', async () => {
     const fetchFn = fakeFetch();
