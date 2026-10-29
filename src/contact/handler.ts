@@ -60,8 +60,10 @@ export async function handleContact(request: Request, env: ContactEnv, deps: Con
   const log = deps.log ?? consoleLogger;
   const url = new URL(request.url);
 
-  // 1. Same-origin only. Browsers send Origin on every POST.
-  if (request.headers.get('Origin') !== url.origin) return json(403, { ok: false, message: MESSAGES.forbidden });
+  // 1. Same-origin only, and only over https (or from a loopback host, for local preview and tests).
+  // Browsers send Origin on every POST.
+  const secure = url.protocol === 'https:' || url.hostname === 'localhost' || url.hostname === '[::1]' || /^127(\.\d{1,3}){3}$/.test(url.hostname);
+  if (request.headers.get('Origin') !== url.origin || !secure) return json(403, { ok: false, message: MESSAGES.forbidden });
 
   // 2. A form body, and a small one.
   const contentType = request.headers.get('Content-Type') ?? '';

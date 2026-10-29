@@ -8,16 +8,20 @@
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    "not_found_handling": "404-page",
+    // "none": a miss reaches the Worker, which serves 404.html as a 404 with `no-store`. With
+    // "404-page" the asset layer answered itself, and `_headers` made a missing /_astro/ file
+    // cacheable as immutable. Each miss is therefore a Worker invocation (bot probes count).
+    "not_found_handling": "none",
     // /api/* always reaches the Worker, even if a file in dist/ ever matched it.
     "run_worker_first": ["/api/*"]
   },
   "observability": { "enabled": true },
   // The example site's settings: Turnstile's published always-pass test secret and `log` delivery,
-  // so this repository deploys to workers.dev with no secrets at all (the live demo, the Deploy
-  // button). A real site sets its own provider and addresses here and DELETES
-  // TURNSTILE_SECRET_KEY from this block, setting it as a secret instead: a var and a secret
-  // cannot share a name. `npm run preflight` refuses a custom-domain deploy until it has.
+  // so this repository deploys to workers.dev with no secrets at all (the live demo, a new user's
+  // first CI deploy). A real site sets its own provider and addresses here and DELETES
+  // TURNSTILE_SECRET_KEY from this block, adding it as a secret in the dashboard instead: a var
+  // and a secret cannot share a name. `npm run preflight` refuses a live site (a custom domain, or
+  // real delivery) until it has.
   "vars": {
     "DELIVERY_PROVIDER": "log",
     "TURNSTILE_SECRET_KEY": "1x0000000000000000000000000000000AA",
@@ -26,7 +30,10 @@
     "CONTACT_FROM_EMAIL": "website@example.com"
   },
   // Pull-request previews (`wrangler preview`) do not inherit "vars": they get these, so a
-  // preview's form works end to end and never sends a real message.
+  // preview's form works end to end and never sends a real message. On a site that uses Resend,
+  // `wrangler preview` therefore warns "These bindings are configured for your production Worker
+  // but not for Previews: CONTACT_TO_EMAIL, CONTACT_FROM_EMAIL". That is intended: a preview
+  // without the addresses cannot send, even if DELIVERY_PROVIDER were mis-set. Expected; leave it.
   "previews": {
     "vars": {
       "DELIVERY_PROVIDER": "log",

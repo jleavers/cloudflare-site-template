@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { checkPreflight, EXAMPLE_SITE_NAME, STALE_URL_WARNING, TEMPLATE_WORKER_NAME, type PreflightInput, type WranglerConfig } from '../preflight/rules';
+import { checkPreflight, findPlaceholders, EXAMPLE_SITE_NAME, STALE_URL_WARNING, TEMPLATE_WORKER_NAME, type PreflightInput, type WranglerConfig } from '../preflight/rules';
 
 const template: PreflightInput = {
   wrangler: {
@@ -9,6 +9,7 @@ const template: PreflightInput = {
   },
   site: { name: EXAMPLE_SITE_NAME, url: 'https://example.com', contact: { turnstileSiteKey: '1x00000000000000000000AA', successMessage: 'Thanks.' } },
   designPresent: false,
+  placeholders: [],
 };
 
 const real: PreflightInput = {
@@ -19,6 +20,7 @@ const real: PreflightInput = {
   },
   site: { name: 'Acme', url: 'https://www.acme.test', contact: { turnstileSiteKey: '0x4AAAAAAAreal', successMessage: 'Thanks.' } },
   designPresent: true,
+  placeholders: [],
 };
 
 describe('demo mode (no custom domain)', () => {
@@ -130,5 +132,135 @@ describe('production mode (a custom domain)', () => {
     const result = checkPreflight({ ...real, designPresent: false });
     expect(result.errors).toEqual([]);
     expect(result.warnings).toHaveLength(1);
+  });
+});
+
+describe('production mode (real delivery, no route)', () => {
+  const live: PreflightInput = {
+    wrangler: {
+      name: 'acme-site',
+      workers_dev: true,
+      vars: { DELIVERY_PROVIDER: 'resend', CONTACT_TO_EMAIL: 'hi@acme.test', CONTACT_FROM_EMAIL: 'web@acme.test' },
+    },
+    site: { name: 'Acme', url: 'https://acme.sub.workers.dev', contact: { turnstileSiteKey: '0x4AAAAAAAreal', successMessage: 'Thanks.' } },
+    designPresent: true,
+    placeholders: [],
+  };
+
+  test('workers.dev with resend and real values passes, in production mode', () => {
+    expect(checkPreflight(live)).toEqual({ mode: 'production', errors: [], warnings: [], notes: [] });
+  });
+
+  test.each(['resend', 'slack', 'teams'])('%s starts production mode', (provider) => {
+    const result = checkPreflight({ ...live, wrangler: { ...live.wrangler, vars: { ...live.wrangler.vars, DELIVERY_PROVIDER: provider } } });
+    expect(result.mode).toBe('production');
+  });
+
+  // readConfig trims the provider, so " resend " delivers for real: preflight must read it the same way.
+  test.each([' resend ', '\tslack', 'teams\n'])('%j, padded, starts production mode too', (provider) => {
+    const result = checkPreflight({ ...template, wrangler: { ...template.wrangler, vars: { ...template.wrangler.vars, DELIVERY_PROVIDER: provider } } });
+    expect(result.mode).toBe('production');
+    expect(result.errors.join('\n')).toContain('TURNSTILE_SECRET_KEY');
+  });
+
+  test('the test secret left in vars is an error', () => {
+    const vars = { ...live.wrangler.vars, TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA' };
+    const result = checkPreflight({ ...live, wrangler: { ...live.wrangler, vars } });
+    expect(result.mode).toBe('production');
+    expect(result.errors.join('\n')).toContain('TURNSTILE_SECRET_KEY');
+  });
+
+  test('a placeholder is an error naming the page', () => {
+    const result = checkPreflight({ ...live, placeholders: [{ page: 'about/index.html', text: '[Your address]' }] });
+    expect(result.errors).toEqual(['about/index.html has the placeholder [Your address]']);
+  });
+
+  test('template values are errors too', () => {
+    const result = checkPreflight({ ...live, site: { ...live.site, name: EXAMPLE_SITE_NAME, url: 'https://example.com' } });
+    const all = result.errors.join('\n');
+    expect(all).toContain(EXAMPLE_SITE_NAME);
+    expect(all).toContain('example.com');
+    expect(all).not.toMatch(/custom domains/);
+  });
+
+  test('workers_dev false with no route still has no URL', () => {
+    const result = checkPreflight({ ...live, wrangler: { ...live.wrangler, workers_dev: false } });
+    expect(result.errors).toContain('workers_dev is false and no route is set, so the deploy would have no URL');
+  });
+
+  test('still warns when design/ is missing', () => {
+    expect(checkPreflight({ ...live, designPresent: false }).warnings).toHaveLength(1);
+  });
+
+  test('log on workers.dev stays demo mode with notes only; log with a route is production', () => {
+    const demo = checkPreflight(template);
+    expect(demo.mode).toBe('demo');
+    expect(demo.errors).toEqual([]);
+    expect(demo.notes.length).toBeGreaterThan(0);
+    const routed = checkPreflight({ ...template, wrangler: { ...template.wrangler, routes: [{ pattern: 'www.acme.test', custom_domain: true }] } });
+    expect(routed.mode).toBe('production');
+  });
+});
+
+describe('findPlaceholders', () => {
+  const found = (text: string) => findPlaceholders(`<p>${text}</p>`);
+
+  test.each([
+    ['[Phone number]', ['[Phone number]']],
+    ['[hello@your-domain]', ['[hello@your-domain]']],
+    ['[Number] Harbour Lane', ['[Number]']],
+    ['[Town] [POSTCODE]', ['[Town]', '[POSTCODE]']],
+    ['[Closed]', ['[Closed]']],
+    ['Within [one working day], with the total', ['[one working day]']],
+    ['[Customer name], local', ['[Customer name]']],
+    ['about [5 minutes’] walk', ['[5 minutes’]']],
+    ['by [lunchtime].', ['[lunchtime]']],
+    ['Tom &amp; [Jerry&#39;s]', ['[Jerry\'s]']],
+  ])('finds %s', (text, expected) => expect(found(text)).toEqual(expected));
+
+  test('finds a placeholder across element boundaries without joining them', () => {
+    expect(findPlaceholders('<p>[Town]</p><p>[POSTCODE]</p>')).toEqual(['[Town]', '[POSTCODE]']);
+  });
+
+  test.each([
+    ['a bare number', '<p>[1]</p>'],
+    ['an attribute', '<a aria-label="[Phone number]" href="#">x</a>'],
+    ['a script', '<script type="application/ld+json">{"a":["[Town]"]}</script>'],
+    ['a style', '<style>[data-state="sent"]{}</style>'],
+    ['a comment', '<!-- [note] -->'],
+    ['text over 60 characters', `<p>[${'a'.repeat(61)}]</p>`],
+  ])('finds nothing in %s', (_name, html) => expect(findPlaceholders(html)).toEqual([]));
+});
+
+describe('placeholders (C7)', () => {
+  const placeholders = [{ page: 'contact/index.html', text: '[Phone number]' }];
+
+  test('are an error in production mode, naming the page and the text', () => {
+    const result = checkPreflight({ ...real, placeholders });
+    expect(result.mode).toBe('production');
+    expect(result.errors.some((error) => error.includes('contact/index.html') && error.includes('[Phone number]'))).toBe(true);
+  });
+
+  test('are a note, not an error, in demo mode', () => {
+    const result = checkPreflight({ ...template, placeholders });
+    expect(result.errors).toEqual([]);
+    expect(result.notes.some((note) => note.includes('contact/index.html') && note.includes('[Phone number]'))).toBe(true);
+  });
+
+  test('add nothing when there are none', () => {
+    expect(checkPreflight(real).errors).toEqual([]);
+  });
+});
+
+describe('a display name in CONTACT_FROM_EMAIL', () => {
+  const withFrom = (from: string): PreflightInput => ({ ...real, wrangler: { ...real.wrangler, vars: { ...real.wrangler.vars, CONTACT_FROM_EMAIL: from } } });
+
+  test('does not hide an example.com address', () => {
+    const result = checkPreflight(withFrom('Example Co. <hello@example.com>'));
+    expect(result.errors).toContain('CONTACT_TO_EMAIL and CONTACT_FROM_EMAIL must be real addresses for Resend');
+  });
+
+  test('passes with a real address', () => {
+    expect(checkPreflight(withFrom('Acme <web@acme.test>')).errors).toEqual([]);
   });
 });

@@ -22,6 +22,8 @@ export interface PreflightInput {
   wrangler: WranglerConfig;
   site: Pick<SiteConfig, 'name' | 'url' | 'contact'>;
   designPresent: boolean;
+  /** Placeholders found in the built pages (see findPlaceholders), with the page each is on. */
+  placeholders: { page: string; text: string }[];
 }
 export interface PreflightResult {
   mode: 'demo' | 'production';
@@ -34,8 +36,27 @@ export interface PreflightResult {
 export const STALE_URL_WARNING =
   'site.url is still example.com, but this is no longer the template: set site.url to this site\'s address (custom domain or workers.dev)';
 
+const ENTITIES: Record<string, string> = { '&nbsp;': ' ', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&amp;': '&' };
+const TAG = /<\/?[a-zA-Z][^\s>/]*(?:"[^"]*"|'[^']*'|[^>"'])*>/g;
+const PLACEHOLDER = /\[[^[\]<>"\n]{1,60}\]/g;
+
+/**
+ * The `[Bracketed placeholders]` a design leaves for facts it did not know, found in a built
+ * page's visible text: not in scripts, styles, comments or attributes.
+ */
+export function findPlaceholders(html: string): string[] {
+  const text = html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, '\n')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, '\n')
+    .replace(/<!--[\s\S]*?-->/g, '\n')
+    .replace(TAG, '\n')
+    .replace(/&(?:nbsp|lt|gt|quot|#39|amp);/g, (entity) => ENTITIES[entity]);
+  return (text.match(PLACEHOLDER) ?? []).filter((candidate) => /\p{L}/u.test(candidate));
+}
+
 const isExampleHost = (host: string) => host === 'example.com' || host.endsWith('.example.com');
-const domainOf = (email: string | undefined) => (email?.split('@')[1] ?? '').toLowerCase();
+/** The address inside <…> when there is one ("Name <a@b.test>"), otherwise the whole value. */
+const domainOf = (email: string | undefined) => ((email?.match(/<([^<>]*)>/)?.[1] ?? email)?.split('@')[1] ?? '').trim().toLowerCase();
 
 /** The host of every route, at the top level and in every env.* block. A route string's host is the part before the first "/". */
 function routeHosts(config: WranglerConfig): string[] {
@@ -45,20 +66,24 @@ function routeHosts(config: WranglerConfig): string[] {
 }
 
 /**
- * Contract C7. Example values may go to workers.dev (the demo, the Deploy button, a first
- * experiment) but never to a custom domain.
+ * Contract C7. Example values, and a design's [bracketed] placeholders, may go to a workers.dev
+ * demo that delivers only to `log`, never to a live site. A site is live, and preflight is in
+ * production mode, when wrangler.jsonc has any route or sets DELIVERY_PROVIDER to resend, slack
+ * or teams. Without a route, production mode skips only the "site.url is one of the custom
+ * domains" check.
  */
-export function checkPreflight({ wrangler, site, designPresent }: PreflightInput): PreflightResult {
+export function checkPreflight({ wrangler, site, designPresent, placeholders }: PreflightInput): PreflightResult {
   const routeHostList = routeHosts(wrangler);
   const vars = wrangler.vars ?? {};
   const siteHost = new URL(site.url).hostname.toLowerCase();
-  const provider = vars.DELIVERY_PROVIDER;
+  // Trimmed, as readConfig (src/contact/config.ts) reads it: " resend " delivers for real.
+  const provider = vars.DELIVERY_PROVIDER?.trim();
 
   const templateValues = [
     [wrangler.name === TEMPLATE_WORKER_NAME, `wrangler.jsonc "name" is still "${TEMPLATE_WORKER_NAME}"`],
     [isExampleHost(siteHost), `site.url is still on example.com (${site.url})`],
     [TURNSTILE_TEST_KEY.test(site.contact.turnstileSiteKey), 'site.contact.turnstileSiteKey is a Turnstile test key'],
-    ['TURNSTILE_SECRET_KEY' in vars, 'TURNSTILE_SECRET_KEY is in wrangler.jsonc "vars": delete it there and run `npx wrangler secret put TURNSTILE_SECRET_KEY`'],
+    ['TURNSTILE_SECRET_KEY' in vars, 'TURNSTILE_SECRET_KEY is in wrangler.jsonc "vars": delete it there, and once CI has deployed, add it as a secret in the Cloudflare dashboard (the Worker → Settings → Variables and Secrets)'],
     [!provider || provider === 'log', `DELIVERY_PROVIDER is ${provider ? `"${provider}"` : 'missing'}: set resend, slack or teams`],
     [
       provider === 'resend' && [vars.CONTACT_TO_EMAIL, vars.CONTACT_FROM_EMAIL].some((email) => !email || isExampleHost(domainOf(email))),
@@ -66,10 +91,15 @@ export function checkPreflight({ wrangler, site, designPresent }: PreflightInput
     ],
     [site.name === EXAMPLE_SITE_NAME, `site.name is still "${EXAMPLE_SITE_NAME}"`],
   ] as const;
-  const present: string[] = templateValues.filter(([found]) => found).map(([, message]) => message);
+  const present: string[] = [
+    ...templateValues.filter(([found]) => found).map(([, message]) => message),
+    ...placeholders.map(({ page, text }) => `${page} has the placeholder ${text}`),
+  ];
 
-  // Demo mode only when nothing routes anywhere: any route of any kind, in any env, means production.
-  if (routeHostList.length === 0) {
+  // Demo mode only when nothing routes anywhere (any route of any kind, in any env, means
+  // production) and delivery cannot reach a real recipient.
+  const realDelivery = provider === 'resend' || provider === 'slack' || provider === 'teams';
+  if (routeHostList.length === 0 && !realDelivery) {
     const errors =
       wrangler.workers_dev === false ? ['workers_dev is false and no route is set, so the deploy would have no URL'] : [];
     const isTemplate = wrangler.name === TEMPLATE_WORKER_NAME && site.name === EXAMPLE_SITE_NAME;
@@ -78,7 +108,10 @@ export function checkPreflight({ wrangler, site, designPresent }: PreflightInput
   }
 
   const errors = [...present];
-  if (!routeHostList.includes(siteHost)) {
+  if (routeHostList.length === 0 && wrangler.workers_dev === false) {
+    errors.unshift('workers_dev is false and no route is set, so the deploy would have no URL');
+  }
+  if (routeHostList.length > 0 && !routeHostList.includes(siteHost)) {
     errors.push(`site.url's host (${siteHost}) is not one of the custom domains (${routeHostList.join(', ')})`);
   }
   const warnings = designPresent ? [] : ['design/ has neither SOURCE.md nor bundle/: was this site built from a design?'];

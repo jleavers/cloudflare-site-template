@@ -31,6 +31,7 @@ export interface SiteConfig {
   contact: {
     /** Public Turnstile site key. PR preview and local builds override it with the test key. */
     turnstileSiteKey: string;
+    /** Shown after a send. May contain {email}, which becomes the address the visitor typed. */
     successMessage: string;
     /** Shown when the form cannot work: no JavaScript, or a network failure. */
     fallbackEmail?: string;
@@ -71,7 +72,7 @@ export const site: SiteConfig = {
   },
   contact: {
     turnstileSiteKey: '1x00000000000000000000AA',
-    successMessage: 'Thank you — your message is on its way. We reply within two working days.',
+    successMessage: 'Thank you — your message is on its way. We’ll reply to {email} within two working days.',
     fallbackEmail: 'hello@example.com',
   },
   socials: [{ label: 'Source on GitHub', href: 'https://github.com/jleavers/cloudflare-site-template' }],

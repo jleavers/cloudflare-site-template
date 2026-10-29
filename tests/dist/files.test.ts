@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { expect, test } from 'vitest';
 import { site } from '../../src/config/site';
+import { headersProblems } from './headers';
 import { distFile, readDist } from './helpers';
 
 const locs = (xml: string) => [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]);
@@ -25,13 +26,8 @@ test('the sitemap lists the site origin only, without the 404 page', () => {
   }
 });
 
-test('_headers sets a CSP that admits Turnstile and frames nothing', () => {
-  const csp = readDist('_headers').match(/Content-Security-Policy: (.+)/)?.[1] ?? '';
-  expect(csp).toContain("frame-ancestors 'none'");
-  expect(csp).toContain('frame-src https://challenges.cloudflare.com');
-  expect(csp).toMatch(/script-src 'self' https:\/\/challenges\.cloudflare\.com[ ;]/);
-  if (site.analytics.cloudflareToken) {
-    expect(csp).toContain('https://static.cloudflareinsights.com');
-    expect(csp).toMatch(/connect-src [^;]*https:\/\/cloudflareinsights\.com/);
-  }
+// C2/C3's backstop in the browser: every CSP in the built _headers, on any path, directive by
+// directive against tests/dist/headers.ts's allow-list, and the security headers beside it on /*.
+test('_headers holds every CSP and security header to the allow-list', () => {
+  expect(headersProblems(readDist('_headers'), { siteUrl: site.url, analyticsToken: site.analytics.cloudflareToken })).toEqual([]);
 });

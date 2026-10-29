@@ -6,6 +6,8 @@
  * third-party JavaScript on first load. The submit button stays disabled until Turnstile issues
  * a token, and while a submission is in flight, so a double click sends one request.
  */
+import { successText } from './success-message';
+
 const TURNSTILE_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 
 interface Turnstile {
@@ -119,18 +121,22 @@ function setUp(form: HTMLFormElement): void {
     if (form.dataset.state === 'sending' || !hasToken) return;
     clearErrors(form);
     setState('sending', 'Sending…');
+    // One snapshot for the request and the thank-you: the fields stay editable while it is in
+    // flight, so the message must name the address that was sent, not the field's value later.
+    const sent = new FormData(form);
     try {
       const response = await fetch(form.action, {
         method: 'POST',
-        body: new FormData(form),
+        body: sent,
         headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(15_000),
       });
       const body: ApiResponse = await response.json().catch(() => ({}));
       consumeToken();
       if (response.ok && body.ok) {
+        const email = String(sent.get('email') ?? '');
         form.reset();
-        setState('sent', successMessage);
+        setState('sent', successText(successMessage, email));
         return;
       }
       showErrors(form, body.errors ?? {});

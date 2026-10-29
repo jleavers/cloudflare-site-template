@@ -18,8 +18,27 @@ test('a visitor can send a message', async ({ page }) => {
   const { form, submit } = await fillForm(page);
   await submit.click();
   await expect(form).toHaveAttribute('data-state', 'sent');
-  await expect(form.locator('[data-status]')).toHaveText(site.contact.successMessage);
+  await expect(form.locator('[data-status]')).toHaveText(site.contact.successMessage.replaceAll('{email}', 'ada@example.com'));
   await expect(form.locator('[name="name"]')).toHaveValue('');
+});
+
+// The fields stay editable while a submission is in flight (up to 15 s): the thank-you names the
+// address that was sent, not whatever the field says when the response arrives.
+test('the success message names the address that was sent', async ({ page }) => {
+  test.skip(!site.contact.successMessage.includes('{email}'), 'this site\'s success message names no address');
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route('**/api/contact', async (route) => {
+    await held;
+    await route.continue();
+  });
+  const { form, submit } = await fillForm(page);
+  await submit.click();
+  await expect(form).toHaveAttribute('data-state', 'sending');
+  await form.locator('[name="email"]').fill('grace@example.com');
+  release();
+  await expect(form).toHaveAttribute('data-state', 'sent');
+  await expect(form.locator('[data-status]')).toHaveText(site.contact.successMessage.replaceAll('{email}', 'ada@example.com'));
 });
 
 // Review focus 2.

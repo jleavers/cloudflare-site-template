@@ -9,6 +9,9 @@ export interface DeliveryContext {
   log: Logger;
 }
 
+/** The only error names a "could not be reached" message repeats. */
+const REACH_ERRORS = new Set(['TypeError', 'TimeoutError', 'AbortError']);
+
 export class DeliveryError extends Error {
   readonly status?: number;
 
@@ -39,10 +42,13 @@ export async function postJson(
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
-    throw new DeliveryError(`${label} could not be reached: ${error instanceof Error ? error.message : String(error)}`);
+    // One of three class names, or Error: a runtime error's text, and its name too, can quote the URL, whose
+    // path or query is the secret, and this message reaches the log.
+    const name = !(error instanceof Error) ? 'a non-Error value' : REACH_ERRORS.has(error.name) ? error.name : 'Error';
+    throw new DeliveryError(`${label} could not be reached (${name})`);
   }
   if (!response.ok) {
-    const detail = (await response.text().catch(() => '')).slice(0, 300);
-    throw new DeliveryError(`${label} answered ${response.status}: ${detail}`, response.status);
+    // The status only: an error body can echo the request, which holds the visitor's text and the owner's address.
+    throw new DeliveryError(`${label} answered ${response.status}`, response.status);
   }
 }

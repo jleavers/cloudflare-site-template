@@ -8,7 +8,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "check": "astro check && tsc --noEmit",
-    "test": "vitest run --project unit",
+    "test": "vitest run --project unit --project sweep",
     "test:dist": "vitest run --project dist",
     "verify": "npm run check && npm run test && npm run build && npm run test:dist",
     "preview": "node scripts/dev-stack.mjs",
@@ -16,7 +16,6 @@
     "lighthouse": "node scripts/lighthouse.mjs",
     "lighthouse:ci": "node scripts/lighthouse.mjs --ci",
     "preflight": "vitest run --project preflight --silent=false",
-    "deploy": "astro build && npm run preflight && wrangler deploy",
     "screenshots": "node tools/screenshots/capture.mjs"
   },
   "repository": {

@@ -2,43 +2,99 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
-    types: [opened, synchronize, reopened, closed]
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - closed
   workflow_dispatch:
 
-# A newer push to a pull request makes an in-flight run obsolete. Runs on main always finish.
-# Pull-request runs are grouped by PR number, never by ref: when a PR is merged, its `closed`
-# run reports github.ref as the base branch (refs/heads/main), so a ref-based group put it
-# beside the merge's push run, and it cancelled that run's Deploy job.
+# Only a pull request's runs cancel one in progress, and only in that pull request's group.
+# The group says who may queue behind whom:
+# - A pull request is grouped by PR number, never by ref: when a PR is merged, its `closed` run
+#   reports github.ref as the base branch (refs/heads/main), so a ref-based group put it beside
+#   the merge's push run, and it cancelled that run's Deploy job.
+# - A push (only ever to main) is grouped by ref, so only main's own push runs share its group;
+#   they queue, and GitHub keeps the newest pending one.
+# - Any other event (a workflow_dispatch run) gets a group of its own, by run ID, so it can never
+#   displace main's pending push run and its deploy.
+# What YAML cannot stop is a fork's pull request, which runs its own workflow file and can name
+# main's group with cancel-in-progress: the repository's fork-approval setting does (README,
+# "Cloudflare API token").
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || format('{0}-{1}', github.event_name, github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
-# Every job runs on the repository's self-hosted runner when CI_LINUX_RUNNER names one, else on
-# GitHub's. A public repository must not use self-hosted runners (jleavers/ci-runners "Trust").
-# Every action is pinned to a commit SHA. Jobs that receive the Cloudflare token use only
-# actions/* and cloudflare/wrangler-action. Nothing here runs on pull_request_target.
+# The jobs without the token run on the repository's self-hosted runner when CI_LINUX_RUNNER
+# names one, else on GitHub's; verify on a push to main, which builds what deploys, always runs on
+# GitHub's. A public repository must have no self-hosted runner registered at all, not just no
+# CI_LINUX_RUNNER: a fork's pull request runs its own workflow file, which can name the runner's
+# label directly (README, "Short of GitHub Actions minutes?"). Every action is pinned to a commit
+# SHA. Nothing here runs on pull_request_target.
+#
+# The Cloudflare token can change every Worker on its account, so a job that can read it runs no
+# code that the checked-out tree or the lockfile chose: no install, build or test, and no wrangler
+# from the lockfile. It takes wrangler.jsonc, the wrangler version and .nvmrc from the trusted ref
+# (the pushed main commit, or the default branch by name for a pull request, never the PR's head)
+# with a sparse checkout, and deploys what a tokenless job built, as data: wrangler uploads that
+# worker.js unbundled and with no source map (deploy's flags, the preview config's settings), since
+# its bundler, or a sourceMappingURL in the file, would reach any file on the runner. It uses only
+# actions/* and cloudflare/wrangler-action, always runs on a GitHub-hosted runner, and runs through
+# an environment, which holds the token behind a branch rule or a reviewer where the plan allows
+# (README, "Cloudflare API token"). main's wrangler.jsonc is part of that trust root: its
+# assets.directory, rules and tsconfig steer what wrangler reads and uploads, so review a change
+# to it as you would a change to this file. Deploy also runs only while its commit is main's head.
 
 jobs:
   verify:
     name: Verify
     if: github.event.action != 'closed'
-    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    # A push (only ever to main) builds the artifact that deploys, so it runs on a GitHub-hosted
+    # runner, like the token jobs below: a pull request's code on the self-hosted runner could have
+    # poisoned its tool cache, npx or ~/.npmrc. Pull requests and dispatches use CI_LINUX_RUNNER.
+    runs-on: ${{ github.event_name == 'push' && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    # deploy downloads the site by this ID, never by name: e2e on main runs on the self-hosted
+    # runner, where its actions' runtime token could replace or delete a named artifact. A
+    # replaced or deleted one has another ID, or none, and the download then fails.
+    outputs:
+      site-artifact-id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # No npm cache on a push: e2e on main can save one from the self-hosted runner.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
-          cache: npm
+          cache: ${{ github.event_name != 'push' && 'npm' || '' }}
+          package-manager-cache: false
       - run: npm ci
       - run: npm run verify
       - run: npm run preflight
+      # The deploy job deploys this dist/, the one preflight just checked, with this Worker bundle.
+      # The lockfile's wrangler is fine here: this job holds no token.
+      - name: Bundle the Worker for the deploy job
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: npx wrangler deploy --dry-run --outdir bundle
+      - name: Hand the site and the Worker bundle to the deploy job
+        id: upload
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site
+          path: |
+            dist/
+            bundle/
+          # dist/.well-known/ and the like; the deploy job copies only dist/ and bundle/worker.js.
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
 
   e2e:
     name: Browser tests
@@ -57,12 +113,28 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # The AppArmor profile below names Playwright's default browser folder under the home
+      # directory, so the browser goes there whatever the image sets (this wins over XDG_CACHE_HOME).
+      - name: Keep Playwright's browsers where the AppArmor profile looks
+        if: runner.environment == 'github-hosted'
+        run: echo "PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright" >> "$GITHUB_ENV"
       - name: Install Chromium with its system libraries
         if: runner.environment == 'github-hosted'
         run: npx playwright install --with-deps chromium
       - name: Install Chromium (the self-hosted VM has its libraries already)
         if: runner.environment != 'github-hosted'
         run: npx playwright install chromium
+      # The design renderer runs only inside Chromium's sandbox, which an Ubuntu that restricts user
+      # namespaces lets start only under an AppArmor profile (tools/screenshots/README.md). A
+      # self-hosted runner gets no step: without the profile its design-fence tests refuse.
+      - name: Let Chromium start its sandbox where Ubuntu restricts user namespaces
+        if: runner.environment == 'github-hosted'
+        run: |
+          if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then
+            sed "s|@{HOME}/|$HOME/|" tools/screenshots/playwright-chromium.apparmor | sudo tee /etc/apparmor.d/playwright-chromium >/dev/null
+            sudo chmod 0644 /etc/apparmor.d/playwright-chromium
+            sudo apparmor_parser -r /etc/apparmor.d/playwright-chromium
+          fi
       # A free port, not a fixed one: a self-hosted VM runs other repositories' jobs alongside.
       - name: Pick a free port
         run: >-
@@ -93,82 +165,301 @@ jobs:
           path: |
             test-results/
             .lighthouse/
+          include-hidden-files: true
           retention-days: 7
           if-no-files-found: ignore
 
+  # The jobs that hold the token:
+  # - run on GitHub-hosted runners, whatever CI_LINUX_RUNNER says. A persistent self-hosted runner
+  #   keeps its tool cache and home directory between jobs, and the jobs above run branch and
+  #   lockfile code there as the same user: that code could replace node or npx, or write an
+  #   ~/.npmrc, for these jobs to run.
+  # - copy only dist/ and the bundle's worker.js out of the artifact, into a fresh directory
+  #   beside their config (deploy's is the trusted wrangler.jsonc; the preview's, the wrangler.json
+  #   trusted-config.mjs writes from it): nothing else an artifact might carry (a .env, a .npmrc,
+  #   a node_modules) reaches the directory wrangler runs in. The tokenless job could upload a
+  #   crafted zip; download-artifact extracts every entry inside its path, makes no symlinks and,
+  #   from v8, fails on a digest mismatch.
+  # - name that config with --config, because without it wrangler looks for a config beside the
+  #   entry first.
+  # - deploy only main's current head. The gate below tests run metadata, which a re-run of an
+  #   older push run keeps, so the first step asks GitHub what main's head is now, with the job's
+  #   own GITHUB_TOKEN, and every later step waits for the answer to be this commit. A read that
+  #   fails fails the job: it never deploys on a check that did not happen. A newer push is
+  #   deployed by its own run: if that run did not deploy it, re-run that run.
   deploy:
     name: Deploy
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [verify, e2e]
-    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    needs:
+      - verify
+      - e2e
+    runs-on: ubuntu-latest
+    environment: production
     env:
       HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
     steps:
       - name: Explain a skipped deploy
         if: env.HAS_CLOUDFLARE != 'true'
-        run: echo "::notice title=Deploy skipped::Set the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets to deploy from CI."
-      - if: env.HAS_CLOUDFLARE == 'true'
+        run: echo "::notice title=Deploy skipped::Set the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets in the production environment (or as repository secrets, on a private GitHub Free repository) to deploy from CI."
+      - name: Stop unless this commit is main's head
+        id: head
+        if: env.HAS_CLOUDFLARE == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          if ! head="$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)" || [ -z "$head" ]; then
+            echo "::error::could not read main's head, so nothing deploys"
+            exit 1
+          fi
+          if [ "$head" = "$SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Deploy skipped::main's head is now $head, not $SHA; deploy it from the run for $head, and re-run that run if it did not deploy"
+          fi
+      - name: Check out the trusted config
+        if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
+          path: trusted
+          sparse-checkout: |
+            /.nvmrc
+            /package.json
+            /scripts/trusted-config.mjs
+            /wrangler.jsonc
+          sparse-checkout-cone-mode: false
           persist-credentials: false
-      # No npm cache here: a deploy should not trust a cache a pull request could have written.
-      - if: env.HAS_CLOUDFLARE == 'true'
+      # No npm cache: wrangler-action's install of wrangler should not trust a cache a pull request
+      # could have written.
+      - if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version-file: .nvmrc
+          node-version-file: trusted/.nvmrc
           package-manager-cache: false
-      - if: env.HAS_CLOUDFLARE == 'true'
-        run: npm ci
-      - if: env.HAS_CLOUDFLARE == 'true'
-        run: npm run build
-      - if: env.HAS_CLOUDFLARE == 'true'
-        run: npm run preflight
-      - if: env.HAS_CLOUDFLARE == 'true'
+      - name: Refuse a custom build, and read the pinned wrangler version
+        id: trusted
+        if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
+        run: node trusted/scripts/trusted-config.mjs trusted
+      # Fail closed: without a version, wrangler-action would install whatever wrangler 4 is latest.
+      - name: Stop unless a wrangler version was read
+        if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
+        env:
+          WRANGLER_VERSION: ${{ steps.trusted.outputs.wrangler-version }}
+        run: test -n "$WRANGLER_VERSION" || { echo "::error::trusted-config.mjs gave no wrangler version"; exit 1; }
+      # npm 11.10.0 added min-release-age; an older npm only warns about it, and installs with no
+      # floor. No `npm config get` output tells them apart (with the floor set, npm 11.9.0 and npm
+      # 11.16+ both print 7 for the setting and null for the `before` date), so this reads npm's
+      # version, and fails closed on anything it can't parse.
+      - name: Stop unless npm knows the release-age floor
+        if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
+        run: |
+          node -e '
+            const version = process.argv[1];
+            const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+            const [major, minor] = parts ? [Number(parts[1]), Number(parts[2])] : [NaN, NaN];
+            if (!(major > 11 || (major === 11 && minor >= 10))) {
+              console.log(`::error::npm ${version || "(no version)"} predates min-release-age (npm 11.10.0), so it would install with no floor`);
+              process.exit(1);
+            }
+            console.log(`npm ${version} applies min-release-age`);
+          ' "$(npm --version)"
+      # An empty artifact-ids would download every artifact in the run, so fail closed unless the
+      # ID is one number.
+      - name: Stop unless verify gave one artifact ID
+        if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
+        env:
+          ARTIFACT_ID: ${{ needs.verify.outputs.site-artifact-id }}
+        run: test -n "$ARTIFACT_ID" && test -z "${ARTIFACT_ID//[0123456789]/}" || { echo "::error::the artifact ID is empty or not a number, and an empty one would download every artifact in the run"; exit 1; }
+      # By the ID verify uploaded, never by name (see verify's outputs).
+      - if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.verify.outputs.site-artifact-id }}
+          path: ${{ runner.temp }}/artifact
+      # Only worker.js ships. A Worker whose bundle has more modules (a .wasm, text or data import)
+      # fails to deploy until this copy, and the test that pins it, take them too.
+      - name: Put the site, the Worker and the trusted config in a fresh directory
+        if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/site/bundle"
+          cp -R "$RUNNER_TEMP/artifact/dist" "$RUNNER_TEMP/site/dist"
+          cp "$RUNNER_TEMP/artifact/bundle/worker.js" "$RUNNER_TEMP/site/bundle/worker.js"
+          cp trusted/wrangler.jsonc "$RUNNER_TEMP/site/wrangler.jsonc"
+      # download-artifact writes regular files only, but wrangler follows any link it finds there
+      # (it stat()s each asset), so the job stops if one ever arrives, or if find cannot look.
+      - name: Stop if the site directory holds a symlink
+        if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
+        run: links="$(find "$RUNNER_TEMP/site" -type l)" && test -z "$links" || { echo "::error::the site directory holds a symlink, or find could not search it"; exit 1; }
+      - if: env.HAS_CLOUDFLARE == 'true' && steps.head.outputs.current == 'true'
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        env:
+          # wrangler-action installs the pinned wrangler with npm, and with no lockfile: run none of
+          # its install scripts, and take no version younger than Dependabot's cooldown
+          # (.github/dependabot.yml default-days; tests/unit/ci-workflow.test.ts keeps them equal).
+          npm_config_ignore_scripts: 'true'
+          npm_config_min_release_age: '7'
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
+          wranglerVersion: ${{ steps.trusted.outputs.wrangler-version }}
+          workingDirectory: ${{ runner.temp }}/site
+          # No source map, or a sourceMappingURL in worker.js could name any file on the runner.
+          command: deploy bundle/worker.js --no-bundle --upload-source-maps=false --config wrangler.jsonc
+
+  # Previews are off unless the repository variable CI_PREVIEWS is 'true', whatever the
+  # visibility: a job that names an environment which doesn't exist gets one created with no
+  # protection rules. Set it only once the preview environment has required reviewers and holds
+  # the token (README, "Cloudflare API token"). Previews run only for pull requests into the
+  # default branch, and the token jobs take their trusted files from that branch by name, never
+  # from the pull request's base commit, which goes stale if the base changes.
+  preview-build:
+    name: Build the preview
+    if: >-
+      vars.CI_PREVIEWS == 'true' &&
+      github.event_name == 'pull_request' && github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
+    needs: verify
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    outputs:
+      site-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Build with Turnstile's test site key
+        env:
+          PUBLIC_TURNSTILE_SITE_KEY: 1x00000000000000000000AA
+        run: npm run build
+      - name: Bundle the Worker for the preview job
+        run: npx wrangler deploy --dry-run --outdir bundle
+      - name: Hand the site and the Worker bundle to the preview job
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: preview-site
+          path: |
+            dist/
+            bundle/
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
 
   preview:
     name: Preview
     if: >-
+      vars.CI_PREVIEWS == 'true' &&
       github.event_name == 'pull_request' && github.event.action != 'closed' &&
-      github.event.pull_request.head.repo.full_name == github.repository
-    needs: [verify]
-    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
+    needs: preview-build
+    runs-on: ubuntu-latest
+    environment: preview
     permissions:
       contents: read
-      pull-requests: write
+      pull-requests: write # to post the preview's URL on the pull request
     env:
       HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
     steps:
       - name: Explain a skipped preview
         if: env.HAS_CLOUDFLARE != 'true'
-        run: echo "::notice title=Preview skipped::Set the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets to get a preview per pull request."
-      - if: env.HAS_CLOUDFLARE == 'true'
+        run: echo "::notice title=Preview skipped::Set the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets in the preview environment, behind required reviewers, to get a preview per pull request. Repository secrets reach this job too, unreviewed."
+      - name: Check out the trusted config from the default branch
+        if: env.HAS_CLOUDFLARE == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: refs/heads/${{ github.event.repository.default_branch }}
+          path: trusted
+          sparse-checkout: |
+            /.nvmrc
+            /package.json
+            /scripts/trusted-config.mjs
+            /wrangler.jsonc
+          sparse-checkout-cone-mode: false
           persist-credentials: false
       - if: env.HAS_CLOUDFLARE == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version-file: .nvmrc
+          node-version-file: trusted/.nvmrc
           package-manager-cache: false
-      - if: env.HAS_CLOUDFLARE == 'true'
-        run: npm ci
-      - name: Build with Turnstile's test site key
+      - name: Refuse a custom build, and read the pinned wrangler version
+        id: trusted
+        if: env.HAS_CLOUDFLARE == 'true'
+        run: node trusted/scripts/trusted-config.mjs trusted
+      - name: Stop unless a wrangler version was read
         if: env.HAS_CLOUDFLARE == 'true'
         env:
-          PUBLIC_TURNSTILE_SITE_KEY: 1x00000000000000000000AA
-        run: npm run build
+          WRANGLER_VERSION: ${{ steps.trusted.outputs.wrangler-version }}
+        run: test -n "$WRANGLER_VERSION" || { echo "::error::trusted-config.mjs gave no wrangler version"; exit 1; }
+      - name: Stop unless npm knows the release-age floor
+        if: env.HAS_CLOUDFLARE == 'true'
+        run: |
+          node -e '
+            const version = process.argv[1];
+            const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+            const [major, minor] = parts ? [Number(parts[1]), Number(parts[2])] : [NaN, NaN];
+            if (!(major > 11 || (major === 11 && minor >= 10))) {
+              console.log(`::error::npm ${version || "(no version)"} predates min-release-age (npm 11.10.0), so it would install with no floor`);
+              process.exit(1);
+            }
+            console.log(`npm ${version} applies min-release-age`);
+          ' "$(npm --version)"
+      - name: Stop unless preview-build gave one artifact ID
+        if: env.HAS_CLOUDFLARE == 'true'
+        env:
+          ARTIFACT_ID: ${{ needs.preview-build.outputs.site-artifact-id }}
+        run: test -n "$ARTIFACT_ID" && test -z "${ARTIFACT_ID//[0123456789]/}" || { echo "::error::the artifact ID is empty or not a number, and an empty one would download every artifact in the run"; exit 1; }
+      - if: env.HAS_CLOUDFLARE == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.preview-build.outputs.site-artifact-id }}
+          path: ${{ runner.temp }}/artifact
+      # As in deploy, only worker.js ships. The next step writes the config beside it.
+      - name: Put the site and the Worker in a fresh directory
+        if: env.HAS_CLOUDFLARE == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/site/bundle"
+          cp -R "$RUNNER_TEMP/artifact/dist" "$RUNNER_TEMP/site/dist"
+          cp "$RUNNER_TEMP/artifact/bundle/worker.js" "$RUNNER_TEMP/site/bundle/worker.js"
+      # As in deploy: wrangler would follow a link in the site directory.
+      - name: Stop if the site directory holds a symlink
+        if: env.HAS_CLOUDFLARE == 'true'
+        run: links="$(find "$RUNNER_TEMP/site" -type l)" && test -z "$links" || { echo "::error::the site directory holds a symlink, or find could not search it"; exit 1; }
+      # This job uploads bundle/worker.js byte for byte, as preview-build handed it over, with the
+      # artifact's dist/ as its assets, and nothing in the artifact makes wrangler read another file
+      # on this runner or run anything. wrangler's preview command has no --no-bundle flag, and
+      # bundling would let worker.js import any file here, the token's /proc/self/environ included,
+      # into the Worker it uploads. So wrangler gets wrangler.json, which trusted-config.mjs writes
+      # from the trusted wrangler.jsonc with no_bundle, no source maps and no additional modules.
+      - name: Write the preview's config from the trusted one, with bundling off
+        if: env.HAS_CLOUDFLARE == 'true'
+        run: node trusted/scripts/trusted-config.mjs --preview-config trusted "$RUNNER_TEMP/site/wrangler.json"
+      # Fail closed, never back to a copy of the trusted wrangler.jsonc: a default branch whose
+      # trusted-config.mjs predates --preview-config fails the step above (it exits 1), and this
+      # stops the job before wrangler if a script ever exits 0 without writing the file.
+      - name: Stop unless the preview's config was written
+        if: env.HAS_CLOUDFLARE == 'true'
+        run: test -f "$RUNNER_TEMP/site/wrangler.json" || { echo "::error::trusted-config.mjs wrote no preview config"; exit 1; }
       - id: preview
         if: env.HAS_CLOUDFLARE == 'true'
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        env:
+          npm_config_ignore_scripts: 'true'
+          npm_config_min_release_age: '7'
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: preview --name pr-${{ github.event.pull_request.number }}
+          wranglerVersion: ${{ steps.trusted.outputs.wrangler-version }}
+          workingDirectory: ${{ runner.temp }}/site
+          command: preview bundle/worker.js --name pr-${{ github.event.pull_request.number }} --config wrangler.json
       - name: Post or update the preview comment
         if: env.HAS_CLOUDFLARE == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -191,29 +482,72 @@ jobs:
             if (mine) await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
             else await github.rest.issues.createComment({ owner, repo, issue_number, body });
 
+  # The same environment as the preview, so closing a pull request waits for one approval too.
   preview-cleanup:
     name: Delete preview
     if: >-
+      vars.CI_PREVIEWS == 'true' &&
       github.event_name == 'pull_request' && github.event.action == 'closed' &&
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    environment: preview
     env:
       HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
     steps:
-      - if: env.HAS_CLOUDFLARE == 'true'
+      - name: Check out the trusted config from the default branch
+        if: env.HAS_CLOUDFLARE == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: refs/heads/${{ github.event.repository.default_branch }}
+          path: trusted
+          sparse-checkout: |
+            /.nvmrc
+            /package.json
+            /scripts/trusted-config.mjs
+            /wrangler.jsonc
+          sparse-checkout-cone-mode: false
           persist-credentials: false
       - if: env.HAS_CLOUDFLARE == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version-file: .nvmrc
+          node-version-file: trusted/.nvmrc
           package-manager-cache: false
-      - if: env.HAS_CLOUDFLARE == 'true'
-        run: npm ci
+      - name: Refuse a custom build, and read the pinned wrangler version
+        id: trusted
+        if: env.HAS_CLOUDFLARE == 'true'
+        run: node trusted/scripts/trusted-config.mjs trusted
+      - name: Stop unless a wrangler version was read
+        if: env.HAS_CLOUDFLARE == 'true'
+        env:
+          WRANGLER_VERSION: ${{ steps.trusted.outputs.wrangler-version }}
+        run: test -n "$WRANGLER_VERSION" || { echo "::error::trusted-config.mjs gave no wrangler version"; exit 1; }
+      - name: Stop unless npm knows the release-age floor
+        if: env.HAS_CLOUDFLARE == 'true'
+        run: |
+          node -e '
+            const version = process.argv[1];
+            const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+            const [major, minor] = parts ? [Number(parts[1]), Number(parts[2])] : [NaN, NaN];
+            if (!(major > 11 || (major === 11 && minor >= 10))) {
+              console.log(`::error::npm ${version || "(no version)"} predates min-release-age (npm 11.10.0), so it would install with no floor`);
+              process.exit(1);
+            }
+            console.log(`npm ${version} applies min-release-age`);
+          ' "$(npm --version)"
+      - name: Put the trusted config in a fresh directory
+        if: env.HAS_CLOUDFLARE == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/site"
+          cp trusted/wrangler.jsonc "$RUNNER_TEMP/site/wrangler.jsonc"
       - if: env.HAS_CLOUDFLARE == 'true'
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        env:
+          npm_config_ignore_scripts: 'true'
+          npm_config_min_release_age: '7'
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: preview delete --name pr-${{ github.event.pull_request.number }}
+          wranglerVersion: ${{ steps.trusted.outputs.wrangler-version }}
+          workingDirectory: ${{ runner.temp }}/site
+          command: preview delete --name pr-${{ github.event.pull_request.number }} --config wrangler.jsonc

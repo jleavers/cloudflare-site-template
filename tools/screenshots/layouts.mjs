@@ -29,7 +29,7 @@ export const sideBySide = (design, built) => {
   const column = (label, src) =>
     `<figure style="width:700px"><figcaption style="font-weight:600;margin-bottom:14px;color:${C.muted}">${label}</figcaption>${browserWindow(src)}</figure>`;
   return page(1600, 600, `<div style="display:flex;gap:40px;padding:40px 60px;align-items:flex-start">
-    ${column('The Claude Design handoff', design)}
+    ${column('The Claude Design', design)}
     <div style="align-self:center;font-size:48px;color:${C.brand}">→</div>
     ${column('The site this template built from it', built)}
   </div>`);
@@ -54,7 +54,7 @@ export const linkedin = (desktop) =>
       <ul class="points" style="margin-top:40px;font-size:27px;line-height:1.9;list-style:none">
         <li>Static Astro, 100 on Lighthouse</li>
         <li>Turnstile-protected form to email, Slack or Teams</li>
-        <li>A preview for every pull request</li>
+        <li>Opt-in previews for pull requests</li>
         <li>No lock-in: plain HTML, standard handler</li>
       </ul>
     </div>

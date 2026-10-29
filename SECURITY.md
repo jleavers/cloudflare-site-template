@@ -19,10 +19,18 @@ within a few days.
   site owner receives; a request that makes the Worker read unbounded input or leak
   configuration, secrets or another visitor's data in a response or a log.
 - **The template's defaults**: a CSP or header in `public/_headers` that lets third-party script
-  run; a default that ships Turnstile test keys or `log` delivery to a custom domain past
-  `npm run preflight`.
+  run; a default that ships Turnstile test keys or `log` delivery to a live site (a custom domain,
+  or real delivery) past `npm run preflight`.
 - **The CI workflow**: a way for a pull request from a fork to obtain the Cloudflare token, write
-  to the repository, or run on a self-hosted runner.
+  to the repository, or run on a self-hosted runner; or a preview job that uploads anything but
+  the handed-over `worker.js` bytes, with the pull request's built `dist/` as its assets, such as
+  a file that a pull request's build makes wrangler read from the runner.
+- **The design tools**: a Claude Design bundle that gets past `tools/design-ingest/ingest.mjs`
+  (a link, an unsafe path, agent instructions or another entry outside its allow-list written into
+  `design/bundle/`, a file written there under a name an agent loads as instructions, or one that
+  an editor or build tool loads as code, such as a stylesheet whose `@plugin` Tailwind runs); a
+  design screen whose code, rendered through `tools/screenshots/design.mjs`, runs outside
+  Chromium's OS sandbox, or reaches a file outside its bundle, or any network.
 - **The agent instructions** (`AGENTS.md`, `.claude/`): text in a Claude Design bundle, a site
   brief or an issue that makes an agent following them widen its own authority: run commands
   the instructions forbid, change CI, secrets or deploy settings, or exfiltrate data.

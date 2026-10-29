@@ -1,6 +1,8 @@
+# Every rev is a full commit SHA with its tag in a comment, because a tag can be moved.
+# tests/unit/supply-chain.test.ts enforces that, and Dependabot's pre-commit ecosystem keeps them current.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b  # v5.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -8,11 +10,14 @@ repos:
       - id: check-added-large-files
   # GitHub Actions: actionlint checks syntax and expressions; zizmor checks security
   # (unpinned actions, template injection, credential persistence, dangerous triggers).
+  # actionlint-py's build downloads the actionlint binary and verifies its SHA-256 against
+  # _custom_build/checksums.cfg, which the SHA pin fixes (checked against upstream's release checksums).
+  # Its build requirements (setuptools, wheel, requests, semver) still come unpinned from PyPI at install.
   - repo: https://github.com/Mateusz-Grzelinski/actionlint-py
-    rev: v1.7.12.25
+    rev: 805f85e558841bf4d852335e036b33d2b26be1cc  # v1.7.12.25
     hooks:
       - id: actionlint
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
-    rev: v1.30.1
+    rev: fa412071e4f5d44d44f9e365f4676f9df92456a2  # v1.30.1
     hooks:
       - id: zizmor
