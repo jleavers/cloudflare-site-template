@@ -349,7 +349,7 @@ Preflight (§11.3) refuses a live site (a custom domain, or real delivery) while
 
 PR builds set `PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA`, the always-pass test site key.
 
-**Local:** `scripts/dev-stack.mjs` builds with `PUBLIC_TURNSTILE_SITE_KEY` set to the test key, then runs `wrangler dev --var DELIVERY_PROVIDER:log --var TURNSTILE_SECRET_KEY:<test secret>`.
+**Local:** `scripts/dev-stack.mjs` builds with `PUBLIC_TURNSTILE_SITE_KEY` set to the test key, then runs `wrangler dev --var DELIVERY_PROVIDER:log --var TURNSTILE_SECRET_KEY:<test secret>`. It runs astro and wrangler from their own packages with Node itself, with no npx and no shell to rewrite those arguments (on Windows, `shell: true` would hand them to cmd.exe unescaped), and refuses a `PORT` or `INSPECTOR_PORT` that is not a port number (`tests/unit/dev-stack.test.ts`).
 - `npm run preview`, Playwright's `webServer` and the screenshot tool all use this one script.
 - A local run never sends a real message, whatever the site's production config says.
 - Anyone who wants to try real delivery locally writes their own `.dev.vars`, with a real Turnstile secret from a widget whose hostnames include `localhost`, because the handler refuses a test secret with any provider but `log`. The README covers this.

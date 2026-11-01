@@ -6,16 +6,24 @@
 //
 //   PORT=8787 INSPECTOR_PORT=8788 node scripts/dev-stack.mjs
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { TURNSTILE_TEST_SECRET_KEY, TURNSTILE_TEST_SITE_KEY } from './test-keys.mjs';
 
 const port = process.env.PORT || '8787';
 const inspectorPort = process.env.INSPECTOR_PORT || String(Number(port) + 1);
-// On Windows npx is npx.cmd, which Node only runs through a shell.
-const shell = process.platform === 'win32';
+for (const [name, value] of [['PORT', port], ['INSPECTOR_PORT', inspectorPort]]) {
+  if (!/^[1-9]\d*$/.test(value) || Number(value) > 65535) {
+    console.error(`dev-stack: ${name} must be a port number from 1 to 65535, not ${JSON.stringify(value)}.`);
+    process.exit(1);
+  }
+}
 
-function start(command, args, env = {}) {
-  return spawn(command, args, { stdio: 'inherit', shell, env: { ...process.env, ...env } });
+/** Runs a package's own command with this Node, as its `.bin` link would: no npx, and no shell to rewrite the arguments. */
+function start([tool, ...args], env = {}) {
+  const dir = new URL(`../node_modules/${tool}/`, import.meta.url);
+  const { bin } = JSON.parse(readFileSync(new URL('package.json', dir), 'utf8'));
+  return spawn(process.execPath, [fileURLToPath(new URL(bin[tool], dir)), ...args], { stdio: 'inherit', env: { ...process.env, ...env } });
 }
 
 function finished(child) {
@@ -29,9 +37,9 @@ if (existsSync('.dev.vars')) {
   console.warn('dev-stack: .dev.vars exists; the --var flags below still force log delivery and the test secret.');
 }
 
-await finished(start('npx', ['astro', 'build'], { PUBLIC_TURNSTILE_SITE_KEY: TURNSTILE_TEST_SITE_KEY }));
+await finished(start(['astro', 'build'], { PUBLIC_TURNSTILE_SITE_KEY: TURNSTILE_TEST_SITE_KEY }));
 
-const wrangler = start('npx', [
+const wrangler = start([
   'wrangler', 'dev',
   '--ip', '127.0.0.1',
   '--port', port,
