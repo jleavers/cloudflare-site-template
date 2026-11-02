@@ -267,8 +267,8 @@ with `file:line`, and say that production preflight (a custom domain, or `DELIVE
    create the Slack or Teams incoming webhook.
 3. **First deploy, through CI:** every deploy goes through CI, the first included. There is no
    deploy from your machine: keep no Cloudflare login or API token on a machine that runs this
-   site's build or dev server, because any package the build runs could read it (template README,
-   https://github.com/jleavers/cloudflare-site-template#cloudflare-api-token). The same code, or an
+   site's build or dev server, because any package the build runs could read it (`docs/security-model.md`,
+   "Every deploy goes through CI"). The same code, or an
    agent on that machine, can use any GitHub credential there (your `gh` token, an SSH key, a
    credential helper), and one that can push to `main` reaches CI's token, since every push to
    `main` deploys. So build where no such credential is (a dev container or a VM), or give that
@@ -304,8 +304,7 @@ with `file:line`, and say that production preflight (a custom domain, or `DELIVE
      minutes left, deploys wait until they return. Anyone who can merge into `main`, or push a
      workflow change, can read the token.
    - Pull-request previews are off until the repository variable `CI_PREVIEWS` is `true`. Turn
-     them on only as the template's README describes
-     (https://github.com/jleavers/cloudflare-site-template#cloudflare-api-token): they need a
+     them on only as `docs/security-model.md`, "Previews", describes: they need a
      `preview` environment with required reviewers.
    - If the checks run on a self-hosted runner (`CI_LINUX_RUNNER`), remove the runner's
      registration (Settings → Actions → Runners) before the repository goes public, not only the
@@ -320,7 +319,7 @@ with `file:line`, and say that production preflight (a custom domain, or `DELIVE
      user or a GitHub App installation), never your own credential or SSH key, with an HTTPS
      token without workflow permission (fine-grained, no Workflows and no Actions write; never a
      classic token, which can re-run workflows). Where the plan has rulesets, require one approval
-     on `main` and keep that identity off the bypass list (same README section).
+     on `main` and keep that identity off the bypass list (`docs/security-model.md`, "Coding agents").
 4. **Secrets and HTTPS, once the Worker exists:**
    - Cloudflare dashboard → the Worker → Settings → Variables and Secrets → Add, type **Secret**:
      `TURNSTILE_SECRET_KEY` (from step 1) and `RESEND_API_KEY` (or `WEBHOOK_URL`), then Deploy.

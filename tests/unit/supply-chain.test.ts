@@ -227,7 +227,7 @@ describe('b. npm runs no install scripts in this repository', () => {
   }
 
   const workflows = readdirSync(fileURLToPath(new URL('../../.github/workflows/', import.meta.url))).filter((file) => /\.ya?ml$/.test(file));
-  const DOCS = ['README.md', 'AGENTS.md', '.claude/skills/new-site/SKILL.md', '.claude/skills/security-sweep/SKILL.md'];
+  const DOCS = ['README.md', 'AGENTS.md', 'docs/security-model.md', 'docs/operations.md', '.claude/skills/new-site/SKILL.md', '.claude/skills/security-sweep/SKILL.md'];
   const scripts = (JSON.parse(read('package.json')) as { scripts: Record<string, string> }).scripts;
 
   test('.npmrc sets ignore-scripts=true', () => {
@@ -354,10 +354,10 @@ describe('b3. the shipped docs prescribe no npm command that runs outside the lo
 
   const skills = readdirSync(fileURLToPath(new URL('../../.claude/skills/', import.meta.url))).map((dir) => `.claude/skills/${dir}/SKILL.md`);
   const tools = readdirSync(fileURLToPath(new URL('../../tools/', import.meta.url))).map((dir) => `tools/${dir}/README.md`);
-  const SHIPPED_DOCS = ['README.md', 'AGENTS.md', 'design/README.md', ...skills, ...tools].filter(exists);
+  const SHIPPED_DOCS = ['README.md', 'AGENTS.md', 'docs/security-model.md', 'docs/operations.md', 'design/README.md', ...skills, ...tools].filter(exists);
 
   test('the shipped docs are found', () => {
-    expect(SHIPPED_DOCS).toEqual(expect.arrayContaining(['README.md', 'AGENTS.md', '.claude/skills/security-sweep/SKILL.md', 'design/README.md', 'tools/screenshots/README.md']));
+    expect(SHIPPED_DOCS).toEqual(expect.arrayContaining(['README.md', 'AGENTS.md', 'docs/security-model.md', 'docs/operations.md', '.claude/skills/security-sweep/SKILL.md', 'design/README.md', 'tools/screenshots/README.md']));
   });
 
   test('no shipped doc prescribes a global npm install, or an npx that may download', () => {

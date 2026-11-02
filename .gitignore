@@ -37,7 +37,7 @@ test-results/
 .lighthouse/
 tools/screenshots/out/
 
-# Wrangler's local secrets. Never commit a real one; see README "Local development".
+# Wrangler's local secrets. Never commit a real one; see docs/operations.md, "Trying real delivery locally".
 .dev.vars
 .dev.vars.*
 

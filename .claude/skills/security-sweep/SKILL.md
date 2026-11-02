@@ -203,7 +203,7 @@ stage that falls back to the default subagent (below) inherits all of it.
 - If you are logged in to Wrangler (OAuth), run `npx --no wrangler logout` in an installed checkout
   of the template (it uses the lockfile's wrangler and downloads none), and stay logged out after
   the run too: its login reaches the Cloudflare API, and this repository keeps no Cloudflare login
-  on a machine that runs its build (README, "Cloudflare API token").
+  on a machine that runs its build (`docs/security-model.md`, "Every deploy goes through CI").
 - If `~/.npmrc` holds a registry token, move it aside for the run; the lanes are told not to read
   it, and this removes the token rather than relying on that.
 - **Run the sweep with the session in auto mode.** Outside it, every shell command an agent runs
@@ -508,7 +508,8 @@ forbids agents from deleting a directory tree.
 to another session: unset the read-only `GH_TOKEN`, then log back in to `gh` (`gh auth login`,
 unless phase 7 already did), reload the SSH keys you want (`ssh-add`), and move `~/.npmrc` back.
 Leave Wrangler logged out: this repository keeps no Cloudflare login or API token on a machine that
-runs its build, and every deploy goes through CI (README, "Cloudflare API token").
+runs its build, and every deploy goes through CI (`docs/security-model.md`, "Every deploy goes
+through CI").
 
 ## Growing the lanes
 

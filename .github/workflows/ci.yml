@@ -22,8 +22,8 @@ on:
 # - Any other event (a workflow_dispatch run) gets a group of its own, by run ID, so it can never
 #   displace main's pending push run and its deploy.
 # What YAML cannot stop is a fork's pull request, which runs its own workflow file and can name
-# main's group with cancel-in-progress: the repository's fork-approval setting does (README,
-# "Cloudflare API token").
+# main's group with cancel-in-progress: the repository's fork-approval setting does
+# (docs/security-model.md, "Fork pull requests on a public repository").
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || format('{0}-{1}', github.event_name, github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -35,8 +35,8 @@ permissions:
 # names one, else on GitHub's; verify on a push to main, which builds what deploys, always runs on
 # GitHub's. A public repository must have no self-hosted runner registered at all, not just no
 # CI_LINUX_RUNNER: a fork's pull request runs its own workflow file, which can name the runner's
-# label directly (README, "Short of GitHub Actions minutes?"). Every action is pinned to a commit
-# SHA. Nothing here runs on pull_request_target.
+# label directly (docs/operations.md, "Short of GitHub Actions minutes?"). Every action is pinned
+# to a commit SHA. Nothing here runs on pull_request_target.
 #
 # The Cloudflare token can change every Worker on its account, so a job that can read it runs no
 # code that the checked-out tree or the lockfile chose: no install, build or test, and no wrangler
@@ -47,7 +47,7 @@ permissions:
 # its bundler, or a sourceMappingURL in the file, would reach any file on the runner. It uses only
 # actions/* and cloudflare/wrangler-action, always runs on a GitHub-hosted runner, and runs through
 # an environment, which holds the token behind a branch rule or a reviewer where the plan allows
-# (README, "Cloudflare API token"). main's wrangler.jsonc is part of that trust root: its
+# (docs/security-model.md, "Where the token lives"). main's wrangler.jsonc is part of that trust root: its
 # assets.directory, rules and tsconfig steer what wrangler reads and uploads, so review a change
 # to it as you would a change to this file. Deploy also runs only while its commit is main's head.
 
@@ -312,7 +312,7 @@ jobs:
   # Previews are off unless the repository variable CI_PREVIEWS is 'true', whatever the
   # visibility: a job that names an environment which doesn't exist gets one created with no
   # protection rules. Set it only once the preview environment has required reviewers and holds
-  # the token (README, "Cloudflare API token"). Previews run only for pull requests into the
+  # the token (docs/security-model.md, "Previews"). Previews run only for pull requests into the
   # default branch, and the token jobs take their trusted files from that branch by name, never
   # from the pull request's base commit, which goes stale if the base changes.
   preview-build:
