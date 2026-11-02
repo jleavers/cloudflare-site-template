@@ -356,7 +356,7 @@ const isMapping = (value: Yaml | undefined): value is { [key: string]: Yaml } =>
 const TOKEN_ACTIONS = {
   checkout: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
   setupNode: 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1',
-  download: 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
+  download: 'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333',
   githubScript: 'actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3',
   wrangler: 'cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0',
 };
