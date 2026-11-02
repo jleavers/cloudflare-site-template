@@ -46,7 +46,7 @@ The output is a working site. Once the template is working and tested, the repos
 
 | # | PRD | This spec | Why |
 |---|---|---|---|
-| D1 | Astro 5.x | Astro 7.3.x, Node ≥ 22.12 (CI and `.nvmrc` use 24), TypeScript pinned `^6` | Astro 7 is current (7.0 shipped 2026-06-22). `@astrojs/check` does not support TS 7. |
+| D1 | Astro 5.x | Astro 7.4.x, Node ≥ 22.23.4 (CI and `.nvmrc` use 24), TypeScript pinned `^6` | Astro 7 is current (7.0 shipped 2026-06-22). `@astrojs/check` does not support TS 7. |
 | D2 | `assets` has no `binding` | `"binding": "ASSETS"` plus `run_worker_first: ["/api/*"]` and `not_found_handling: "none"` | Without the binding, `env.ASSETS` is undefined and the Worker cannot serve a miss. With `"404-page"` the asset layer answered a miss itself, and `_headers` (matched by path) made a missing `/_astro/` file cacheable as immutable for a year; with `"none"` a miss reaches the Worker, which serves `404.html` as a 404 with `no-store`. |
 | D3 | `ALLOWED_ORIGIN` var | `Origin` must equal the request's own origin | A fixed origin rejects previews, workers.dev and local dev. Same-origin also removes a per-site edit. |
 | D4 | PR previews on version URLs | Cloudflare Previews (`wrangler preview --name pr-<n>`), deleted when the PR closes | Cloudflare discourages version URLs for PR testing. Version URLs also share production secrets, so a preview form would send real mail. |
