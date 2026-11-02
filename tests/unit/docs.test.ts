@@ -16,7 +16,11 @@ const read = (path: string) => readFileSync(fileURLToPath(new URL(`../../${path}
 const scripts = Object.keys(JSON.parse(read('package.json')).scripts as Record<string, string>);
 // Tolerant of CRLF, which Git for Windows can check out when .gitattributes is overridden.
 const SKILL_FRONTMATTER = /^---\r?\nname: new-site\r?\ndescription: .+\r?\n---\r?\n/;
-const DOCS = ['AGENTS.md', '.claude/skills/new-site/SKILL.md', 'SITE_BRIEF.md', 'design/README.md', 'README.md'];
+// The README is the template's front page, and a stamped site replaces it. What every site needs
+// after that ships unchanged in these two, so their checks run everywhere.
+const SECURITY_MODEL = 'docs/security-model.md';
+const OPERATIONS = 'docs/operations.md';
+const DOCS = ['AGENTS.md', '.claude/skills/new-site/SKILL.md', 'SITE_BRIEF.md', 'design/README.md', 'README.md', SECURITY_MODEL, OPERATIONS];
 const SPEC = 'docs/superpowers/specs/2026-10-12-cloudflare-site-template-design.md';
 const exists = (path: string) => existsSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)));
 const TEMPLATE_README = '# cloudflare-site-template';
@@ -34,11 +38,14 @@ const templateWrangler = isTemplate('wrangler.jsonc', (text) => text.includes(TE
 function eachDoc<Row extends string | readonly [string, ...string[]]>(name: string, rows: readonly Row[], run: (doc: string, ...rest: string[]) => void) {
   const doc = (row: Row) => (typeof row === 'string' ? row : row[0]);
   const rest = rows.filter((row) => doc(row) !== 'README.md');
+  const readme = rows.filter((row) => doc(row) === 'README.md');
   const each = (rows: readonly unknown[]) => (title: string, fn: (...args: any[]) => void) => test.each(rows as unknown[][])(title, fn);
   if (rest.length) each(rest)(name, run);
-  describe.skipIf(!templateReadme)('template README only', () => {
-    each(rows.filter((row) => doc(row) === 'README.md'))(name, run);
-  });
+  if (readme.length) {
+    describe.skipIf(!templateReadme)('template README only', () => {
+      each(readme)(name, run);
+    });
+  }
 }
 /** Text as it reads: line breaks, and a JSONC comment's leading slashes, become one space. */
 const prose = (text: string) => text.replace(/[ \t]*\n[ \t]*(?:\/\/[ \t]*)?/g, ' ');
@@ -352,7 +359,7 @@ describe('agent-facing documents', () => {
   eachDoc(
     "%s says what to do when the design-fence tests refuse for want of Chromium's sandbox",
     [
-      ['README.md', 'On an Ubuntu 23.10 or later runner, install the AppArmor profile on that machine once, for the runner\'s account (`tools/screenshots/README.md`, "Chromium\'s sandbox"), or its design-fence tests refuse and deploys wait.'],
+      [OPERATIONS, 'On an Ubuntu 23.10 or later runner, install the AppArmor profile on that machine once, for the runner\'s account (`tools/screenshots/README.md`, "Chromium\'s sandbox"), or its design-fence tests refuse and deploys wait.'],
       ['.claude/skills/new-site/SKILL.md', 'If the design-fence tests refuse with "Chromium\'s OS sandbox could not start", tell the person: the fix is theirs, with `sudo`', 'Change no test.'],
       ['AGENTS.md', "If its design-fence tests refuse because Chromium's sandbox cannot start, tell the owner", 'and change no test'],
     ],
@@ -385,7 +392,7 @@ describe('agent-facing documents', () => {
   // On a public repository a fork's pull request runs the fork's own workflow file, which can name a
   // self-hosted runner's label directly, so unsetting CI_LINUX_RUNNER protects nothing: the runner's
   // registration has to go before the flip (sweep run 20261027T190359Z, ci-workflow-2).
-  eachDoc('%s says to remove a self-hosted runner before the repository goes public', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
+  eachDoc('%s says to remove a self-hosted runner before the repository goes public', [OPERATIONS, '.claude/skills/new-site/SKILL.md'], (doc: string) => {
     const text = read(doc).replace(/\s+/g, ' ');
     for (const fragment of ['Settings → Actions → Runners', 'not only the variable', 'own workflow file', 'can name the runner']) {
       expect(text, `${doc}: ${fragment}`).toContain(fragment);
@@ -395,7 +402,7 @@ describe('agent-facing documents', () => {
   // A fork's pull request runs the fork's own workflow file, which can name main's concurrency group
   // with cancel-in-progress. YAML cannot stop that; GitHub's fork-approval setting does (sweep run
   // 20261028T105259Z, cluster 3, Ruling 108). The wording is the setting's own, from GitHub's docs.
-  eachDoc('%s says to require approval for all external contributors, and to read workflow changes before approving', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
+  eachDoc('%s says to require approval for all external contributors, and to read workflow changes before approving', [SECURITY_MODEL, '.claude/skills/new-site/SKILL.md'], (doc: string) => {
     const text = read(doc).replace(/\s+/g, ' ');
     for (const fragment of [
       'Settings → Actions → General',
@@ -410,7 +417,7 @@ describe('agent-facing documents', () => {
   });
 
   // A classic token with repository access can re-run workflows, and a re-run is a way to deploy.
-  eachDoc('%s offers a coding agent no classic token', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
+  eachDoc('%s offers a coding agent no classic token', [SECURITY_MODEL, '.claude/skills/new-site/SKILL.md'], (doc: string) => {
     const text = read(doc).replace(/\s+/g, ' ');
     expect(text).not.toMatch(/classic without the `workflow` scope/);
     expect(text).toMatch(/no Actions write/);
@@ -440,7 +447,7 @@ describe('agent-facing documents', () => {
 
   // Build-time code, which ignore-scripts does not stop, can use any GitHub credential on the machine,
   // and one that can push to `main` gets CI's token, since every push to `main` deploys (final review 2, I1).
-  eachDoc("%s says a GitHub credential on the build machine is one step from CI's token", ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
+  eachDoc("%s says a GitHub credential on the build machine is one step from CI's token", [SECURITY_MODEL, '.claude/skills/new-site/SKILL.md'], (doc: string) => {
     const text = read(doc).replace(/\s+/g, ' ');
     for (const fragment of ['any GitHub credential', "one that can push to `main` reaches CI's token", 'dev container', 'can only open pull requests', "another identity's approval", 'residual risk']) {
       expect(text, `${doc}: ${fragment}`).toContain(fragment);
@@ -451,7 +458,7 @@ describe('agent-facing documents', () => {
   // from the reader's machine, not even to warn against it (`wrangler deploy --dry-run` aside). A site's
   // README and SECURITY.md are its owner's to write once /new-site replaces them, and may warn "never run
   // `wrangler login`", so those two are checked only while they are still the template's.
-  eachDoc('%s names no local deploy, login or secret put', ['README.md', 'AGENTS.md', '.claude/skills/new-site/SKILL.md', ...(templateSecurity ? ['SECURITY.md'] : [])], (doc: string) => {
+  eachDoc('%s names no local deploy, login or secret put', ['README.md', 'AGENTS.md', SECURITY_MODEL, OPERATIONS, '.claude/skills/new-site/SKILL.md', ...(templateSecurity ? ['SECURITY.md'] : [])], (doc: string) => {
     const text = read(doc).replace(/\s+/g, ' ');
     for (const command of ['wrangler login', 'wrangler secret', 'npm run deploy', 'wrangler deploy', 'wrangler versions deploy', 'wrangler versions upload']) {
       expect(text.replaceAll('wrangler deploy --dry-run', ''), `${doc}: ${command}`).not.toContain(command);
@@ -515,24 +522,63 @@ describe('agent-facing documents', () => {
   });
 
   describe.skipIf(!templateReadme)('template README only', () => {
-    test('the README has no Deploy to Cloudflare button, and says why every deploy goes through CI', () => {
+    test('the README has no Deploy to Cloudflare button, and points to why every deploy goes through CI', () => {
       const readme = read('README.md').replace(/\s+/g, ' ');
       expect(readme).not.toContain('deploy.workers.cloudflare.com');
-      expect(readme).toContain('**Every deploy goes through CI, a site\'s first included.**');
-      expect(readme).toContain('**keep no Cloudflare login or API token on a machine that runs the site\'s build or dev server**');
-      expect(readme).toContain('beside a credential that can change every Worker on the account');
+      expect(readme).toContain('**Every deploy goes through CI.**');
+      expect(readme).toContain('](docs/security-model.md#every-deploy-goes-through-ci)');
     });
 
-    test('the README says how to clear an old login, and needs no API token on the machine for Turnstile', () => {
+    test('the README needs no API token on the machine for Turnstile', () => {
       const readme = read('README.md').replace(/\s+/g, ' ');
-      for (const fragment of ['`npx --no wrangler logout`', '`~/.config/.wrangler/config/default.toml`', 'once, into `gh secret set`']) expect(readme, fragment).toContain(fragment);
       expect(section(readme, '### Turnstile', '### Delivery')).not.toMatch(/\bAPI\b/);
+    });
+
+    test('the README lists the docs that ship with every site', () => {
+      const docs = section(read('README.md'), '## Documentation', '## No lock-in');
+      for (const link of [`](${SECURITY_MODEL})`, `](${OPERATIONS})`, '](design/README.md)', '](tools/screenshots/README.md)', '](AGENTS.md)', '](SECURITY.md)']) expect(docs, link).toContain(link);
     });
 
     test("the Quick start's push works for someone who used GitHub's web page", () => {
       const quick = section(read('README.md').replace(/\s+/g, ' '), '## Quick start', '## Stamp out a site');
       for (const fragment of ['git commit --allow-empty -m "Deploy"', 'Actions tab']) expect(quick, fragment).toContain(fragment);
     });
+  });
+
+  test('the security model says why every deploy goes through CI, and how to clear an old login', () => {
+    const model = read(SECURITY_MODEL).replace(/\s+/g, ' ');
+    expect(model).not.toContain('deploy.workers.cloudflare.com');
+    for (const fragment of [
+      '**Every deploy goes through CI, a site\'s first included.**',
+      '**keep no Cloudflare login or API token on a machine that runs the site\'s build or dev server**',
+      'beside a credential that can change every Worker on the account',
+      '`npx --no wrangler logout`',
+      '`~/.config/.wrangler/config/default.toml`',
+      'once, into `gh secret set`',
+      // Every place Wrangler keeps a saved login.
+      '`~/Library/Preferences/.wrangler/config/default.toml`',
+      '`%APPDATA%\\xdg.config\\.wrangler\\config\\default.toml`',
+      '`~/.wrangler/`',
+    ]) {
+      expect(model, fragment).toContain(fragment);
+    }
+  });
+
+  // A stamped site replaces README.md, so a file that ships unchanged must point into the docs that
+  // ship with it, never into the README; and every pointer must name a heading its file has.
+  test('every pointer to a section names one that exists, and no shipped file points into the README', () => {
+    const headings = (doc: string) => read(doc).split(/\r?\n/).filter((line) => /^#{2,4} /.test(line)).map((line) => line.replace(/^#+ /, ''));
+    const SHIPPED = ['AGENTS.md', '.npmrc', '.gitignore', '.github/workflows/ci.yml', '.claude/skills/new-site/SKILL.md', '.claude/skills/security-sweep/SKILL.md', SECURITY_MODEL, OPERATIONS];
+    const pointers: string[] = [];
+    for (const file of [...SHIPPED, SPEC, 'README.md']) {
+      const text = read(file).replace(/\s*\n\s*(?:#\s*)?/g, ' ');
+      for (const m of text.matchAll(/`?(docs\/(?:security-model|operations)\.md)`?(?:,| section)? "([^"]+)"/g)) {
+        pointers.push(`${file} -> ${m[1]} "${m[2]}"`);
+        expect(headings(m[1]!), `${file}: ${m[1]} "${m[2]}"`).toContain(m[2]);
+      }
+      if (SHIPPED.includes(file)) expect(text, file).not.toMatch(/\(?README,? "[^"]+"|README section|template'?s? README/);
+    }
+    expect(pointers.length).toBeGreaterThanOrEqual(8);
   });
 
   test("the spec's runbook creates the Turnstile widget in the dashboard, with no API token", () => {
@@ -578,17 +624,17 @@ describe('agent-facing documents', () => {
       expect(read('README.md')).toMatch(/Dependabot/);
     });
 
-    test('the README explains the preview warning about missing addresses', () => {
-      expect(read('README.md')).toMatch(/`wrangler preview` warns that\s+`CONTACT_TO_EMAIL`.*not for\s+Previews/s);
-    });
-
     test('the README shows the design-to-site image, and it exists', () => {
       expect(read('README.md')).toContain('](docs/images/design-to-site.png)');
       expect(exists('docs/images/design-to-site.png')).toBe(true);
     });
   });
 
-  eachDoc('%s puts the CI token in an environment and keeps previews opt-in', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
+  test('the operations doc explains the preview warning about missing addresses', () => {
+    expect(read(OPERATIONS)).toMatch(/`wrangler preview` warns that\s+`CONTACT_TO_EMAIL`.*not for\s+Previews/s);
+  });
+
+  eachDoc('%s puts the CI token in an environment and keeps previews opt-in', ['README.md', SECURITY_MODEL, '.claude/skills/new-site/SKILL.md'], (doc: string) => {
     const text = read(doc);
     for (const fragment of ['--env production', 'CI_PREVIEWS']) expect(text, `${doc}: ${fragment}`).toContain(fragment);
     expect(text).not.toMatch(/(every|each) pull request gets a preview|previews each pull request|a preview for every pull request/i);
@@ -596,7 +642,7 @@ describe('agent-facing documents', () => {
 
   // A pull-request rule alone requires no approval, so an agent holding the owner's credential, or
   // any Contents-and-Pull-requests token, can open a pull request and merge it.
-  eachDoc('%s keeps agents out of main with their own identity and a required approval, and says deploys wait without hosted minutes', ['README.md', '.claude/skills/new-site/SKILL.md'], (doc: string) => {
+  eachDoc('%s keeps agents out of main with their own identity and a required approval, and says deploys wait without hosted minutes', [SECURITY_MODEL, '.claude/skills/new-site/SKILL.md'], (doc: string) => {
     const text = read(doc).replace(/\s+/g, ' '); // as rendered: line breaks are spaces
     for (const fragment of ['merge into `main`', 'separate GitHub identity', 'own credential', 'one approval', 'bypass list', 'GitHub-hosted', 'deploys wait']) {
       expect(text, `${doc}: ${fragment}`).toContain(fragment);
@@ -604,10 +650,8 @@ describe('agent-facing documents', () => {
     expect(text).not.toMatch(/ruleset that requires a pull request|unless a ruleset requires a pull request/);
   });
 
-  describe.skipIf(!templateReadme)('template README only', () => {
-    test('the README gives coding agents a token without workflow permission, never an SSH key', () => {
-      for (const fragment of ['workflow permission', 'SSH key']) expect(read('README.md').replace(/\s+/g, ' ')).toContain(fragment);
-    });
+  test('the security model gives coding agents a token without workflow permission, never an SSH key', () => {
+    for (const fragment of ['workflow permission', 'SSH key']) expect(read(SECURITY_MODEL).replace(/\s+/g, ' ')).toContain(fragment);
   });
 
   // GitHub splits a table row at every unescaped |, inside a code span too: `a || b` there needs \|\|.
@@ -651,19 +695,18 @@ describe('agent-facing documents', () => {
   });
 
   describe.skipIf(!templateReadme)('template README only', () => {
-    test('the README says a miss runs the Worker, and what real delivery needs locally', () => {
+    test('the README says a miss runs the Worker', () => {
       const readme = prose(read('README.md'));
       expect(readme).not.toContain('Static requests never touch it');
       expect(section(readme, '## How it works', '## Live demo')).toMatch(/A miss \(an unknown page, a missing asset\)/);
-      expect(section(readme, 'To try real delivery locally', '**Pull-request previews**')).toMatch(/real `TURNSTILE_SECRET_KEY`[^.]*\..*`localhost`/);
-      // Any package the build or dev server runs can read .dev.vars (final review 2).
-      for (const fragment of ['restricted, short-lived key', 'delete `.dev.vars` afterwards']) expect(section(readme, 'To try real delivery locally', '**Pull-request previews**'), fragment).toContain(fragment);
     });
+  });
 
-    test('the README names every place Wrangler keeps a saved login', () => {
-      const readme = read('README.md').replace(/\s+/g, ' ');
-      for (const fragment of ['`~/Library/Preferences/.wrangler/config/default.toml`', '`%APPDATA%\\xdg.config\\.wrangler\\config\\default.toml`', '`~/.wrangler/`']) expect(readme, fragment).toContain(fragment);
-    });
+  test('the operations doc says what real delivery needs locally', () => {
+    const local = section(prose(read(OPERATIONS)), '## Trying real delivery locally', '## Pull-request previews');
+    expect(local).toMatch(/real `TURNSTILE_SECRET_KEY`[^.]*\..*`localhost`/);
+    // Any package the build or dev server runs can read .dev.vars (final review 2).
+    for (const fragment of ['restricted, short-lived key', 'delete `.dev.vars` afterwards']) expect(local, fragment).toContain(fragment);
   });
 
   test("the spec's no-.dev.vars.example rationale agrees with the README's real-delivery advice", () => {
@@ -707,7 +750,7 @@ describe('agent-facing documents', () => {
   eachDoc("%s (%s) opens or creates the production environment before setting its secrets", [
     ['README.md', '## Quick start', '## Stamp out a site'],
     ['README.md', '## Stamp out a site', '## One-off setup'],
-    ['README.md', '### Cloudflare API token', '## Configuration reference'],
+    [SECURITY_MODEL, '## Where the token lives', '## Fork pull requests'],
     ['.claude/skills/new-site/SKILL.md', '3. **First deploy, through CI:**', '## '],
     [SPEC, '## 13.', '## 14.'],
   ], (doc: string, from: string, to: string) => {
