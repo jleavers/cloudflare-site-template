@@ -66,7 +66,7 @@ type NetEntry = { connect?: { host?: string; port?: number; path?: string }; loo
 const requests: Recorded[] = [];
 const proxied: string[] = [];
 
-// What wrangler 4.152.0's preview command asks for a new preview whose assets the stub already
+// What wrangler 4.154.0's preview command asks for a new preview whose assets the stub already
 // has (cli.js runPreview), under /client/v4/accounts/<account>/workers. A deploy dry run asks nothing.
 const json = (status: number, body: unknown) => ({ status, body: JSON.stringify(body) });
 const ok = (result: unknown) => json(200, { success: true, errors: [], messages: [], result });
@@ -88,7 +88,7 @@ const API = `/client/v4/accounts/${FAKE_ACCOUNT_ID}/workers`;
 // version. A site stamped from the template, whose monthly dependency pull request would otherwise
 // stay red until its owner rewrote the stub, skips the preview runs instead; its previews then rest
 // on trusted-config.mjs's settings and the workflow pins (trusted-config and ci-workflow tests).
-const STUB_WRANGLER = '4.152.0';
+const STUB_WRANGLER = '4.154.0';
 const INSTALLED_WRANGLER = (JSON.parse(readFileSync(root('node_modules/wrangler/package.json'), 'utf8')) as { version: string }).version;
 const STUB_MATCHES = INSTALLED_WRANGLER === STUB_WRANGLER;
 // The marker docs.test.ts uses: a stamped site replaces README.md (new-site step 9a).
